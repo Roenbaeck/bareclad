@@ -1,4 +1,3 @@
-# Pository
+<img src="https://github.com/Roenbaeck/bareclad/blob/master/bareclad.svg" width="250">
 
-Pository is an in-memory NoSQL MPP database built on the principles of [Anchor](http://www.anchormodeling.com) modeling.
-
+Bareclad is a new type of database, based on transitional modeling.
