@@ -1,5 +1,5 @@
 ///
-/// Implements a database using the structures of Anchor modeling
+/// Implements a database using posits from Transitional Modeling.
 ///
 extern crate chrono;
 use chrono::{DateTime, Utc};
@@ -10,7 +10,7 @@ use std::io;
 // we will use keepers as a pattern to own some things
 extern crate anymap;
 
-mod pository {
+mod bareclad {
     use anymap;
     use anymap::AnyMap;
 
@@ -30,9 +30,9 @@ mod pository {
 
     impl Generator {
         pub fn new() -> Generator {
-            Generator { 
+            Generator {
                 current: GENESIS,
-                released: Vec::new() 
+                released: Vec::new()
             }
         }
         pub fn release(&mut self, g: usize) {
@@ -53,13 +53,13 @@ mod pository {
     #[derive(Debug)]
     pub struct Index<T: Eq + Hash> {
         index:  Vec<Rc<T>>,
-        kept:   HashMap<Rc<T>, usize> 
-    } 
+        kept:   HashMap<Rc<T>, usize>
+    }
     impl<T> Index<T> where T: Eq + Hash {
         pub fn new() -> Index<T> {
-            Index { 
-                index: Vec::new(), 
-                kept:  HashMap::new() 
+            Index {
+                index: Vec::new(),
+                kept:  HashMap::new()
             }
         }
         pub fn keep(&mut self, keepsake: T) -> usize {
@@ -94,14 +94,14 @@ mod pository {
     pub struct Lookup<S:Hash + Eq, T:Hash + Eq> {
         source: KeptIndex<S>,
         target: KeptIndex<T>,
-        lookup: HashMap<usize, HashSet<usize>> 
-    } 
+        lookup: HashMap<usize, HashSet<usize>>
+    }
     impl<S, T> Lookup<S, T> where S: Hash + Eq, T: Hash + Eq {
         pub fn new(s: KeptIndex<S>, t: KeptIndex<T>) -> Lookup<S, T> {
-            Lookup { 
+            Lookup {
                 source: s,
                 target: t,
-                lookup: HashMap::new() 
+                lookup: HashMap::new()
             }
         }
         pub fn keep(&mut self, key: usize, value: usize) -> bool {
@@ -120,33 +120,33 @@ mod pository {
     impl<S> Lookup<S, ()> where S: Hash + Eq {
         pub fn new_with_source(s: KeptIndex<S>) -> Lookup<S, ()> {
             let t: Index<()> = Index::new();
-            Lookup { 
+            Lookup {
                 source: s,
                 target: Rc::new(RefCell::new(t)),
-                lookup: HashMap::new() 
+                lookup: HashMap::new()
             }
-        }        
+        }
     }
     impl<T> Lookup<(), T> where T: Hash + Eq {
         pub fn new_with_target(t: KeptIndex<T>) -> Lookup<(), T> {
             let s: Index<()> = Index::new();
-            Lookup { 
+            Lookup {
                 source: Rc::new(RefCell::new(s)),
                 target: t,
-                lookup: HashMap::new() 
+                lookup: HashMap::new()
             }
-        }        
+        }
     }
     impl Lookup<(), ()> {
         pub fn new_with_nothing() -> Lookup<(), ()> {
             let s: Index<()> = Index::new();
-            let t: Index<()> = Index::new();            
-            Lookup { 
+            let t: Index<()> = Index::new();
+            Lookup {
                 source: Rc::new(RefCell::new(s)),
                 target: Rc::new(RefCell::new(t)),
-                lookup: HashMap::new() 
+                lookup: HashMap::new()
             }
-        }        
+        }
     }
 
 
@@ -165,8 +165,8 @@ mod pository {
     }
 
     impl Reliability {
-        pub fn new<T: Into<f64>>(a: T) -> Reliability { 
-            let mut a_f64: f64 = a.into(); 
+        pub fn new<T: Into<f64>>(a: T) -> Reliability {
+            let mut a_f64: f64 = a.into();
             a_f64 = if a_f64 < -1f64 {
                 -1f64
             } else if a_f64 > 1f64 {
@@ -177,17 +177,17 @@ mod pository {
             Reliability { alpha: (100f64 * a_f64) as i8 }
         }
         pub fn consistent(rs: &[Reliability]) -> bool {
-            let r_total = 
+            let r_total =
                 rs.iter().map(|r: &Reliability| r.alpha as i32)
                     .filter(|i| *i != 0)
-                    .fold(0, |sum, i| 
+                    .fold(0, |sum, i|
                         sum + 100 * (1 - i.signum())
-                    ) / 2 + 
+                    ) / 2 +
                 rs.iter().map(|r: &Reliability| r.alpha as i32)
                     .filter(|i| *i != 0)
-                    .fold(0, |sum, i| 
+                    .fold(0, |sum, i|
                         sum + i
-                    ); 
+                    );
 
             r_total <= 100
         }
@@ -196,21 +196,21 @@ mod pository {
         type Output = f64;
         fn add(self, other: Reliability) -> f64 {
             (self.alpha as f64 + other.alpha as f64) / 100f64
-        }    
+        }
     }
     impl ops::Mul for Reliability {
         type Output = f64;
         fn mul(self, other: Reliability) -> f64 {
-            (self.alpha as f64 / 100f64) * (other.alpha as f64 / 100f64) 
-        }    
+            (self.alpha as f64 / 100f64) * (other.alpha as f64 / 100f64)
+        }
     }
     impl fmt::Display for Reliability {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self.alpha {
                 -100     => write!(f, "-1"),
-                -99...-1 => write!(f, "-0.{}", -self.alpha),
+                -99..=-1 => write!(f, "-0.{}", -self.alpha),
                 0        => write!(f, "0"),
-                0...99   => write!(f, "0.{}", self.alpha),
+                0..=99   => write!(f, "0.{}", self.alpha),
                 100      => write!(f, "1"),
                 _        => write!(f, "?"),
             }
@@ -231,8 +231,8 @@ mod pository {
     // ------------- Appearance -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Appearance {
-        role:           usize,  // borrowed in theory 
-        identity:       usize   // borrowed in theory 
+        role:           usize,  // borrowed in theory
+        identity:       usize   // borrowed in theory
     }
     impl Appearance {
         pub fn new(role: usize, identity: usize) -> Appearance {
@@ -272,7 +272,7 @@ mod pository {
     // --------------- Posit ----------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Posit<T> {
-        value:          T,      // borrowed types correspond to knots 
+        value:          T,      // borrowed types correspond to knots
         time:           i64,    // unix time from DateTime<Utc>,
         dereference:    Rc<Dereference>
     }
@@ -298,7 +298,7 @@ mod pository {
     // ------------- Assertion --------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Assertion<T> {
-        positor:        usize,  // borrowed in theory 
+        positor:        usize,  // borrowed in theory
         reliability:    Reliability,
         time:           i64,    // unix time from DateTime<Utc>,
         posit:          Rc<Posit<T>>
@@ -328,17 +328,17 @@ mod pository {
 
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     pub struct Anchor {
-        positor:        usize,  // borrowed in theory 
+        positor:        usize,  // borrowed in theory
         reliability:    Reliability,
         time:           i64,    // unix time from DateTime<Utc>,
-        identity:       usize,  // borrowed in theory 
-        tag:            usize   // borrowed in theory            
+        identity:       usize,  // borrowed in theory
+        tag:            usize   // borrowed in theory
     }
 
     // TODO: remove pub once all methods are in place
     // TODO: add anchor to identity index
-    // --------------- Pository ---------------
-    pub struct Pository {
+    // --------------- Database ---------------
+    pub struct Database {
         // owns an identity Generator
         id_generator:               Generator,
         // owns indexes
@@ -350,14 +350,14 @@ mod pository {
         pub assertion_index:            AnyMap,
         // lends their references to lookups
         pub role_to_identity:           Lookup<String,()>,
-        pub identity_to_appearance:     Lookup<(), Appearance>,  
+        pub identity_to_appearance:     Lookup<(), Appearance>,
         pub appearance_to_dereference:  Lookup<Appearance, Dereference>,
         pub dereference_to_posit:       AnyMap,
         pub posit_to_assertion:         AnyMap
     }
 
-    impl Pository {
-        pub fn new() -> Pository {
+    impl Database {
+        pub fn new() -> Database {
             let id_generator = Generator::new();
             // indexes
             let role_index: KeptIndex<String> = Rc::new(RefCell::new(Index::new()));
@@ -373,7 +373,7 @@ mod pository {
             let dereference_to_posit = AnyMap::new();
             let posit_to_assertion = AnyMap::new();
 
-            Pository {
+            Database {
                 id_generator:               id_generator,
                 role_index:                 role_index,
                 tag_index:                  tag_index,
@@ -382,7 +382,7 @@ mod pository {
                 posit_index:                posit_index,
                 assertion_index:            assertion_index,
                 role_to_identity:           role_to_identity,
-                identity_to_appearance:     identity_to_appearance,  
+                identity_to_appearance:     identity_to_appearance,
                 appearance_to_dereference:  appearance_to_dereference,
                 dereference_to_posit:       dereference_to_posit,
                 posit_to_assertion:         posit_to_assertion
@@ -418,7 +418,7 @@ mod pository {
             let dereference_kept = self.dereference_index.borrow_mut().keep(dereference);
             for a in &self.dereference_index.borrow().find(dereference_kept).unwrap().set {
                 self.appearance_to_dereference.keep(
-                    self.appearance_index.borrow().index_of(a).unwrap(), 
+                    self.appearance_index.borrow().index_of(a).unwrap(),
                     dereference_kept
                 );
             }
@@ -428,7 +428,7 @@ mod pository {
             let posit_index = match self.posit_index.get::<KeptIndex<Posit<T>>>() {
                 Some(index) => index.clone(),
                 None => Rc::new(RefCell::new(Index::new()))
-            };            
+            };
             let posit = posit_index.borrow().find(posit_kept);
             posit
         }
@@ -451,7 +451,7 @@ mod pository {
                     entry.insert(Lookup::new(self.dereference_index.clone(), posit_index.clone())).keep(dereference_kept, posit_kept)
                 }
             };
-            posit_kept 
+            posit_kept
         }
         pub fn add_assertion<T>(&mut self, assertion: Assertion<T>) -> usize where T: 'static + Eq + Hash {
             let assertion_index = match self.assertion_index.get::<KeptIndex<Assertion<T>>>() {
@@ -485,7 +485,8 @@ mod pository {
 
 fn main() {
 
-    let mut posy = pository::Pository::new();
+    use bareclad::*;
+    let mut posy = Database::new();
 
     loop {
         // ------------- OPTIONS --------------
@@ -548,7 +549,7 @@ fn main() {
                 let entered: u8 = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };            
+                };
                 let mut appearances = Vec::new();
                 for i in 0..entered {
                     println!("({}) Please enter an identity:", i+1);
@@ -558,19 +559,19 @@ fn main() {
                     let entered: usize = match entered.trim().parse() {
                         Ok(num) => num,
                         Err(_)  => continue,
-                    };         
+                    };
                     let id = entered;
                     println!("({}) Please enter a role:", i+1);
                     let mut entered = String::new();
                     io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                     let role = posy.add_role(entered.trim().into());
-                    let a = pository::Appearance::new(role, id);
+                    let a = Appearance::new(role, id);
                     let a_kept = posy.add_appearance(a);
                     appearances.push(posy.appearance_index.borrow().find(a_kept).unwrap());
                 }
 
-                let d = pository::Dereference::new(appearances).unwrap();
+                let d = Dereference::new(appearances).unwrap();
                 let d_kept = posy.add_dereference(d);
                 break;
             },
@@ -582,24 +583,24 @@ fn main() {
                 let entered: usize = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };         
+                };
                 let d_kept = entered;
-                println!("Please enter the unix time:");           
+                println!("Please enter the unix time:");
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                 let entered: i64 = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };         
+                };
                 let t = entered;
 
-                println!("Please enter a string value:");           
+                println!("Please enter a string value:");
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                 let d = posy.dereference_index.borrow().find(d_kept).unwrap();
-                let p = pository::Posit::new(entered.trim().into(), t, d);
+                let p = Posit::new(entered.trim().into(), t, d);
                 let p_kept = posy.add_posit::<String>(p);
                 break;
             },
@@ -611,44 +612,44 @@ fn main() {
                 let entered: usize = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };         
+                };
                 let p_kept = entered;
-                println!("Please enter the unix time:");           
+                println!("Please enter the unix time:");
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                 let entered: i64 = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };         
+                };
                 let t = entered;
 
-                println!("Please enter a reliability in the range -1 to 1:");           
+                println!("Please enter a reliability in the range -1 to 1:");
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                 let entered: f64 = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };         
+                };
                 let r = entered;
 
-                println!("Please enter the identity of the positor:");           
+                println!("Please enter the identity of the positor:");
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                 let entered: usize = match entered.trim().parse() {
                     Ok(num) => num,
                     Err(_)  => continue,
-                };         
+                };
                 let id = entered;
 
                 let p = posy.get_posit::<String>(p_kept).unwrap();
-                let a = pository::Assertion::new(id, r, t, p);
+                let a = Assertion::new(id, r, t, p);
                 let a_kept = posy.add_assertion::<String>(a);
                 break;
             },
             _ => continue
         }
-    }    
+    }
 }
