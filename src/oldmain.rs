@@ -1,5 +1,5 @@
 ///
-/// Implements a database using posits from Transitional Modeling.
+/// Implements a database using the structures of Anchor modeling
 ///
 extern crate chrono;
 use chrono::{DateTime, Utc};
@@ -8,41 +8,37 @@ use std::io;
 
 
 // we will use keepers as a pattern to own some things
-extern crate bimap;
+extern crate anymap;
 
-mod bareclad {
-    use std::sync::Arc;
-
-    use bimap::BiMap;
+mod pository {
+    use anymap;
+    use anymap::AnyMap;
 
     use std::collections::hash_map::Entry::{Occupied, Vacant};
     use std::collections::{HashMap, HashSet};
     use std::hash::{Hash};
+    use std::rc::Rc;
     use std::cell::RefCell;
     use std::ops;
     use std::fmt;
 
     static GENESIS: usize = 0;
-
-    pub type Identity = usize;
-
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct IdentityGenerator {
-        current: Identity,
-        released: Vec<Identity>
+    pub struct Generator {
+        current: usize,
+        released: Vec<usize>
     }
 
-    impl IdentityGenerator {
-        pub fn new() -> IdentityGenerator {
-            IdentityGenerator {
+    impl Generator {
+        pub fn new() -> Generator {
+            Generator {
                 current: GENESIS,
                 released: Vec::new()
             }
         }
-        pub fn release(&mut self, g: Identity) {
+        pub fn release(&mut self, g: usize) {
             self.released.push(g);
         }
-        pub fn generate(&mut self) -> Identity {
+        pub fn generate(&mut self) -> usize {
             if self.released.len() > 0 {
                 return self.released.pop().unwrap()
             }
@@ -54,76 +50,105 @@ mod bareclad {
         }
     }
 
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Role {
-        name: &'static str,
-        reserved: bool
+    #[derive(Debug)]
+    pub struct Index<T: Eq + Hash> {
+        index:  Vec<Rc<T>>,
+        kept:   HashMap<Rc<T>, usize>
     }
-
-    impl Role {
-        pub fn new(role: &String, reserved: bool) -> Role {
-            Role {
-                name: Box::leak(role.clone().into_boxed_str()),
-                reserved: reserved
+    impl<T> Index<T> where T: Eq + Hash {
+        pub fn new() -> Index<T> {
+            Index {
+                index: Vec::new(),
+                kept:  HashMap::new()
             }
         }
-        pub fn get_name(&self) -> &'static str {
-            &self.name
-        }
-    }
-
-    pub struct RoleKeeper {
-        kept: BiMap<&'static str, Arc<Role>>
-    }
-    impl RoleKeeper {
-        pub fn new() -> RoleKeeper {
-            RoleKeeper {
-                kept: BiMap::new()
+        pub fn keep(&mut self, keepsake: T) -> usize {
+            let k = Rc::new(keepsake);
+            self.index.push(k.clone());
+            match self.kept.entry(k) {
+                Occupied(entry) => *entry.get(),
+                Vacant(entry)   => *entry.insert(self.index.len() - 1)
             }
         }
-        pub fn keep(&mut self, role: Role) -> Arc<Role> {
-            let name = role.get_name();
-            self.kept.insert(name, Arc::new(role));
-            self.kept.get_by_left(&name).unwrap().clone()
-        }
-    }
-
-    // ------------- Appearance -------------
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Appearance {
-        role:           Arc<Role>,
-        identity:       Arc<Identity>
-    }
-    impl Appearance {
-        pub fn new(role: &Arc<Role>, identity: &Arc<Identity>) -> Appearance {
-            Appearance {
-                role: Arc::clone(role),
-                identity: Arc::clone(identity)
+        // TODO: Really bad to index using [] since it panics if out of bounds
+        pub fn find(&self, i:usize) -> Option<Rc<T>> {
+            match self.index.get(i) {
+                Some(kept) => Some(kept.clone()),
+                None => None
             }
         }
-        pub fn get_role(&self) -> &Role {
-            &self.role
+        pub fn index_of(&self, k:&T) -> Option<usize> {
+            match self.kept.get(k) {
+                Some(i) => Some(*i),
+                None => None
+            }
         }
-        pub fn get_identity(&self) -> &Identity {
-            &self.identity
+        pub fn count(&self) -> usize {
+            self.index.len()
         }
     }
-} // end of mod
 
-use std::sync::Arc;
-use bareclad::{Identity, IdentityGenerator, Role, RoleKeeper, Appearance};
+    type KeptIndex<T> = Rc<RefCell<Index<T>>>;
 
-pub fn main() {
-    let mut generator = IdentityGenerator::new();
-    let mut role_keeper = RoleKeeper::new();
-    let i: Arc<Identity> = Arc::new(generator.generate());
-    let r = Role::new(&String::from("color"), false);
-    let kept_r = role_keeper.keep(r);
-    let a1 = Appearance::new(&kept_r, &i);
-    let a2 = Appearance::new(&kept_r, &i);
-    println!("{} {}", a1.get_role().get_name(), a1.get_identity());
-    println!("{} {}", a2.get_role().get_name(), a2.get_identity());
-}
+    #[derive(Debug)]
+    pub struct Lookup<S:Hash + Eq, T:Hash + Eq> {
+        source: KeptIndex<S>,
+        target: KeptIndex<T>,
+        lookup: HashMap<usize, HashSet<usize>>
+    }
+    impl<S, T> Lookup<S, T> where S: Hash + Eq, T: Hash + Eq {
+        pub fn new(s: KeptIndex<S>, t: KeptIndex<T>) -> Lookup<S, T> {
+            Lookup {
+                source: s,
+                target: t,
+                lookup: HashMap::new()
+            }
+        }
+        pub fn keep(&mut self, key: usize, value: usize) -> bool {
+            match self.lookup.entry(key) {
+                Occupied(mut entry) => entry.get_mut().insert(value),
+                Vacant(entry) => entry.insert(HashSet::new()).insert(value)
+            }
+        }
+        pub fn find(&self, key: usize) -> Option<&HashSet<usize>> {
+            self.lookup.get(&key)
+        }
+        pub fn count(&self) -> usize {
+            self.lookup.len()
+        }
+    }
+    impl<S> Lookup<S, ()> where S: Hash + Eq {
+        pub fn new_with_source(s: KeptIndex<S>) -> Lookup<S, ()> {
+            let t: Index<()> = Index::new();
+            Lookup {
+                source: s,
+                target: Rc::new(RefCell::new(t)),
+                lookup: HashMap::new()
+            }
+        }
+    }
+    impl<T> Lookup<(), T> where T: Hash + Eq {
+        pub fn new_with_target(t: KeptIndex<T>) -> Lookup<(), T> {
+            let s: Index<()> = Index::new();
+            Lookup {
+                source: Rc::new(RefCell::new(s)),
+                target: t,
+                lookup: HashMap::new()
+            }
+        }
+    }
+    impl Lookup<(), ()> {
+        pub fn new_with_nothing() -> Lookup<(), ()> {
+            let s: Index<()> = Index::new();
+            let t: Index<()> = Index::new();
+            Lookup {
+                source: Rc::new(RefCell::new(s)),
+                target: Rc::new(RefCell::new(t)),
+                lookup: HashMap::new()
+            }
+        }
+    }
+
 
     /*
     The master will certainly win.
@@ -134,7 +159,6 @@ pub fn main() {
     The master has a small chance of winning.
     */
 
-/*
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Reliability {
         alpha: i8,
@@ -184,9 +208,9 @@ pub fn main() {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self.alpha {
                 -100     => write!(f, "-1"),
-                -99..=-1 => write!(f, "-0.{}", -self.alpha),
+                -99...-1 => write!(f, "-0.{}", -self.alpha),
                 0        => write!(f, "0"),
-                0..=99   => write!(f, "0.{}", self.alpha),
+                0...99   => write!(f, "0.{}", self.alpha),
                 100      => write!(f, "1"),
                 _        => write!(f, "?"),
             }
@@ -204,6 +228,26 @@ pub fn main() {
     }
 
 
+    // ------------- Appearance -------------
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    pub struct Appearance {
+        role:           usize,  // borrowed in theory
+        identity:       usize   // borrowed in theory
+    }
+    impl Appearance {
+        pub fn new(role: usize, identity: usize) -> Appearance {
+            Appearance {
+                role: role,
+                identity: identity
+            }
+        }
+        pub fn get_role(&self) -> usize {
+            self.role
+        }
+        pub fn get_identity(&self) -> usize {
+            self.identity
+        }
+    }
 
     // ------------- Dereference ------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -293,8 +337,8 @@ pub fn main() {
 
     // TODO: remove pub once all methods are in place
     // TODO: add anchor to identity index
-    // --------------- Database ---------------
-    pub struct Database {
+    // --------------- Pository ---------------
+    pub struct Pository {
         // owns an identity Generator
         id_generator:               Generator,
         // owns indexes
@@ -312,8 +356,8 @@ pub fn main() {
         pub posit_to_assertion:         AnyMap
     }
 
-    impl Database {
-        pub fn new() -> Database {
+    impl Pository {
+        pub fn new() -> Pository {
             let id_generator = Generator::new();
             // indexes
             let role_index: KeptIndex<String> = Rc::new(RefCell::new(Index::new()));
@@ -329,7 +373,7 @@ pub fn main() {
             let dereference_to_posit = AnyMap::new();
             let posit_to_assertion = AnyMap::new();
 
-            Database {
+            Pository {
                 id_generator:               id_generator,
                 role_index:                 role_index,
                 tag_index:                  tag_index,
@@ -441,8 +485,7 @@ pub fn main() {
 
 fn main() {
 
-    use bareclad::*;
-    let mut posy = Database::new();
+    let mut posy = pository::Pository::new();
 
     loop {
         // ------------- OPTIONS --------------
@@ -522,12 +565,12 @@ fn main() {
                     io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                     let role = posy.add_role(entered.trim().into());
-                    let a = Appearance::new(role, id);
+                    let a = pository::Appearance::new(role, id);
                     let a_kept = posy.add_appearance(a);
                     appearances.push(posy.appearance_index.borrow().find(a_kept).unwrap());
                 }
 
-                let d = Dereference::new(appearances).unwrap();
+                let d = pository::Dereference::new(appearances).unwrap();
                 let d_kept = posy.add_dereference(d);
                 break;
             },
@@ -556,7 +599,7 @@ fn main() {
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
                 let d = posy.dereference_index.borrow().find(d_kept).unwrap();
-                let p = Posit::new(entered.trim().into(), t, d);
+                let p = pository::Posit::new(entered.trim().into(), t, d);
                 let p_kept = posy.add_posit::<String>(p);
                 break;
             },
@@ -601,7 +644,7 @@ fn main() {
                 let id = entered;
 
                 let p = posy.get_posit::<String>(p_kept).unwrap();
-                let a = Assertion::new(id, r, t, p);
+                let a = pository::Assertion::new(id, r, t, p);
                 let a_kept = posy.add_assertion::<String>(a);
                 break;
             },
@@ -609,4 +652,3 @@ fn main() {
         }
     }
 }
-    */
