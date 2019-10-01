@@ -108,10 +108,47 @@ mod bareclad {
             &self.identity
         }
     }
+
+    #[derive(Debug)]
+    pub struct AppearanceKeeper {
+        kept: HashSet<Arc<Appearance>>
+    }
+    impl AppearanceKeeper {
+        pub fn new() -> AppearanceKeeper {
+            AppearanceKeeper {
+                kept: HashSet::new()
+            }
+        }
+        pub fn keep(&mut self, appearance: Appearance) -> Arc<Appearance> {
+            let a = Arc::new(appearance);
+            self.kept.insert(a.clone());
+            self.kept.get(&a).unwrap().clone()
+        }
+    }
+
+    // ------------- Appearance -------------
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    pub struct Dereference {
+        set: Vec<Arc<Appearance>>
+    }
+    impl Dereference {
+        pub fn new(mut s: Vec<Arc<Appearance>>) -> Option<Dereference> {
+            s.sort();
+            if s.len() > 1 {
+                for i in 1..s.len() {
+                    if s[i].role == s[i-1].role { return None };
+                }
+            }
+            Some(Dereference{ set: s })
+        }
+        pub fn get_set(&self) -> &Vec<Arc<Appearance>> {
+            &self.set
+        }
+    }
 } // end of mod
 
 use std::sync::Arc;
-use bareclad::{Identity, IdentityGenerator, Role, RoleKeeper, Appearance};
+use bareclad::{Identity, IdentityGenerator, Role, RoleKeeper, Appearance, AppearanceKeeper, Dereference};
 
 pub fn main() {
     let mut generator = IdentityGenerator::new();
@@ -119,10 +156,16 @@ pub fn main() {
     let i: Arc<Identity> = Arc::new(generator.generate());
     let r = Role::new(&String::from("color"), false);
     let kept_r = role_keeper.keep(r);
+    // drop(r); // just to make sure it moved
+    let mut appearance_keeper = AppearanceKeeper::new();
     let a1 = Appearance::new(&kept_r, &i);
+    let kept_a1 = appearance_keeper.keep(a1); // transfer ownership to the keeper
     let a2 = Appearance::new(&kept_r, &i);
-    println!("{} {}", a1.get_role().get_name(), a1.get_identity());
-    println!("{} {}", a2.get_role().get_name(), a2.get_identity());
+    let kept_a2 = appearance_keeper.keep(a2);
+    println!("{} {}", kept_a1.get_role().get_name(), kept_a1.get_identity());
+    println!("{} {}", kept_a2.get_role().get_name(), kept_a2.get_identity());
+    let d1 = Dereference::new([kept_a1].to_vec());
+    println!("{:?}", appearance_keeper);
 }
 
     /*
