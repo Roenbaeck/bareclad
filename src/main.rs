@@ -22,11 +22,11 @@ mod bareclad {
     use std::ops;
     use std::fmt;
 
+    pub type Ref<T> = Arc<T>;
+    pub type Identity = usize;
     static GENESIS: usize = 0;
 
-    pub type Identity = usize;
-
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    #[derive(Debug)]
     pub struct IdentityGenerator {
         current: Identity,
         released: Vec<Identity>
@@ -72,8 +72,9 @@ mod bareclad {
         }
     }
 
+    #[derive(Debug)]
     pub struct RoleKeeper {
-        kept: BiMap<&'static str, Arc<Role>>
+        kept: BiMap<&'static str, Ref<Role>>
     }
     impl RoleKeeper {
         pub fn new() -> RoleKeeper {
@@ -81,9 +82,9 @@ mod bareclad {
                 kept: BiMap::new()
             }
         }
-        pub fn keep(&mut self, role: Role) -> Arc<Role> {
+        pub fn keep(&mut self, role: Role) -> Ref<Role> {
             let name = role.get_name();
-            self.kept.insert(name, Arc::new(role));
+            self.kept.insert(name, Ref::new(role));
             self.kept.get_by_left(&name).unwrap().clone()
         }
     }
@@ -91,14 +92,14 @@ mod bareclad {
     // ------------- Appearance -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Appearance {
-        role:           Arc<Role>,
-        identity:       Arc<Identity>
+        role:           Ref<Role>,
+        identity:       Ref<Identity>
     }
     impl Appearance {
-        pub fn new(role: &Arc<Role>, identity: &Arc<Identity>) -> Appearance {
+        pub fn new(role: &Ref<Role>, identity: &Ref<Identity>) -> Appearance {
             Appearance {
-                role: Arc::clone(role),
-                identity: Arc::clone(identity)
+                role: Ref::clone(role),
+                identity: Ref::clone(identity)
             }
         }
         pub fn get_role(&self) -> &Role {
@@ -111,7 +112,7 @@ mod bareclad {
 
     #[derive(Debug)]
     pub struct AppearanceKeeper {
-        kept: HashSet<Arc<Appearance>>
+        kept: HashSet<Ref<Appearance>>
     }
     impl AppearanceKeeper {
         pub fn new() -> AppearanceKeeper {
@@ -119,8 +120,8 @@ mod bareclad {
                 kept: HashSet::new()
             }
         }
-        pub fn keep(&mut self, appearance: Appearance) -> Arc<Appearance> {
-            let a = Arc::new(appearance);
+        pub fn keep(&mut self, appearance: Appearance) -> Ref<Appearance> {
+            let a = Ref::new(appearance);
             self.kept.insert(a.clone());
             self.kept.get(&a).unwrap().clone()
         }
@@ -128,32 +129,34 @@ mod bareclad {
 
     // ------------- Appearance -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Dereference {
-        set: Vec<Arc<Appearance>>
+    pub struct AppearanceSet {
+        set: Vec<Ref<Appearance>>
     }
-    impl Dereference {
-        pub fn new(mut s: Vec<Arc<Appearance>>) -> Option<Dereference> {
+    impl AppearanceSet {
+        pub fn new(mut s: Vec<Ref<Appearance>>) -> Option<AppearanceSet> {
             s.sort();
             if s.len() > 1 {
                 for i in 1..s.len() {
                     if s[i].role == s[i-1].role { return None };
                 }
             }
-            Some(Dereference{ set: s })
+            Some(AppearanceSet{ set: s })
         }
-        pub fn get_set(&self) -> &Vec<Arc<Appearance>> {
+        pub fn get_set(&self) -> &Vec<Ref<Appearance>> {
             &self.set
         }
     }
 } // end of mod
 
 use std::sync::Arc;
-use bareclad::{Identity, IdentityGenerator, Role, RoleKeeper, Appearance, AppearanceKeeper, Dereference};
+use bareclad::{Identity, IdentityGenerator, Role, RoleKeeper, Appearance, AppearanceKeeper, AppearanceSet};
+
+pub type Ref<T> = Arc<T>;
 
 pub fn main() {
     let mut generator = IdentityGenerator::new();
     let mut role_keeper = RoleKeeper::new();
-    let i: Arc<Identity> = Arc::new(generator.generate());
+    let i: Ref<Identity> = Ref::new(generator.generate());
     let r = Role::new(&String::from("color"), false);
     let kept_r = role_keeper.keep(r);
     // drop(r); // just to make sure it moved
@@ -164,7 +167,7 @@ pub fn main() {
     let kept_a2 = appearance_keeper.keep(a2);
     println!("{} {}", kept_a1.get_role().get_name(), kept_a1.get_identity());
     println!("{} {}", kept_a2.get_role().get_name(), kept_a2.get_identity());
-    let d1 = Dereference::new([kept_a1].to_vec());
+    let d1 = AppearanceSet::new([kept_a1].to_vec());
     println!("{:?}", appearance_keeper);
 }
 
@@ -248,20 +251,20 @@ pub fn main() {
 
 
 
-    // ------------- Dereference ------------
+    // ------------- AppearanceSet ------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Dereference {
+    pub struct AppearanceSet {
         set: Vec<Rc<Appearance>>
     }
-    impl Dereference {
-        pub fn new(mut s: Vec<Rc<Appearance>>) -> Option<Dereference> {
+    impl AppearanceSet {
+        pub fn new(mut s: Vec<Rc<Appearance>>) -> Option<AppearanceSet> {
             s.sort();
             if s.len() > 1 {
                 for i in 1..s.len() {
                     if s[i].role == s[i-1].role { return None };
                 }
             }
-            Some(Dereference{ set: s })
+            Some(AppearanceSet{ set: s })
         }
         pub fn get_set(&self) -> &Vec<Rc<Appearance>> {
             &self.set
@@ -273,14 +276,14 @@ pub fn main() {
     pub struct Posit<T> {
         value:          T,      // borrowed types correspond to knots
         time:           i64,    // unix time from DateTime<Utc>,
-        dereference:    Rc<Dereference>
+        AppearanceSet:    Rc<AppearanceSet>
     }
     impl<T> Posit<T> {
-        pub fn new(value: T, time: i64, dereference: Rc<Dereference>) -> Posit<T> {
+        pub fn new(value: T, time: i64, AppearanceSet: Rc<AppearanceSet>) -> Posit<T> {
             Posit {
                 value: value,
                 time: time,
-                dereference: dereference
+                AppearanceSet: AppearanceSet
             }
         }
         pub fn get_value(&self) -> &T {
@@ -289,8 +292,8 @@ pub fn main() {
         pub fn get_time(&self) -> i64 {
             self.time
         }
-        pub fn get_dereference(&self) -> &Dereference {
-            &self.dereference
+        pub fn get_AppearanceSet(&self) -> &AppearanceSet {
+            &self.AppearanceSet
         }
     }
 
@@ -344,14 +347,14 @@ pub fn main() {
         pub role_index:                 KeptIndex<String>,
         pub tag_index:                  KeptIndex<String>,
         pub appearance_index:           KeptIndex<Appearance>,
-        pub dereference_index:          KeptIndex<Dereference>,
+        pub AppearanceSet_index:          KeptIndex<AppearanceSet>,
         pub posit_index:                AnyMap,
         pub assertion_index:            AnyMap,
         // lends their references to lookups
         pub role_to_identity:           Lookup<String,()>,
         pub identity_to_appearance:     Lookup<(), Appearance>,
-        pub appearance_to_dereference:  Lookup<Appearance, Dereference>,
-        pub dereference_to_posit:       AnyMap,
+        pub appearance_to_AppearanceSet:  Lookup<Appearance, AppearanceSet>,
+        pub AppearanceSet_to_posit:       AnyMap,
         pub posit_to_assertion:         AnyMap
     }
 
@@ -362,14 +365,14 @@ pub fn main() {
             let role_index: KeptIndex<String> = Rc::new(RefCell::new(Index::new()));
             let tag_index: KeptIndex<String> = Rc::new(RefCell::new(Index::new()));
             let appearance_index: KeptIndex<Appearance> = Rc::new(RefCell::new(Index::new()));
-            let dereference_index: KeptIndex<Dereference> = Rc::new(RefCell::new(Index::new()));
+            let AppearanceSet_index: KeptIndex<AppearanceSet> = Rc::new(RefCell::new(Index::new()));
             let posit_index = AnyMap::new();
             let assertion_index = AnyMap::new();
             // lookups
             let role_to_identity: Lookup<String, ()> = Lookup::new_with_source(role_index.clone());
             let identity_to_appearance: Lookup<(), Appearance> = Lookup::new_with_target(appearance_index.clone());
-            let appearance_to_dereference: Lookup<Appearance, Dereference> = Lookup::new(appearance_index.clone(), dereference_index.clone());
-            let dereference_to_posit = AnyMap::new();
+            let appearance_to_AppearanceSet: Lookup<Appearance, AppearanceSet> = Lookup::new(appearance_index.clone(), AppearanceSet_index.clone());
+            let AppearanceSet_to_posit = AnyMap::new();
             let posit_to_assertion = AnyMap::new();
 
             Database {
@@ -377,13 +380,13 @@ pub fn main() {
                 role_index:                 role_index,
                 tag_index:                  tag_index,
                 appearance_index:           appearance_index,
-                dereference_index:          dereference_index,
+                AppearanceSet_index:          AppearanceSet_index,
                 posit_index:                posit_index,
                 assertion_index:            assertion_index,
                 role_to_identity:           role_to_identity,
                 identity_to_appearance:     identity_to_appearance,
-                appearance_to_dereference:  appearance_to_dereference,
-                dereference_to_posit:       dereference_to_posit,
+                appearance_to_AppearanceSet:  appearance_to_AppearanceSet,
+                AppearanceSet_to_posit:       AppearanceSet_to_posit,
                 posit_to_assertion:         posit_to_assertion
             }
         }
@@ -413,15 +416,15 @@ pub fn main() {
             self.identity_to_appearance.keep(identity, appearance_kept);
             appearance_kept
         }
-        pub fn add_dereference(&mut self, dereference: Dereference) -> usize {
-            let dereference_kept = self.dereference_index.borrow_mut().keep(dereference);
-            for a in &self.dereference_index.borrow().find(dereference_kept).unwrap().set {
-                self.appearance_to_dereference.keep(
+        pub fn add_AppearanceSet(&mut self, AppearanceSet: AppearanceSet) -> usize {
+            let AppearanceSet_kept = self.AppearanceSet_index.borrow_mut().keep(AppearanceSet);
+            for a in &self.AppearanceSet_index.borrow().find(AppearanceSet_kept).unwrap().set {
+                self.appearance_to_AppearanceSet.keep(
                     self.appearance_index.borrow().index_of(a).unwrap(),
-                    dereference_kept
+                    AppearanceSet_kept
                 );
             }
-            dereference_kept
+            AppearanceSet_kept
         }
         pub fn get_posit<T>(&self, posit_kept: usize) -> Option<Rc<Posit<T>>> where T: 'static + Eq + Hash {
             let posit_index = match self.posit_index.get::<KeptIndex<Posit<T>>>() {
@@ -439,15 +442,15 @@ pub fn main() {
                 None => Rc::new(RefCell::new(Index::new()))
             };
             let posit_kept = posit_index.borrow_mut().keep(posit);
-            let dereference: &Dereference = &posit_index.borrow().find(posit_kept).unwrap().dereference;
-            // TODO: Dangerous unwrap below (if the dereference has not been added)
-            let dereference_kept = self.dereference_index.borrow().index_of(dereference).unwrap();
-            match self.dereference_to_posit.entry::<Lookup<Dereference, Posit<T>>>() {
+            let AppearanceSet: &AppearanceSet = &posit_index.borrow().find(posit_kept).unwrap().AppearanceSet;
+            // TODO: Dangerous unwrap below (if the AppearanceSet has not been added)
+            let AppearanceSet_kept = self.AppearanceSet_index.borrow().index_of(AppearanceSet).unwrap();
+            match self.AppearanceSet_to_posit.entry::<Lookup<AppearanceSet, Posit<T>>>() {
                 anymap::Entry::Occupied(mut entry) => {
-                    entry.get_mut().keep(dereference_kept, posit_kept)
+                    entry.get_mut().keep(AppearanceSet_kept, posit_kept)
                 },
                 anymap::Entry::Vacant(entry) => {
-                    entry.insert(Lookup::new(self.dereference_index.clone(), posit_index.clone())).keep(dereference_kept, posit_kept)
+                    entry.insert(Lookup::new(self.AppearanceSet_index.clone(), posit_index.clone())).keep(AppearanceSet_kept, posit_kept)
                 }
             };
             posit_kept
@@ -499,16 +502,16 @@ fn main() {
         if posy.role_index.borrow().count() > 0 {
             println!("   {:?}", posy.role_index);
         }
-        println!("3. Create a dereference.");
+        println!("3. Create a AppearanceSet.");
         if posy.identity_to_appearance.count() > 0 {
             println!("   i2a: {:?}", posy.identity_to_appearance);
         }
-        if posy.appearance_to_dereference.count() > 0 {
-            println!("   a2d: {:?}", posy.appearance_to_dereference);
+        if posy.appearance_to_AppearanceSet.count() > 0 {
+            println!("   a2d: {:?}", posy.appearance_to_AppearanceSet);
         }
         println!("4. Create a posit.");
         println!("   {:?}", posy.posit_index);
-        println!("   d2p: {:?}", posy.dereference_to_posit);
+        println!("   d2p: {:?}", posy.AppearanceSet_to_posit);
         println!("5. Create an assertion.");
         println!("   {:?}", posy.assertion_index);
         println!("   p2a: {:?}", posy.posit_to_assertion);
@@ -570,12 +573,12 @@ fn main() {
                     appearances.push(posy.appearance_index.borrow().find(a_kept).unwrap());
                 }
 
-                let d = Dereference::new(appearances).unwrap();
-                let d_kept = posy.add_dereference(d);
+                let d = AppearanceSet::new(appearances).unwrap();
+                let d_kept = posy.add_AppearanceSet(d);
                 break;
             },
             4 => loop {
-                println!("Please enter a dereference number:");
+                println!("Please enter a AppearanceSet number:");
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
@@ -598,7 +601,7 @@ fn main() {
                 let mut entered = String::new();
                 io::stdin().read_line(&mut entered).expect("Failed to read line");
 
-                let d = posy.dereference_index.borrow().find(d_kept).unwrap();
+                let d = posy.AppearanceSet_index.borrow().find(d_kept).unwrap();
                 let p = Posit::new(entered.trim().into(), t, d);
                 let p_kept = posy.add_posit::<String>(p);
                 break;
