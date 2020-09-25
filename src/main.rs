@@ -156,19 +156,25 @@ pub type Ref<T> = Arc<T>;
 pub fn main() {
     let mut generator = IdentityGenerator::new();
     let mut role_keeper = RoleKeeper::new();
-    let i: Ref<Identity> = Ref::new(generator.generate());
-    let r = Role::new(&String::from("color"), false);
-    let kept_r = role_keeper.keep(r);
+    let i1: Ref<Identity> = Ref::new(generator.generate());
+    let r1 = Role::new(&String::from("color"), false);
+    let kept_r1 = role_keeper.keep(r1);
     // drop(r); // just to make sure it moved
     let mut appearance_keeper = AppearanceKeeper::new();
-    let a1 = Appearance::new(&kept_r, &i);
+    let a1 = Appearance::new(&kept_r1, &i1);
     let kept_a1 = appearance_keeper.keep(a1); // transfer ownership to the keeper
-    let a2 = Appearance::new(&kept_r, &i);
+    let a2 = Appearance::new(&kept_r1, &i1);
     let kept_a2 = appearance_keeper.keep(a2);
     println!("{} {}", kept_a1.get_role().get_name(), kept_a1.get_identity());
     println!("{} {}", kept_a2.get_role().get_name(), kept_a2.get_identity());
-    let d1 = AppearanceSet::new([kept_a1].to_vec());
     println!("{:?}", appearance_keeper);
+    let i2: Ref<Identity> = Ref::new(generator.generate());
+    let r2 = Role::new(&String::from("intensity"), false);
+    let kept_r2 = role_keeper.keep(r2);
+    let a3 = Appearance::new(&kept_r2, &i2);
+    let kept_a3 = appearance_keeper.keep(a3);
+    let as1 = AppearanceSet::new([kept_a1, kept_a3].to_vec()).unwrap();
+    println!("{:?}", as1);
 }
 
     /*
