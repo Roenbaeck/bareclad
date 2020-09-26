@@ -4,5 +4,6 @@ version = "0.1.0"
 authors = ["Lars Rönnbäck <lars@bareclad.com>"]
 
 [dependencies]
-chrono = "0.4.0"
-bimap = "0.4.0"
+chrono = "0.4"
+bimap = "0.1"
+typemap = "0.3.3"

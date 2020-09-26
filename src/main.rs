@@ -2,6 +2,7 @@
 /// Implements a database using posits from Transitional Modeling.
 ///
 extern crate chrono;
+extern crate typemap;
 use chrono::{DateTime, Utc};
 
 use std::io;
@@ -14,6 +15,7 @@ mod bareclad {
     use std::sync::Arc;
 
     use bimap::BiMap;
+    use typemap::{TypeMap, Key};
 
     use std::collections::hash_map::Entry::{Occupied, Vacant};
     use std::collections::{HashMap, HashSet};
@@ -83,9 +85,9 @@ mod bareclad {
             }
         }
         pub fn keep(&mut self, role: Role) -> Ref<Role> {
-            let name = role.get_name();
-            self.kept.insert(name, Ref::new(role));
-            self.kept.get_by_left(&name).unwrap().clone()
+            let keepsake = role.get_name();
+            self.kept.insert(keepsake, Ref::new(role));
+            self.kept.get_by_left(&keepsake).unwrap().clone()
         }
     }
 
@@ -121,16 +123,16 @@ mod bareclad {
             }
         }
         pub fn keep(&mut self, appearance: Appearance) -> Ref<Appearance> {
-            let a = Ref::new(appearance);
-            self.kept.insert(a.clone());
-            self.kept.get(&a).unwrap().clone()
+            let keepsake = Ref::new(appearance);
+            self.kept.insert(keepsake.clone());
+            self.kept.get(&keepsake).unwrap().clone()
         }
     }
 
     // ------------- Appearance -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct AppearanceSet {
-        set: Vec<Ref<Appearance>>
+        members: Vec<Ref<Appearance>>
     }
     impl AppearanceSet {
         pub fn new(mut s: Vec<Ref<Appearance>>) -> Option<AppearanceSet> {
@@ -140,16 +142,92 @@ mod bareclad {
                     if s[i].role == s[i-1].role { return None };
                 }
             }
-            Some(AppearanceSet{ set: s })
+            Some(AppearanceSet{ members: s })
         }
-        pub fn get_set(&self) -> &Vec<Ref<Appearance>> {
-            &self.set
+        pub fn get_members(&self) -> &Vec<Ref<Appearance>> {
+            &self.members
         }
     }
+
+    #[derive(Debug)]
+    pub struct AppearanceSetKeeper {
+        kept: HashSet<Ref<AppearanceSet>>
+    }
+    impl AppearanceSetKeeper {
+        pub fn new() -> AppearanceSetKeeper {
+            AppearanceSetKeeper {
+                kept: HashSet::new()
+            }
+        }
+        pub fn keep(&mut self, appearance_set: AppearanceSet) -> Ref<AppearanceSet> {
+            let keepsake = Ref::new(appearance_set);
+            self.kept.insert(keepsake.clone());
+            self.kept.get(&keepsake).unwrap().clone()
+        }
+    }
+
+    // --------------- Posit ----------------
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    pub struct Posit<V,T> where V:Clone {
+        appearance_set: Ref<AppearanceSet>,
+        value:          V,  // imprecise value
+        time:           T   // imprecise time
+    }
+    impl<V,T> Posit<V,T> where V:Clone {
+        pub fn new(value: V, time: T, appearance_set: &Ref<AppearanceSet>) -> Posit<V,T> {
+            Posit {
+                value: value.clone(),
+                time: time,
+                appearance_set: Ref::clone(appearance_set)
+            }
+        }
+        pub fn get_value(&self) -> &V {
+            &self.value
+        }
+        pub fn get_time(&self) -> &T {
+            &self.time
+        }
+        pub fn get_appearance_set(&self) -> &AppearanceSet {
+            &self.appearance_set
+        }
+    }    
+
+    impl<V: 'static, T: 'static> Key for Posit<V,T> where V:Clone { 
+        type Value = HashSet<Ref<Posit<V,T>>>; 
+    }
+
+    pub struct PositKeeper {
+        pub kept: TypeMap
+    }
+    impl PositKeeper {
+        pub fn new() -> PositKeeper {
+            PositKeeper {
+                kept: TypeMap::new()
+            }
+        }
+        pub fn keep<V: 'static,T: 'static>(&mut self, posit: Posit<V,T>) -> Ref<Posit<V,T>> where T: Eq + Hash, V:Clone + Eq + Hash {
+            let set = self.kept.entry::<Posit<V,T>>().or_insert(HashSet::<Ref<Posit<V,T>>>::new());            
+            let keepsake = Ref::new(posit);
+            set.insert(keepsake.clone());
+            set.get(&keepsake).unwrap().clone()
+        }
+    }
+
 } // end of mod
 
 use std::sync::Arc;
-use bareclad::{Identity, IdentityGenerator, Role, RoleKeeper, Appearance, AppearanceKeeper, AppearanceSet};
+use bareclad::{
+    Identity, 
+    IdentityGenerator, 
+    Role, 
+    RoleKeeper, 
+    Appearance, 
+    AppearanceKeeper, 
+    AppearanceSet,
+    AppearanceSetKeeper,
+    Posit,
+    PositKeeper
+};
 
 pub type Ref<T> = Arc<T>;
 
@@ -174,7 +252,21 @@ pub fn main() {
     let a3 = Appearance::new(&kept_r2, &i2);
     let kept_a3 = appearance_keeper.keep(a3);
     let as1 = AppearanceSet::new([kept_a1, kept_a3].to_vec()).unwrap();
-    println!("{:?}", as1);
+    let mut appearance_set_keeper = AppearanceSetKeeper::new();
+    let kept_as1 = appearance_set_keeper.keep(as1);
+    println!("{:?}", appearance_set_keeper);
+    let mut posit_keeper = PositKeeper::new();
+    let p1: Posit<String, i64> = Posit::new(String::from("same value"), 42, &kept_as1);
+    let kept_p1 = posit_keeper.keep(p1);
+    let p2: Posit<String, i64> = Posit::new(String::from("same value"), 42, &kept_as1);
+    let kept_p2 = posit_keeper.keep(p2);
+    let p3: Posit<String, i64> = Posit::new(String::from("different value"), 42, &kept_as1);
+    let kept_p3 = posit_keeper.keep(p3);
+    println!("{:?}", kept_p1);
+    println!("{:?}", kept_p2);
+    println!("{:?}", kept_p3);
+    println!("Contents of the posit keeper:");
+    println!("{:?}", posit_keeper.kept.get::<Posit<String, i64>>());
 }
 
     /*
