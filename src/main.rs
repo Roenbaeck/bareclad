@@ -31,7 +31,7 @@
 /// 
 /// Roles will have the additional ability of being reserved. This is necessary for some
 /// strings that will be used to implement more "traditional" features found in other
-/// databases. Some examples are 'class', 'certainty', and 'constraint'. 
+/// databases. For example 'class' and 'constraint'. 
 ///  
 /// In order to perform searches smart lookups between constructs are needed.
 /// Role -> Appearance -> AppearanceSet -> Posit (at the very least for reserved roles)
