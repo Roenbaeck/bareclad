@@ -51,9 +51,6 @@ extern crate bimap;
 // used in the keeper of posits, since they are generically typed: Posit<V,T> and therefore require a HashSet per type combo
 extern crate typemap;   
 
-
-// we will use keepers as a pattern to own some things
-
 mod bareclad {
     use std::sync::{Arc, Mutex};
 
@@ -70,6 +67,7 @@ mod bareclad {
 
     pub type Ref<T> = Arc<T>; // to allow for easy switching of referencing style
 
+    // ------------- Identity -------------
     pub type Identity = usize;
     static GENESIS: Identity = 0;
 
@@ -108,6 +106,7 @@ mod bareclad {
         }
     }
 
+    // ------------- Role -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Role {
         name: &'static str,
@@ -184,7 +183,7 @@ mod bareclad {
         }
     }
 
-    // ------------- Appearance -------------
+    // ------------- AppearanceSet -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct AppearanceSet {
         members: Vec<Ref<Appearance>>
@@ -267,6 +266,7 @@ mod bareclad {
             set.get(&keepsake).unwrap().clone()
         }
     }
+
     /*
     Certainty is a subjective measure that can be held against a posit.
     This ranges from being certain of a posit to certain of its opposite,
@@ -354,6 +354,7 @@ mod bareclad {
         }
     }
 
+    // ------------- Database -------------
     // This sets up the database with the necessary structures
     pub struct Database {
         // owns an identity generator
