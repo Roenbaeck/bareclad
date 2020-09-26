@@ -246,8 +246,9 @@ mod bareclad {
         }
     }    
 
+    // This key needs to be defined in order to store posits in a TypeMap.
     impl<V: 'static, T: 'static> Key for Posit<V,T> where V:Clone { 
-        type Value = HashSet<Ref<Posit<V,T>>>; 
+        type Value = HashMap<Ref<Posit<V,T>>, Ref<Identity>>; 
     }
 
     pub struct PositKeeper {
@@ -260,10 +261,10 @@ mod bareclad {
             }
         }
         pub fn keep<V: 'static,T: 'static>(&mut self, posit: Posit<V,T>) -> Ref<Posit<V,T>> where T: Eq + Hash, V:Clone + Eq + Hash {
-            let set = self.kept.entry::<Posit<V,T>>().or_insert(HashSet::<Ref<Posit<V,T>>>::new());            
+            let map = self.kept.entry::<Posit<V,T>>().or_insert(HashMap::<Ref<Posit<V,T>>, Ref<Identity>>::new());            
             let keepsake = Ref::new(posit);
-            set.insert(keepsake.clone());
-            set.get(&keepsake).unwrap().clone()
+            map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity when first asserted
+            map.get_key_value(&keepsake).unwrap().0.clone()
         }
     }
 
@@ -406,8 +407,8 @@ mod bareclad {
            self.posit_keeper.clone()
         }
         // now that the database exists we can start to think about assertions
-        pub fn assert<V,T>(&self, asserter: Ref<Identity>, posit: Ref<Posit<V,T>>, certainty: Certainty, assertion_time: DateTime<Utc>) -> Ref<Posit<Certainty,DateTime<Utc>>> where V:Clone {
-            // TODO: posits need their own identities
+        pub fn assert<V,T>(&self, asserter: Ref<Identity>, posit: Ref<Posit<V,T>>, certainty: Certainty, assertion_time: DateTime<Utc>) -> Ref<Posit<Certainty,DateTime<Utc>>> where T: Eq + Hash, V:Clone + Eq + Hash {
+            // posits need their own identities
             let posit_identity: Ref<Identity> = Ref::new(self.identity_generator.lock().unwrap().generate());
             let asserter_role = self.role_keeper.lock().unwrap().get_role("asserter");
             let posit_role = self.role_keeper.lock().unwrap().get_role("posit");
@@ -419,6 +420,9 @@ mod bareclad {
             let kept_appearance_set = self.appearance_set_keeper.lock().unwrap().keep(appearance_set);
             let assertion: Posit<Certainty, DateTime<Utc>> = Posit::new(&kept_appearance_set, certainty, assertion_time);
             let kept_assertion = self.posit_keeper.lock().unwrap().keep(assertion);
+            // here the identity of the posit needs to change in the PositKeeper
+            // let map = self.posit_keeper.lock().unwrap().kept.get::<Posit<V,T>>().unwrap();
+            // map.insert(posit, posit_identity);
             kept_assertion
         }
     } // end of Database
