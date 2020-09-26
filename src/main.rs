@@ -1,15 +1,61 @@
 ///
-/// Implements a database using posits from Transitional Modeling.
-///
-extern crate chrono;
-extern crate typemap;
-use chrono::{DateTime, Utc};
+/// Implements a database based on the "posit" concept from Transitional Modeling.
+/// 
+/// Popular version can be found in these blog posts: 
+/// http://www.anchormodeling.com/tag/transitional/
+/// 
+/// Scientific version can be found in this publication:
+/// https://www.researchgate.net/publication/329352497_Modeling_Conflicting_Unreliable_and_Varying_Information
+/// 
+/// Contains its fundamental constructs:
+/// - Identities
+/// - Roles
+/// - Appearances = (Role, Identity)
+/// - Appearance sets = {Appearance_1, ..., Appearance_N}
+/// - Posits = (Appearance set, V, T) where V is an arbitraty "value type" and T is an arbitrary "time type"
+/// 
+/// Along with these a "keeper" pattern is used, with the intention to own constructs and
+/// guarantee their uniqueness. These can be seen as the database "storage".
+/// The following keepers are needed:
+/// - RoleKeeper
+/// - AppearanceKeeper
+/// - AppearanceSetKeeper
+/// - PositKeeper
+/// 
+/// Identities are special in that they either are generated internally or given as input. 
+/// Internal generation is something that can be triggered if new data is added. 
+/// Identities given as input is something that may happen when a database is restored.
+/// The current approach is using a dumb integer, which after a restore could be set 
+/// to a lower_bound equal to the largest integer found in the restore. 
+/// TODO: Rework identities into a better solution.
+/// 
+/// Roles will have the additional ability of being reserved. This is necessary for some
+/// strings that will be used to implement more "traditional" features found in other
+/// databases. Some examples are 'class', 'reliability', and 'constraint'. 
+///  
+/// In order to perform searches smart lookups between constructs are needed.
+/// Role -> Appearance -> AppearanceSet -> Posit (at the very least for reserved roles)
+/// Identity -> Appearance -> AppearanceSet -> Posit
+/// V -> Posit
+/// T -> Posit
+/// 
+/// A datatype for Reliability is also available, since this is something that will be 
+/// used frequently and that needs to be treated with special care. 
+/// 
 
+// used for timestamps in the database
+extern crate chrono;  
+// used to store the 1-1 mapping between a string representing a role and its corresponding Role object  
+extern crate bimap;     
+// used in the keeper of posits, since they are generically typed: Posit<V,T> and therefore require a HashSet per type combo
+extern crate typemap;   
+
+
+use chrono::{DateTime, Utc};
 use std::io;
 
 
 // we will use keepers as a pattern to own some things
-extern crate bimap;
 
 mod bareclad {
     use std::sync::Arc;
@@ -26,18 +72,18 @@ mod bareclad {
 
     pub type Ref<T> = Arc<T>;
     pub type Identity = usize;
-    static GENESIS: usize = 0;
+    static GENESIS: Identity = 0;
 
     #[derive(Debug)]
     pub struct IdentityGenerator {
-        current: Identity,
+        lower_bound: Identity,
         released: Vec<Identity>
     }
 
     impl IdentityGenerator {
         pub fn new() -> IdentityGenerator {
             IdentityGenerator {
-                current: GENESIS,
+                lower_bound: GENESIS,
                 released: Vec::new()
             }
         }
@@ -45,14 +91,21 @@ mod bareclad {
             self.released.push(g);
         }
         pub fn generate(&mut self) -> Identity {
+            let id: Identity;
             if self.released.len() > 0 {
-                return self.released.pop().unwrap()
+                id = self.released.pop().unwrap()
             }
-            self.current += 1;
-            self.current
+            else {
+                self.lower_bound += 1;
+                id = self.lower_bound;
+            }
+            id
         }
-        pub fn current(&self) -> usize {
-            self.current - self.released.len()
+        pub fn get_lower_bound(&self) -> Identity {
+            self.lower_bound
+        }
+        pub fn set_lower_bound(&mut self, lower_bound: Identity) {
+            self.lower_bound = lower_bound;
         }
     }
 
