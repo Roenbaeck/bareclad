@@ -236,8 +236,9 @@ mod bareclad {
         }
     }
 
+    // This key needs to be defined in order to store posits in a TypeMap.
     impl<V: 'static, T: 'static> Key for Posit<V, T> {
-        type Value = HashSet<Ref<Posit<V, T>>>;
+        type Value = HashMap<Ref<Posit<V, T>>, Ref<Identity>>;
     }
 
     pub struct PositKeeper {
@@ -254,13 +255,13 @@ mod bareclad {
             T: Eq + Hash,
             V: Eq + Hash,
         {
-            let set = self
+            let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashSet::<Ref<Posit<V, T>>>::new());
+                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
             let keepsake = Ref::new(posit);
-            set.insert(keepsake.clone());
-            set.get(&keepsake).unwrap().clone()
+            map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity when first asserted
+            map.get_key_value(&keepsake).unwrap().0.clone()
         }
     }
 
@@ -438,10 +439,13 @@ mod bareclad {
             let assertion: Posit<Certainty, DateTime<Utc>> =
                 Posit::new(&kept_appearance_set, certainty, assertion_time);
             let kept_assertion = self.posit_keeper.lock().unwrap().keep(assertion);
+            // here the identity of the posit needs to change in the PositKeeper
+            // let map = self.posit_keeper.lock().unwrap().kept.get::<Posit<V,T>>().unwrap();
+            // map.insert(posit, posit_identity);
             kept_assertion
         }
-    } 
-} 
+    }
+}
 
 // =========== TESTING BELOW ===========
 
