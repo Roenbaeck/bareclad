@@ -272,6 +272,8 @@ mod bareclad {
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());    
+            // TODO: Debug output here, what is map?
+
             map.insert(posit, identity); // will be set to an actual identity when first asserted
         }
     }
