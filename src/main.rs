@@ -263,6 +263,17 @@ mod bareclad {
             map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity when first asserted
             map.get_key_value(&keepsake).unwrap().0.clone()
         }
+        pub fn identify<V: 'static, T: 'static>(&mut self, posit: Ref<Posit<V, T>>, identity: Ref<Identity>) 
+        where
+            T: Eq + Hash,
+            V: Eq + Hash,
+        {
+            let map = self
+                .kept
+                .entry::<Posit<V, T>>()
+                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());    
+            map.insert(posit, identity); // will be set to an actual identity when first asserted
+        }
     }
 
     /*
@@ -404,7 +415,7 @@ mod bareclad {
             self.posit_keeper.clone()
         }
         // now that the database exists we can start to think about assertions
-        pub fn assert<V, T>(
+        pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &self,
             asserter: Ref<Identity>,
             posit: Ref<Posit<V, T>>,
@@ -440,8 +451,7 @@ mod bareclad {
                 Posit::new(&kept_appearance_set, certainty, assertion_time);
             let kept_assertion = self.posit_keeper.lock().unwrap().keep(assertion);
             // here the identity of the posit needs to change in the PositKeeper
-            // let map = self.posit_keeper.lock().unwrap().kept.get::<Posit<V,T>>().unwrap();
-            // map.insert(posit, posit_identity);
+            self.posit_keeper.lock().unwrap().identify(posit, Ref::new(555)); //posit_identity);
             kept_assertion
         }
     }
@@ -487,7 +497,7 @@ fn main() {
     println!("{:?}", kept_p1);
     println!("{:?}", kept_p2);
     println!("{:?}", kept_p3);
-    println!("Contents of the posit keeper:");
+    println!("Contents of the Posit<String, i64> keeper:");
     println!(
         "{:?}",
         bareclad
@@ -501,8 +511,11 @@ fn main() {
         Ref::new(bareclad.identity_generator().lock().unwrap().generate());
     let c1: Certainty = Certainty::new(100);
     let t1: DateTime<Utc> = Utc::now();
-    bareclad.assert(asserter, kept_p3, c1, t1);
-    println!("Contents of the posit keeper (after one assertion):");
+    bareclad.assert(asserter.clone(), kept_p3.clone(), c1, t1);
+    let c2: Certainty = Certainty::new(100);
+    let t2: DateTime<Utc> = Utc::now();
+    bareclad.assert(asserter.clone(), kept_p3.clone(), c2, t2);
+    println!("Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
     println!(
         "{:?}",
         bareclad
