@@ -82,11 +82,10 @@ mod bareclad {
             self.released.push(g);
         }
         pub fn generate(&mut self) -> Identity {
-            self.released.pop()
-                .unwrap_or_else(|| {
-                    self.lower_bound += 1;
-                    self.lower_bound
-                })
+            self.released.pop().unwrap_or_else(|| {
+                self.lower_bound += 1;
+                self.lower_bound
+            })
         }
     }
 
@@ -138,10 +137,7 @@ mod bareclad {
     }
     impl Appearance {
         pub fn new(role: Ref<Role>, identity: Ref<Identity>) -> Self {
-            Self {
-                role,
-                identity,
-            }
+            Self { role, identity }
         }
         pub fn role(&self) -> &Role {
             &self.role
@@ -256,19 +252,26 @@ mod bareclad {
             map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity once asserted
             map.get_key_value(&keepsake).unwrap().0.clone()
         }
-        pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&mut self, posit: Ref<Posit<V, T>>) -> &Identity {
+        pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+            &mut self,
+            posit: Ref<Posit<V, T>>,
+        ) -> &Identity {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
-            map.entry(posit).or_default() 
+            map.get(&posit).unwrap()
         }
-        pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&mut self, posit: Ref<Posit<V, T>>, identity: Ref<Identity>) {
+        pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+            &mut self,
+            posit: Ref<Posit<V, T>>,
+            identity: Ref<Identity>,
+        ) {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
-            map.entry(posit).or_insert(identity);
+            map.insert(posit, identity);
         }
     }
 
@@ -418,11 +421,14 @@ mod bareclad {
             certainty: Certainty,
             assertion_time: DateTime<Utc>,
         ) -> Ref<Posit<Certainty, DateTime<Utc>>> {
-            let mut posit_identity: Identity = *self.posit_keeper.lock().unwrap().identify(posit.clone());
-            if posit_identity == 0 {
+            let mut posit_identity: Identity =
+                *self.posit_keeper.lock().unwrap().identify(posit.clone());
+            if posit_identity == GENESIS {
                 posit_identity = self.identity_generator().lock().unwrap().generate();
-                println!(">>> Identity assigned: {}", posit_identity);
-                self.posit_keeper.lock().unwrap().assign(posit.clone(), Ref::new(posit_identity));
+                self.posit_keeper
+                    .lock()
+                    .unwrap()
+                    .assign(posit.clone(), Ref::new(posit_identity));
             }
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
@@ -489,7 +495,8 @@ fn main() {
     let kept_p1 = bareclad.posit_keeper().lock().unwrap().keep(p1);
     let p2: Posit<String, i64> = Posit::new(Ref::clone(&kept_as1), String::from("same value"), 42);
     let kept_p2 = bareclad.posit_keeper().lock().unwrap().keep(p2);
-    let p3: Posit<String, i64> = Posit::new(Ref::clone(&kept_as1), String::from("different value"), 42);
+    let p3: Posit<String, i64> =
+        Posit::new(Ref::clone(&kept_as1), String::from("different value"), 42);
     let kept_p3 = bareclad.posit_keeper().lock().unwrap().keep(p3);
     println!("{:?}", kept_p1);
     println!("{:?}", kept_p2);
@@ -522,7 +529,9 @@ fn main() {
             .kept
             .get::<Posit<Certainty, DateTime<Utc>>>()
     );
-    println!("--- Contents of the Posit<String, i64> after the assertions that identify the posit:");
+    println!(
+        "--- Contents of the Posit<String, i64> after the assertions that identify the posit:"
+    );
     println!(
         "{:?}",
         bareclad
@@ -532,5 +541,4 @@ fn main() {
             .kept
             .get::<Posit<String, i64>>()
     );
-
 }
