@@ -63,7 +63,7 @@ mod bareclad {
 
     // ------------- Identity -------------
     pub type Identity = usize;
-    static GENESIS: Identity = 0;
+    const GENESIS: Identity = 0;
 
     #[derive(Debug)]
     pub struct IdentityGenerator {
@@ -253,21 +253,22 @@ mod bareclad {
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
             let keepsake = Ref::new(posit);
-            map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity when first asserted
+            map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity once asserted
             map.get_key_value(&keepsake).unwrap().0.clone()
         }
-        pub fn identify<V: 'static, T: 'static>(&mut self, posit: Ref<Posit<V, T>>, identity: Ref<Identity>) 
-        where
-            T: Eq + Hash,
-            V: Eq + Hash,
-        {
+        pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&mut self, posit: Ref<Posit<V, T>>) -> &Identity {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());    
-            // TODO: Debug output here, what is map?
-
-            map.insert(posit, identity); // will be set to an actual identity when first asserted
+                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
+            map.entry(posit).or_default() 
+        }
+        pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&mut self, posit: Ref<Posit<V, T>>, identity: Ref<Identity>) {
+            let map = self
+                .kept
+                .entry::<Posit<V, T>>()
+                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
+            map.entry(posit).or_insert(identity);
         }
     }
 
@@ -417,9 +418,12 @@ mod bareclad {
             certainty: Certainty,
             assertion_time: DateTime<Utc>,
         ) -> Ref<Posit<Certainty, DateTime<Utc>>> {
-            // TODO: posits need their own identities
-            let posit_identity: Ref<Identity> =
-                Ref::new(self.identity_generator.lock().unwrap().generate());
+            let mut posit_identity: Identity = *self.posit_keeper.lock().unwrap().identify(posit.clone());
+            if posit_identity == 0 {
+                posit_identity = self.identity_generator().lock().unwrap().generate();
+                println!(">>> Identity assigned: {}", posit_identity);
+                self.posit_keeper.lock().unwrap().assign(posit.clone(), Ref::new(posit_identity));
+            }
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
             let asserter_appearance = Appearance::new(asserter_role, asserter);
@@ -428,7 +432,7 @@ mod bareclad {
                 .lock()
                 .unwrap()
                 .keep(asserter_appearance);
-            let posit_appearance = Appearance::new(posit_role, posit_identity);
+            let posit_appearance = Appearance::new(posit_role, Ref::new(posit_identity));
             let kept_posit_appearance = self
                 .appearance_keeper
                 .lock()
@@ -445,8 +449,6 @@ mod bareclad {
             let assertion: Posit<Certainty, DateTime<Utc>> =
                 Posit::new(kept_appearance_set, certainty, assertion_time);
             let kept_assertion = self.posit_keeper.lock().unwrap().keep(assertion);
-            // here the identity of the posit needs to change in the PositKeeper
-            self.posit_keeper.lock().unwrap().identify(posit, Ref::new(555)); //posit_identity);
             kept_assertion
         }
     }
@@ -492,7 +494,7 @@ fn main() {
     println!("{:?}", kept_p1);
     println!("{:?}", kept_p2);
     println!("{:?}", kept_p3);
-    println!("Contents of the Posit<String, i64> keeper:");
+    println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
         "{:?}",
         bareclad
@@ -507,10 +509,10 @@ fn main() {
     let c1: Certainty = Certainty::new(100);
     let t1: DateTime<Utc> = Utc::now();
     bareclad.assert(asserter.clone(), kept_p3.clone(), c1, t1);
-    let c2: Certainty = Certainty::new(100);
+    let c2: Certainty = Certainty::new(99);
     let t2: DateTime<Utc> = Utc::now();
     bareclad.assert(asserter.clone(), kept_p3.clone(), c2, t2);
-    println!("Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
+    println!("--- Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
     println!(
         "{:?}",
         bareclad
@@ -520,4 +522,15 @@ fn main() {
             .kept
             .get::<Posit<Certainty, DateTime<Utc>>>()
     );
+    println!("--- Contents of the Posit<String, i64> after the assertions that identify the posit:");
+    println!(
+        "{:?}",
+        bareclad
+            .posit_keeper()
+            .lock()
+            .unwrap()
+            .kept
+            .get::<Posit<String, i64>>()
+    );
+
 }
