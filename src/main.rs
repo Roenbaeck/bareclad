@@ -151,10 +151,10 @@ mod bareclad {
                 }
                 Entry::Occupied(_e) => (),
             };
-            self.kept.get(&keepsake).unwrap().clone()
+            Ref::clone(self.kept.get(&keepsake).unwrap())
         }
         pub fn get(&self, name: &String) -> Ref<Role> {
-            self.kept.get(name).unwrap().clone()
+            Ref::clone(self.kept.get(name).unwrap())
         }
     }
 
@@ -188,8 +188,8 @@ mod bareclad {
         }
         pub fn keep(&mut self, appearance: Appearance) -> Ref<Appearance> {
             let keepsake = Ref::new(appearance);
-            self.kept.insert(keepsake.clone());
-            self.kept.get(&keepsake).unwrap().clone()
+            self.kept.insert(Ref::clone(&keepsake));
+            Ref::clone(self.kept.get(&keepsake).unwrap())
         }
     }
 
@@ -223,8 +223,8 @@ mod bareclad {
         }
         pub fn keep(&mut self, appearance_set: AppearanceSet) -> Ref<AppearanceSet> {
             let keepsake = Ref::new(appearance_set);
-            self.kept.insert(keepsake.clone());
-            self.kept.get(&keepsake).unwrap().clone()
+            self.kept.insert(Ref::clone(&keepsake));
+            Ref::clone(self.kept.get(&keepsake).unwrap())
         }
     }
 
@@ -277,8 +277,8 @@ mod bareclad {
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
             let keepsake = Ref::new(posit);
-            map.insert(keepsake.clone(), Ref::new(GENESIS)); // will be set to an actual identity once asserted
-            map.get_key_value(&keepsake).unwrap().0.clone()
+            map.insert(Ref::clone(&keepsake), Ref::new(GENESIS)); // will be set to an actual identity once asserted
+            Ref::clone(map.get_key_value(&keepsake).unwrap().0)
         }
         pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
@@ -288,7 +288,7 @@ mod bareclad {
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
-            map.get(&posit).unwrap().clone()
+            Ref::clone(map.get(&posit).unwrap())
         }
         pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
@@ -406,7 +406,7 @@ mod bareclad {
         }
         // TODO: may needs a failsafe when the identity is not in the index
         pub fn lookup(&self, identity: &Identity) -> Ref<Appearance> {
-            self.index.get(identity).unwrap().clone()
+            Ref::clone(self.index.get(identity).unwrap())
         }
     }
 
@@ -449,22 +449,22 @@ mod bareclad {
         }
         // functions to access the owned generator and keepers
         pub fn identity_generator(&self) -> Ref<Mutex<IdentityGenerator>> {
-            self.identity_generator.clone()
+            Ref::clone(&self.identity_generator)
         }
         pub fn role_keeper(&self) -> Ref<Mutex<RoleKeeper>> {
-            self.role_keeper.clone()
+            Ref::clone(&self.role_keeper)
         }
         pub fn appearance_keeper(&self) -> Ref<Mutex<AppearanceKeeper>> {
-            self.appearance_keeper.clone()
+            Ref::clone(&self.appearance_keeper)
         }
         pub fn appearance_set_keeper(&self) -> Ref<Mutex<AppearanceSetKeeper>> {
-            self.appearance_set_keeper.clone()
+            Ref::clone(&self.appearance_set_keeper)
         }
         pub fn posit_keeper(&self) -> Ref<Mutex<PositKeeper>> {
-            self.posit_keeper.clone()
+            Ref::clone(&self.posit_keeper)
         }
         pub fn identity_to_appearance_lookup(&self) -> Ref<Mutex<IdentityToAppearanceLookup>> {
-            self.identity_to_appearance_lookup.clone()
+            Ref::clone(&self.identity_to_appearance_lookup)
         }
         // function that generates an identity
         pub fn generate_identity(&self) -> Ref<Identity> {
@@ -482,7 +482,7 @@ mod bareclad {
             role: Ref<Role>,
             identity: Ref<Identity>,
         ) -> Ref<Appearance> {
-            let lookup_identity = identity.clone();
+            let lookup_identity = Ref::clone(&identity);
             let kept_appearance = self
                 .appearance_keeper
                 .lock()
@@ -491,7 +491,7 @@ mod bareclad {
             self.identity_to_appearance_lookup
                 .lock()
                 .unwrap()
-                .insert(lookup_identity, kept_appearance.clone());
+                .insert(lookup_identity, Ref::clone(&kept_appearance));
             kept_appearance
         }
         pub fn create_appearance_set(
@@ -523,13 +523,13 @@ mod bareclad {
             assertion_time: DateTime<Utc>,
         ) -> Ref<Posit<Certainty, DateTime<Utc>>> {
             let mut posit_identity: Ref<Identity> =
-                self.posit_keeper.lock().unwrap().identify(posit.clone());
+                self.posit_keeper.lock().unwrap().identify(Ref::clone(&posit));
             if *posit_identity == GENESIS {
                 posit_identity = self.generate_identity();
                 self.posit_keeper
                     .lock()
                     .unwrap()
-                    .assign(posit, posit_identity.clone());
+                    .assign(posit, Ref::clone(&posit_identity));
             }
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
@@ -567,9 +567,9 @@ fn main() {
     let a3 = bareclad.create_apperance(Ref::clone(&r2), Ref::clone(&i2));
     let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
-    let p1 = bareclad.create_posit(as1.clone(), String::from("same value"), 42i64);
-    let p2 = bareclad.create_posit(as1.clone(), String::from("same value"), 42i64);
-    let p3 = bareclad.create_posit(as1.clone(), String::from("different value"), 21i64);
+    let p1 = bareclad.create_posit(Ref::clone(&as1), String::from("same value"), 42i64);
+    let p2 = bareclad.create_posit(Ref::clone(&as1), String::from("same value"), 42i64);
+    let p3 = bareclad.create_posit(Ref::clone(&as1), String::from("different value"), 21i64);
     println!("{:?}", p1);
     println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
@@ -584,10 +584,10 @@ fn main() {
     let asserter = bareclad.generate_identity();
     let c1: Certainty = Certainty::new(100);
     let t1: DateTime<Utc> = Utc::now();
-    bareclad.assert(asserter.clone(), p3.clone(), c1, t1);
+    bareclad.assert(Ref::clone(&asserter), Ref::clone(&p3), c1, t1);
     let c2: Certainty = Certainty::new(99);
     let t2: DateTime<Utc> = Utc::now();
-    bareclad.assert(asserter.clone(), p3.clone(), c2, t2);
+    bareclad.assert(Ref::clone(&asserter), Ref::clone(&p3), c2, t2);
     println!("--- Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
     println!(
         "{:?}",
