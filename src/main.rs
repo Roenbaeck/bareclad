@@ -46,14 +46,15 @@
 mod bareclad {
     use std::sync::{Arc, Mutex};
 
-    // used to store the 1-1 mapping between a string representing a role and its corresponding Role object
-    use bimap::BiMap;
     // used in the keeper of posits, since they are generically typed: Posit<V,T> and therefore require a HashSet per type combo
     use typemap::{Key, TypeMap};
 
+    // other keepers use HashSet or HashMap
+    use std::collections::hash_map::Entry;
     use std::collections::{HashMap, HashSet};
-    use std::fmt;
     use std::hash::Hash;
+
+    use std::fmt;
     use std::ops;
 
     // used for timestamps in the database
@@ -113,19 +114,26 @@ mod bareclad {
 
     #[derive(Debug)]
     pub struct RoleKeeper {
-        kept: BiMap<String, Ref<Role>>,
+        kept: HashMap<String, Ref<Role>>,
     }
     impl RoleKeeper {
         pub fn new() -> Self {
-            Self { kept: BiMap::new() }
+            Self {
+                kept: HashMap::new(),
+            }
         }
         pub fn keep(&mut self, role: Role) -> Ref<Role> {
             let keepsake = role.name().to_owned();
-            self.kept.insert(keepsake.clone(), Ref::new(role));
-            self.kept.get_by_left(&keepsake).unwrap().clone()
+            match self.kept.entry(keepsake.clone()) {
+                Entry::Vacant(e) => {
+                    e.insert(Ref::new(role));
+                }
+                Entry::Occupied(_e) => (),
+            };
+            self.kept.get(&keepsake).unwrap().clone()
         }
         pub fn get(&self, name: &String) -> Ref<Role> {
-            self.kept.get_by_left(name).unwrap().clone()
+            self.kept.get(name).unwrap().clone()
         }
     }
 
@@ -428,7 +436,7 @@ mod bareclad {
                 self.posit_keeper
                     .lock()
                     .unwrap()
-                    .assign(posit.clone(), Ref::new(posit_identity));
+                    .assign(posit, Ref::new(posit_identity));
             }
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
@@ -474,7 +482,10 @@ fn main() {
     // does it really have to be this elaborate?
     let i1: Ref<Identity> = Ref::new(bareclad.identity_generator().lock().unwrap().generate());
     let r1 = Role::new(String::from("color"), false);
+    let rdup = Role::new(String::from("color"), false);
     let kept_r1 = bareclad.role_keeper().lock().unwrap().keep(r1);
+    let _kept_rdup = bareclad.role_keeper().lock().unwrap().keep(rdup);
+    println!("{:?}", bareclad.role_keeper());
     // drop(r); // just to make sure it moved
     let a1 = Appearance::new(Ref::clone(&kept_r1), Ref::clone(&i1));
     let kept_a1 = bareclad.appearance_keeper().lock().unwrap().keep(a1); // transfer ownership to the keeper
