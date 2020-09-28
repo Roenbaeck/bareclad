@@ -204,7 +204,9 @@ mod bareclad {
             if set.windows(2).any(|x| x[0].role == x[1].role) {
                 return None;
             }
-            Some(Self { members: Ref::new(set) })
+            Some(Self {
+                members: Ref::new(set),
+            })
         }
         pub fn members(&self) -> &Vec<Ref<Appearance>> {
             &self.members
@@ -398,7 +400,7 @@ mod bareclad {
     impl<K: Eq + Hash, V, H: BuildHasher + Default> Lookup<K, V, H> {
         pub fn new() -> Self {
             Self {
-                index: HashMap::<Ref<K>, Ref<V>, H>::default()
+                index: HashMap::<Ref<K>, Ref<V>, H>::default(),
             }
         }
         pub fn insert(&mut self, key: Ref<K>, value: Ref<V>) {
@@ -421,7 +423,7 @@ mod bareclad {
         pub posit_keeper: Ref<Mutex<PositKeeper>>,
         // owns lookups between constructs (similar to database indexes)
         pub identity_to_appearance_lookup: Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
-        pub appearance_to_appearance_set_lookup: Ref<Mutex<Lookup<Appearance, AppearanceSet>>>
+        pub appearance_to_appearance_set_lookup: Ref<Mutex<Lookup<Appearance, AppearanceSet>>>,
     }
 
     impl Database {
@@ -431,7 +433,8 @@ mod bareclad {
             let appearance_keeper = AppearanceKeeper::new();
             let appearance_set_keeper = AppearanceSetKeeper::new();
             let posit_keeper = PositKeeper::new();
-            let identity_to_appearance_lookup = Lookup::<Identity, Appearance, IdentityHasher>::new();
+            let identity_to_appearance_lookup =
+                Lookup::<Identity, Appearance, IdentityHasher>::new();
             let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
 
             // Reserve some roles that will be necessary for implementing features
@@ -446,7 +449,9 @@ mod bareclad {
                 appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
                 posit_keeper: Ref::new(Mutex::new(posit_keeper)),
                 identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup)),
-                appearance_to_appearance_set_lookup: Ref::new(Mutex::new(appearance_to_appearance_set_lookup))
+                appearance_to_appearance_set_lookup: Ref::new(Mutex::new(
+                    appearance_to_appearance_set_lookup,
+                )),
             }
         }
         // functions to access the owned generator and keepers
@@ -465,10 +470,14 @@ mod bareclad {
         pub fn posit_keeper(&self) -> Ref<Mutex<PositKeeper>> {
             Ref::clone(&self.posit_keeper)
         }
-        pub fn identity_to_appearance_lookup(&self) -> Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
+        pub fn identity_to_appearance_lookup(
+            &self,
+        ) -> Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
             Ref::clone(&self.identity_to_appearance_lookup)
         }
-        pub fn appearance_to_appearance_set_lookup(&self) -> Ref<Mutex<Lookup<Appearance, AppearanceSet>>> {
+        pub fn appearance_to_appearance_set_lookup(
+            &self,
+        ) -> Ref<Mutex<Lookup<Appearance, AppearanceSet>>> {
             Ref::clone(&self.appearance_to_appearance_set_lookup)
         }
         // function that generates an identity
@@ -504,12 +513,16 @@ mod bareclad {
             appearance_set: Vec<Ref<Appearance>>,
         ) -> Ref<AppearanceSet> {
             let lookup_appearance_set = appearance_set.clone();
-            let appearance_set = self.appearance_set_keeper
+            let appearance_set = self
+                .appearance_set_keeper
                 .lock()
                 .unwrap()
                 .keep(AppearanceSet::new(appearance_set).unwrap());
             for appearance in lookup_appearance_set.iter() {
-                self.appearance_to_appearance_set_lookup.lock().unwrap().insert(Ref::clone(&appearance), Ref::clone(&appearance_set));
+                self.appearance_to_appearance_set_lookup
+                    .lock()
+                    .unwrap()
+                    .insert(Ref::clone(&appearance), Ref::clone(&appearance_set));
             }
             appearance_set
         }
@@ -532,8 +545,11 @@ mod bareclad {
             certainty: Certainty,
             assertion_time: DateTime<Utc>,
         ) -> Ref<Posit<Certainty, DateTime<Utc>>> {
-            let mut posit_identity: Ref<Identity> =
-                self.posit_keeper.lock().unwrap().identify(Ref::clone(&posit));
+            let mut posit_identity: Ref<Identity> = self
+                .posit_keeper
+                .lock()
+                .unwrap()
+                .identify(Ref::clone(&posit));
             if *posit_identity == GENESIS {
                 posit_identity = self.generate_identity();
                 self.posit_keeper
@@ -570,10 +586,10 @@ fn main() {
     println!("{:?}", bareclad.role_keeper());
     // drop(r); // just to make sure it moved
     let a1 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1));
-    let a2 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1)); 
+    let a2 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1));
     println!("{:?}", bareclad.appearance_keeper());
     let i2 = bareclad.generate_identity();
-    let r2 = bareclad.create_role(String::from("intensity"), false); 
+    let r2 = bareclad.create_role(String::from("intensity"), false);
     let a3 = bareclad.create_apperance(Ref::clone(&r2), Ref::clone(&i2));
     let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
