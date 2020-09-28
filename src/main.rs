@@ -554,38 +554,22 @@ pub type Ref<T> = Arc<T>;
 fn main() {
     let bareclad = Database::new();
     // does it really have to be this elaborate?
-    let i1: Ref<Identity> = Ref::new(bareclad.identity_generator().lock().unwrap().generate());
-    let r1 = Role::new(String::from("color"), false);
-    let rdup = Role::new(String::from("color"), false);
-    let kept_r1 = bareclad.role_keeper().lock().unwrap().keep(r1);
-    let _kept_rdup = bareclad.role_keeper().lock().unwrap().keep(rdup);
+    let i1 = bareclad.generate_identity();
+    let r1 = bareclad.create_role(String::from("color"), false);
+    let rdup = bareclad.create_role(String::from("color"), false);
     println!("{:?}", bareclad.role_keeper());
     // drop(r); // just to make sure it moved
-    let a1 = Appearance::new(Ref::clone(&kept_r1), Ref::clone(&i1));
-    let kept_a1 = bareclad.appearance_keeper().lock().unwrap().keep(a1); // transfer ownership to the keeper
-    let a2 = Appearance::new(kept_r1, i1);
-    let kept_a2 = bareclad.appearance_keeper().lock().unwrap().keep(a2);
-    println!("{} {}", kept_a1.role().name(), kept_a1.identity());
-    println!("{} {}", kept_a2.role().name(), kept_a2.identity());
+    let a1 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1));
+    let a2 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1)); 
     println!("{:?}", bareclad.appearance_keeper());
-    let i2: Ref<Identity> = Ref::new(bareclad.identity_generator().lock().unwrap().generate());
-    let r2 = Role::new(String::from("intensity"), false);
-    let kept_r2 = bareclad.role_keeper().lock().unwrap().keep(r2);
-    let a3 = Appearance::new(kept_r2, i2);
-    let kept_a3 = bareclad.appearance_keeper().lock().unwrap().keep(a3);
-    let as1 = AppearanceSet::new([kept_a1, kept_a3].to_vec()).unwrap();
-    let kept_as1 = bareclad.appearance_set_keeper().lock().unwrap().keep(as1);
+    let i2 = bareclad.generate_identity();
+    let r2 = bareclad.create_role(String::from("intensity"), false); 
+    let a3 = bareclad.create_apperance(Ref::clone(&r2), Ref::clone(&i2));
+    let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
-    let p1: Posit<String, i64> = Posit::new(Ref::clone(&kept_as1), String::from("same value"), 42);
-    let kept_p1 = bareclad.posit_keeper().lock().unwrap().keep(p1);
-    let p2: Posit<String, i64> = Posit::new(Ref::clone(&kept_as1), String::from("same value"), 42);
-    let kept_p2 = bareclad.posit_keeper().lock().unwrap().keep(p2);
-    let p3: Posit<String, i64> =
-        Posit::new(Ref::clone(&kept_as1), String::from("different value"), 42);
-    let kept_p3 = bareclad.posit_keeper().lock().unwrap().keep(p3);
-    println!("{:?}", kept_p1);
-    println!("{:?}", kept_p2);
-    println!("{:?}", kept_p3);
+    let p1 = bareclad.create_posit(as1.clone(), "same value", 42);
+    let p2 = bareclad.create_posit(as1.clone(), "same value", 42);
+    let p3 = bareclad.create_posit(as1.clone(), "different value", 42);
     println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
         "{:?}",
@@ -596,14 +580,13 @@ fn main() {
             .kept
             .get::<Posit<String, i64>>()
     );
-    let asserter: Ref<Identity> =
-        Ref::new(bareclad.identity_generator().lock().unwrap().generate());
+    let asserter = bareclad.generate_identity();
     let c1: Certainty = Certainty::new(100);
     let t1: DateTime<Utc> = Utc::now();
-    bareclad.assert(asserter.clone(), kept_p3.clone(), c1, t1);
+    bareclad.assert(asserter.clone(), p3.clone(), c1, t1);
     let c2: Certainty = Certainty::new(99);
     let t2: DateTime<Utc> = Utc::now();
-    bareclad.assert(asserter.clone(), kept_p3.clone(), c2, t2);
+    bareclad.assert(asserter.clone(), p3.clone(), c2, t2);
     println!("--- Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
     println!(
         "{:?}",
