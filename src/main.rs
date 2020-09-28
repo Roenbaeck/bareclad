@@ -53,6 +53,7 @@ mod bareclad {
     use std::collections::hash_map::Entry;
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
+    use core::hash::{Hasher, BuildHasherDefault};
 
     use std::fmt;
     use std::ops;
@@ -89,6 +90,25 @@ mod bareclad {
             })
         }
     }
+
+    #[derive(Debug, Clone, Copy, Default)]
+    struct IdentityHash(Identity);
+
+    impl Hasher for IdentityHash {
+        fn finish(&self) -> u64 {
+            self.0 as u64
+        }
+
+        fn write(&mut self, _bytes: &[u8]) {
+            unimplemented!("IdentityHasher only supports usize keys")
+        }
+
+        fn write_usize(&mut self, i: Identity) {
+            self.0 = i;
+        }
+    }
+
+    type IdentityHasher = BuildHasherDefault<IdentityHash>;
 
     // ------------- Role -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -371,6 +391,18 @@ mod bareclad {
         }
     }
 
+    // ------------- Indexes -------------
+    pub struct IdentityToAppearanceIndex {
+        index: HashMap<Ref<Identity>, Ref<Appearance>, IdentityHasher>
+    }
+    impl IdentityToAppearanceIndex {
+        pub fn new() -> Self {
+            Self {
+                index: HashMap::default()
+            }
+        }
+    }
+ 
     // ------------- Database -------------
     // This sets up the database with the necessary structures
     pub struct Database {
@@ -380,8 +412,9 @@ mod bareclad {
         pub role_keeper: Ref<Mutex<RoleKeeper>>,
         pub appearance_keeper: Ref<Mutex<AppearanceKeeper>>,
         pub appearance_set_keeper: Ref<Mutex<AppearanceSetKeeper>>,
-        pub posit_keeper: Ref<Mutex<PositKeeper>>, // owns lookups between constructs (database indexes)
-                                                   // TODO
+        pub posit_keeper: Ref<Mutex<PositKeeper>>, 
+        // owns lookups between constructs (database indexes)
+        pub identity_to_appearance_index: Ref<Mutex<IdentityToAppearanceIndex>>
     }
 
     impl Database {
@@ -391,6 +424,7 @@ mod bareclad {
             let appearance_keeper = AppearanceKeeper::new();
             let appearance_set_keeper = AppearanceSetKeeper::new();
             let posit_keeper = PositKeeper::new();
+            let identity_to_appearance_index = IdentityToAppearanceIndex::new();
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other databases.
@@ -403,6 +437,7 @@ mod bareclad {
                 appearance_keeper: Ref::new(Mutex::new(appearance_keeper)),
                 appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
                 posit_keeper: Ref::new(Mutex::new(posit_keeper)),
+                identity_to_appearance_index: Ref::new(Mutex::new(identity_to_appearance_index))
             }
         }
         // is getters/setters the "rusty" way?
