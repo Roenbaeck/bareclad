@@ -392,14 +392,18 @@ mod bareclad {
     }
 
     // ------------- Indexes -------------
-    pub struct IdentityToAppearanceIndex {
+    pub struct IdentityToAppearanceLookup {
         index: HashMap<Ref<Identity>, Ref<Appearance>, IdentityHasher>
     }
-    impl IdentityToAppearanceIndex {
+    impl IdentityToAppearanceLookup {
         pub fn new() -> Self {
             Self {
                 index: HashMap::default()
             }
+        }
+        // TODO: may needs a failsafe when the identity is not in the index
+        pub fn lookup(&self, identity: &Identity) -> Ref<Appearance> {
+            self.index.get(identity).unwrap().clone()
         }
     }
  
@@ -413,8 +417,8 @@ mod bareclad {
         pub appearance_keeper: Ref<Mutex<AppearanceKeeper>>,
         pub appearance_set_keeper: Ref<Mutex<AppearanceSetKeeper>>,
         pub posit_keeper: Ref<Mutex<PositKeeper>>, 
-        // owns lookups between constructs (database indexes)
-        pub identity_to_appearance_index: Ref<Mutex<IdentityToAppearanceIndex>>
+        // owns lookups between constructs (similar to database indexes)
+        pub identity_to_appearance_lookup: Ref<Mutex<IdentityToAppearanceLookup>>
     }
 
     impl Database {
@@ -424,7 +428,7 @@ mod bareclad {
             let appearance_keeper = AppearanceKeeper::new();
             let appearance_set_keeper = AppearanceSetKeeper::new();
             let posit_keeper = PositKeeper::new();
-            let identity_to_appearance_index = IdentityToAppearanceIndex::new();
+            let identity_to_appearance_lookup = IdentityToAppearanceLookup::new();
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other databases.
@@ -437,7 +441,7 @@ mod bareclad {
                 appearance_keeper: Ref::new(Mutex::new(appearance_keeper)),
                 appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
                 posit_keeper: Ref::new(Mutex::new(posit_keeper)),
-                identity_to_appearance_index: Ref::new(Mutex::new(identity_to_appearance_index))
+                identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup))
             }
         }
         // is getters/setters the "rusty" way?
