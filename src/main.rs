@@ -50,10 +50,10 @@ mod bareclad {
     use typemap::{Key, TypeMap};
 
     // other keepers use HashSet or HashMap
+    use core::hash::{BuildHasherDefault, Hasher};
     use std::collections::hash_map::Entry;
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
-    use core::hash::{Hasher, BuildHasherDefault};
 
     use std::fmt;
     use std::ops;
@@ -268,7 +268,10 @@ mod bareclad {
                 kept: TypeMap::new(),
             }
         }
-        pub fn keep<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&mut self, posit: Posit<V, T>) -> Ref<Posit<V, T>> {
+        pub fn keep<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+            &mut self,
+            posit: Posit<V, T>,
+        ) -> Ref<Posit<V, T>> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
@@ -390,12 +393,12 @@ mod bareclad {
 
     // ------------- Indexes -------------
     pub struct IdentityToAppearanceLookup {
-        index: HashMap<Ref<Identity>, Ref<Appearance>, IdentityHasher>
+        index: HashMap<Ref<Identity>, Ref<Appearance>, IdentityHasher>,
     }
     impl IdentityToAppearanceLookup {
         pub fn new() -> Self {
             Self {
-                index: HashMap::default()
+                index: HashMap::default(),
             }
         }
         pub fn insert(&mut self, identity: Ref<Identity>, appearance: Ref<Appearance>) {
@@ -406,7 +409,7 @@ mod bareclad {
             self.index.get(identity).unwrap().clone()
         }
     }
- 
+
     // ------------- Database -------------
     // This sets up the database with the necessary structures
     pub struct Database {
@@ -416,9 +419,9 @@ mod bareclad {
         pub role_keeper: Ref<Mutex<RoleKeeper>>,
         pub appearance_keeper: Ref<Mutex<AppearanceKeeper>>,
         pub appearance_set_keeper: Ref<Mutex<AppearanceSetKeeper>>,
-        pub posit_keeper: Ref<Mutex<PositKeeper>>, 
+        pub posit_keeper: Ref<Mutex<PositKeeper>>,
         // owns lookups between constructs (similar to database indexes)
-        pub identity_to_appearance_lookup: Ref<Mutex<IdentityToAppearanceLookup>>
+        pub identity_to_appearance_lookup: Ref<Mutex<IdentityToAppearanceLookup>>,
     }
 
     impl Database {
@@ -441,7 +444,7 @@ mod bareclad {
                 appearance_keeper: Ref::new(Mutex::new(appearance_keeper)),
                 appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
                 posit_keeper: Ref::new(Mutex::new(posit_keeper)),
-                identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup))
+                identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup)),
             }
         }
         // functions to access the owned generator and keepers
@@ -469,28 +472,47 @@ mod bareclad {
         }
         // functions to create constructs for the keepers to keep that also populate the lookups
         pub fn create_role(&self, role: String, reserved: bool) -> Ref<Role> {
-            self.role_keeper.lock().unwrap().keep(Role::new(role, reserved))
+            self.role_keeper
+                .lock()
+                .unwrap()
+                .keep(Role::new(role, reserved))
         }
-        pub fn create_apperance(&self, role: Ref<Role>, identity: Ref<Identity>) -> Ref<Appearance> {
+        pub fn create_apperance(
+            &self,
+            role: Ref<Role>,
+            identity: Ref<Identity>,
+        ) -> Ref<Appearance> {
             let lookup_identity = identity.clone();
-            let kept_appearance = 
-            self
+            let kept_appearance = self
                 .appearance_keeper
                 .lock()
                 .unwrap()
                 .keep(Appearance::new(role, identity));
-            self.identity_to_appearance_lookup.lock().unwrap().insert(lookup_identity, kept_appearance.clone());
+            self.identity_to_appearance_lookup
+                .lock()
+                .unwrap()
+                .insert(lookup_identity, kept_appearance.clone());
             kept_appearance
         }
-        pub fn create_appearance_set(&self, appearance_set: Vec<Ref<Appearance>>) -> Ref<AppearanceSet> {
-            self
-                .appearance_set_keeper
+        pub fn create_appearance_set(
+            &self,
+            appearance_set: Vec<Ref<Appearance>>,
+        ) -> Ref<AppearanceSet> {
+            self.appearance_set_keeper
                 .lock()
                 .unwrap()
                 .keep(AppearanceSet::new(appearance_set).unwrap()) // TODO: unwrap could potentially fail
         }
-        pub fn create_posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&self, appearance_set: Ref<AppearanceSet>, value: V, time: T) -> Ref<Posit<V,T>> {
-            self.posit_keeper.lock().unwrap().keep(Posit::new(appearance_set, value, time))
+        pub fn create_posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+            &self,
+            appearance_set: Ref<AppearanceSet>,
+            value: V,
+            time: T,
+        ) -> Ref<Posit<V, T>> {
+            self.posit_keeper
+                .lock()
+                .unwrap()
+                .keep(Posit::new(appearance_set, value, time))
         }
         // finally, now that the database exists we can start to make assertions
         pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
@@ -513,7 +535,8 @@ mod bareclad {
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
             let asserter_appearance = self.create_apperance(asserter_role, asserter);
             let posit_appearance = self.create_apperance(posit_role, posit_identity);
-            let appearance_set = self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
+            let appearance_set =
+                self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
             self.create_posit(appearance_set, certainty, assertion_time)
         }
     }
