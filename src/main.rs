@@ -50,8 +50,8 @@ mod bareclad {
     use typemap::{Key, TypeMap};
 
     // other keepers use HashSet or HashMap
-    use core::hash::{BuildHasherDefault, Hasher};
-    use std::collections::hash_map::Entry;
+    use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
+    use std::collections::hash_map::{Entry, RandomState};
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
 
@@ -93,7 +93,7 @@ mod bareclad {
     }
 
     #[derive(Debug, Clone, Copy, Default)]
-    struct IdentityHash(Identity);
+    pub struct IdentityHash(Identity);
 
     impl Hasher for IdentityHash {
         fn finish(&self) -> u64 {
@@ -196,15 +196,15 @@ mod bareclad {
     // ------------- AppearanceSet -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct AppearanceSet {
-        members: Vec<Ref<Appearance>>,
+        members: Ref<Vec<Ref<Appearance>>>,
     }
     impl AppearanceSet {
-        pub fn new(mut s: Vec<Ref<Appearance>>) -> Option<Self> {
-            s.sort_unstable();
-            if s.windows(2).any(|x| x[0].role == x[1].role) {
+        pub fn new(mut set: Vec<Ref<Appearance>>) -> Option<Self> {
+            set.sort_unstable();
+            if set.windows(2).any(|x| x[0].role == x[1].role) {
                 return None;
             }
-            Some(Self { members: s })
+            Some(Self { members: Ref::new(set) })
         }
         pub fn members(&self) -> &Vec<Ref<Appearance>> {
             &self.members
@@ -391,22 +391,21 @@ mod bareclad {
         }
     }
 
-    // ------------- Indexes -------------
-    pub struct IdentityToAppearanceLookup {
-        index: HashMap<Ref<Identity>, Ref<Appearance>, IdentityHasher>,
+    // ------------- Lookups -------------
+    pub struct Lookup<K, V, H = RandomState> {
+        index: HashMap<Ref<K>, Ref<V>, H>,
     }
-    impl IdentityToAppearanceLookup {
+    impl<K: Eq + Hash, V, H: BuildHasher + Default> Lookup<K, V, H> {
         pub fn new() -> Self {
             Self {
-                index: HashMap::default(),
+                index: HashMap::<Ref<K>, Ref<V>, H>::default()
             }
         }
-        pub fn insert(&mut self, identity: Ref<Identity>, appearance: Ref<Appearance>) {
-            self.index.insert(identity, appearance);
+        pub fn insert(&mut self, key: Ref<K>, value: Ref<V>) {
+            self.index.insert(key, value);
         }
-        // TODO: may needs a failsafe when the identity is not in the index
-        pub fn lookup(&self, identity: &Identity) -> Ref<Appearance> {
-            Ref::clone(self.index.get(identity).unwrap())
+        pub fn lookup(&self, key: &K) -> Ref<V> {
+            Ref::clone(self.index.get(key).unwrap())
         }
     }
 
@@ -421,7 +420,8 @@ mod bareclad {
         pub appearance_set_keeper: Ref<Mutex<AppearanceSetKeeper>>,
         pub posit_keeper: Ref<Mutex<PositKeeper>>,
         // owns lookups between constructs (similar to database indexes)
-        pub identity_to_appearance_lookup: Ref<Mutex<IdentityToAppearanceLookup>>,
+        pub identity_to_appearance_lookup: Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
+        pub appearance_to_appearance_set_lookup: Ref<Mutex<Lookup<Appearance, AppearanceSet>>>
     }
 
     impl Database {
@@ -431,7 +431,8 @@ mod bareclad {
             let appearance_keeper = AppearanceKeeper::new();
             let appearance_set_keeper = AppearanceSetKeeper::new();
             let posit_keeper = PositKeeper::new();
-            let identity_to_appearance_lookup = IdentityToAppearanceLookup::new();
+            let identity_to_appearance_lookup = Lookup::<Identity, Appearance, IdentityHasher>::new();
+            let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other databases.
@@ -445,6 +446,7 @@ mod bareclad {
                 appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
                 posit_keeper: Ref::new(Mutex::new(posit_keeper)),
                 identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup)),
+                appearance_to_appearance_set_lookup: Ref::new(Mutex::new(appearance_to_appearance_set_lookup))
             }
         }
         // functions to access the owned generator and keepers
@@ -463,8 +465,11 @@ mod bareclad {
         pub fn posit_keeper(&self) -> Ref<Mutex<PositKeeper>> {
             Ref::clone(&self.posit_keeper)
         }
-        pub fn identity_to_appearance_lookup(&self) -> Ref<Mutex<IdentityToAppearanceLookup>> {
+        pub fn identity_to_appearance_lookup(&self) -> Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
             Ref::clone(&self.identity_to_appearance_lookup)
+        }
+        pub fn appearance_to_appearance_set_lookup(&self) -> Ref<Mutex<Lookup<Appearance, AppearanceSet>>> {
+            Ref::clone(&self.appearance_to_appearance_set_lookup)
         }
         // function that generates an identity
         pub fn generate_identity(&self) -> Ref<Identity> {
@@ -498,10 +503,15 @@ mod bareclad {
             &self,
             appearance_set: Vec<Ref<Appearance>>,
         ) -> Ref<AppearanceSet> {
-            self.appearance_set_keeper
+            let lookup_appearance_set = appearance_set.clone();
+            let appearance_set = self.appearance_set_keeper
                 .lock()
                 .unwrap()
-                .keep(AppearanceSet::new(appearance_set).unwrap()) // TODO: unwrap could potentially fail
+                .keep(AppearanceSet::new(appearance_set).unwrap());
+            for appearance in lookup_appearance_set.iter() {
+                self.appearance_to_appearance_set_lookup.lock().unwrap().insert(Ref::clone(&appearance), Ref::clone(&appearance_set));
+            }
+            appearance_set
         }
         pub fn create_posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &self,
