@@ -64,6 +64,7 @@ mod bareclad {
     pub type Ref<T> = Arc<T>; // to allow for easy switching of referencing style
 
     // ------------- Identity -------------
+    // TODO: Investigate using AtomicUsize instead.
     pub type Identity = usize;
     const GENESIS: Identity = 0;
 
@@ -267,11 +268,7 @@ mod bareclad {
                 kept: TypeMap::new(),
             }
         }
-        pub fn keep<V: 'static, T: 'static>(&mut self, posit: Posit<V, T>) -> Ref<Posit<V, T>>
-        where
-            T: Eq + Hash,
-            V: Eq + Hash,
-        {
+        pub fn keep<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&mut self, posit: Posit<V, T>) -> Ref<Posit<V, T>> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
@@ -283,12 +280,12 @@ mod bareclad {
         pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
             posit: Ref<Posit<V, T>>,
-        ) -> &Identity {
+        ) -> Ref<Identity> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
-            map.get(&posit).unwrap()
+            map.get(&posit).unwrap().clone()
         }
         pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
@@ -401,6 +398,9 @@ mod bareclad {
                 index: HashMap::default()
             }
         }
+        pub fn insert(&mut self, identity: Ref<Identity>, appearance: Ref<Appearance>) {
+            self.index.insert(identity, appearance);
+        }
         // TODO: may needs a failsafe when the identity is not in the index
         pub fn lookup(&self, identity: &Identity) -> Ref<Appearance> {
             self.index.get(identity).unwrap().clone()
@@ -444,7 +444,7 @@ mod bareclad {
                 identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup))
             }
         }
-        // is getters/setters the "rusty" way?
+        // functions to access the owned generator and keepers
         pub fn identity_generator(&self) -> Ref<Mutex<IdentityGenerator>> {
             self.identity_generator.clone()
         }
@@ -460,7 +460,39 @@ mod bareclad {
         pub fn posit_keeper(&self) -> Ref<Mutex<PositKeeper>> {
             self.posit_keeper.clone()
         }
-        // now that the database exists we can start to think about assertions
+        pub fn identity_to_appearance_lookup(&self) -> Ref<Mutex<IdentityToAppearanceLookup>> {
+            self.identity_to_appearance_lookup.clone()
+        }
+        // function that generates an identity
+        pub fn generate_identity(&self) -> Ref<Identity> {
+            Ref::new(self.identity_generator.lock().unwrap().generate())
+        }
+        // functions to create constructs for the keepers to keep that also populate the lookups
+        pub fn create_role(&self, role: String, reserved: bool) -> Ref<Role> {
+            self.role_keeper.lock().unwrap().keep(Role::new(role, reserved))
+        }
+        pub fn create_apperance(&self, role: Ref<Role>, identity: Ref<Identity>) -> Ref<Appearance> {
+            let lookup_identity = identity.clone();
+            let kept_appearance = 
+            self
+                .appearance_keeper
+                .lock()
+                .unwrap()
+                .keep(Appearance::new(role, identity));
+            self.identity_to_appearance_lookup.lock().unwrap().insert(lookup_identity, kept_appearance.clone());
+            kept_appearance
+        }
+        pub fn create_appearance_set(&self, appearance_set: Vec<Ref<Appearance>>) -> Ref<AppearanceSet> {
+            self
+                .appearance_set_keeper
+                .lock()
+                .unwrap()
+                .keep(AppearanceSet::new(appearance_set).unwrap()) // TODO: unwrap could potentially fail
+        }
+        pub fn create_posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(&self, appearance_set: Ref<AppearanceSet>, value: V, time: T) -> Ref<Posit<V,T>> {
+            self.posit_keeper.lock().unwrap().keep(Posit::new(appearance_set, value, time))
+        }
+        // finally, now that the database exists we can start to make assertions
         pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &self,
             asserter: Ref<Identity>,
@@ -468,41 +500,21 @@ mod bareclad {
             certainty: Certainty,
             assertion_time: DateTime<Utc>,
         ) -> Ref<Posit<Certainty, DateTime<Utc>>> {
-            let mut posit_identity: Identity =
-                *self.posit_keeper.lock().unwrap().identify(posit.clone());
-            if posit_identity == GENESIS {
-                posit_identity = self.identity_generator().lock().unwrap().generate();
+            let mut posit_identity: Ref<Identity> =
+                self.posit_keeper.lock().unwrap().identify(posit.clone());
+            if *posit_identity == GENESIS {
+                posit_identity = self.generate_identity();
                 self.posit_keeper
                     .lock()
                     .unwrap()
-                    .assign(posit, Ref::new(posit_identity));
+                    .assign(posit, posit_identity.clone());
             }
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
-            let asserter_appearance = Appearance::new(asserter_role, asserter);
-            let kept_asserter_appearance = self
-                .appearance_keeper
-                .lock()
-                .unwrap()
-                .keep(asserter_appearance);
-            let posit_appearance = Appearance::new(posit_role, Ref::new(posit_identity));
-            let kept_posit_appearance = self
-                .appearance_keeper
-                .lock()
-                .unwrap()
-                .keep(posit_appearance);
-            let appearance_set =
-                AppearanceSet::new([kept_asserter_appearance, kept_posit_appearance].to_vec())
-                    .unwrap();
-            let kept_appearance_set = self
-                .appearance_set_keeper
-                .lock()
-                .unwrap()
-                .keep(appearance_set);
-            let assertion: Posit<Certainty, DateTime<Utc>> =
-                Posit::new(kept_appearance_set, certainty, assertion_time);
-            let kept_assertion = self.posit_keeper.lock().unwrap().keep(assertion);
-            kept_assertion
+            let asserter_appearance = self.create_apperance(asserter_role, asserter);
+            let posit_appearance = self.create_apperance(posit_role, posit_identity);
+            let appearance_set = self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
+            self.create_posit(appearance_set, certainty, assertion_time)
         }
     }
 }
