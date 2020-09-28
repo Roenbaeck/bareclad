@@ -567,9 +567,10 @@ fn main() {
     let a3 = bareclad.create_apperance(Ref::clone(&r2), Ref::clone(&i2));
     let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
-    let p1 = bareclad.create_posit(as1.clone(), "same value", 42);
-    let p2 = bareclad.create_posit(as1.clone(), "same value", 42);
-    let p3 = bareclad.create_posit(as1.clone(), "different value", 42);
+    let p1 = bareclad.create_posit(as1.clone(), String::from("same value"), 42i64);
+    let p2 = bareclad.create_posit(as1.clone(), String::from("same value"), 42i64);
+    let p3 = bareclad.create_posit(as1.clone(), String::from("different value"), 21i64);
+    println!("{:?}", p1);
     println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
         "{:?}",
