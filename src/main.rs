@@ -62,8 +62,6 @@ mod bareclad {
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
 
-    pub type Ref<T> = Arc<T>; // to allow for easy switching of referencing style
-
     // ------------- Identity -------------
     // TODO: Investigate using AtomicUsize instead.
     pub type Identity = usize;
@@ -136,7 +134,7 @@ mod bareclad {
 
     #[derive(Debug)]
     pub struct RoleKeeper {
-        kept: HashMap<String, Ref<Role>>,
+        kept: HashMap<String, Arc<Role>>,
     }
     impl RoleKeeper {
         pub fn new() -> Self {
@@ -144,29 +142,29 @@ mod bareclad {
                 kept: HashMap::new(),
             }
         }
-        pub fn keep(&mut self, role: Role) -> Ref<Role> {
+        pub fn keep(&mut self, role: Role) -> Arc<Role> {
             let keepsake = role.name().to_owned();
             match self.kept.entry(keepsake.clone()) {
                 Entry::Vacant(e) => {
-                    e.insert(Ref::new(role));
+                    e.insert(Arc::new(role));
                 }
                 Entry::Occupied(_e) => (),
             };
-            Ref::clone(self.kept.get(&keepsake).unwrap())
+            Arc::clone(self.kept.get(&keepsake).unwrap())
         }
-        pub fn get(&self, name: &String) -> Ref<Role> {
-            Ref::clone(self.kept.get(name).unwrap())
+        pub fn get(&self, name: &String) -> Arc<Role> {
+            Arc::clone(self.kept.get(name).unwrap())
         }
     }
 
     // ------------- Appearance -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Appearance {
-        role: Ref<Role>,
-        identity: Ref<Identity>,
+        role: Arc<Role>,
+        identity: Arc<Identity>,
     }
     impl Appearance {
-        pub fn new(role: Ref<Role>, identity: Ref<Identity>) -> Self {
+        pub fn new(role: Arc<Role>, identity: Arc<Identity>) -> Self {
             Self { role, identity }
         }
         pub fn role(&self) -> &Role {
@@ -179,7 +177,7 @@ mod bareclad {
 
     #[derive(Debug)]
     pub struct AppearanceKeeper {
-        kept: HashSet<Ref<Appearance>>,
+        kept: HashSet<Arc<Appearance>>,
     }
     impl AppearanceKeeper {
         pub fn new() -> Self {
@@ -187,36 +185,36 @@ mod bareclad {
                 kept: HashSet::new(),
             }
         }
-        pub fn keep(&mut self, appearance: Appearance) -> Ref<Appearance> {
-            let keepsake = Ref::new(appearance);
-            self.kept.insert(Ref::clone(&keepsake));
-            Ref::clone(self.kept.get(&keepsake).unwrap())
+        pub fn keep(&mut self, appearance: Appearance) -> Arc<Appearance> {
+            let keepsake = Arc::new(appearance);
+            self.kept.insert(Arc::clone(&keepsake));
+            Arc::clone(self.kept.get(&keepsake).unwrap())
         }
     }
 
     // ------------- AppearanceSet -------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct AppearanceSet {
-        members: Ref<Vec<Ref<Appearance>>>,
+        members: Arc<Vec<Arc<Appearance>>>,
     }
     impl AppearanceSet {
-        pub fn new(mut set: Vec<Ref<Appearance>>) -> Option<Self> {
+        pub fn new(mut set: Vec<Arc<Appearance>>) -> Option<Self> {
             set.sort_unstable();
             if set.windows(2).any(|x| x[0].role == x[1].role) {
                 return None;
             }
             Some(Self {
-                members: Ref::new(set),
+                members: Arc::new(set),
             })
         }
-        pub fn members(&self) -> &Vec<Ref<Appearance>> {
+        pub fn members(&self) -> &Vec<Arc<Appearance>> {
             &self.members
         }
     }
 
     #[derive(Debug)]
     pub struct AppearanceSetKeeper {
-        kept: HashSet<Ref<AppearanceSet>>,
+        kept: HashSet<Arc<AppearanceSet>>,
     }
     impl AppearanceSetKeeper {
         pub fn new() -> Self {
@@ -224,22 +222,22 @@ mod bareclad {
                 kept: HashSet::new(),
             }
         }
-        pub fn keep(&mut self, appearance_set: AppearanceSet) -> Ref<AppearanceSet> {
-            let keepsake = Ref::new(appearance_set);
-            self.kept.insert(Ref::clone(&keepsake));
-            Ref::clone(self.kept.get(&keepsake).unwrap())
+        pub fn keep(&mut self, appearance_set: AppearanceSet) -> Arc<AppearanceSet> {
+            let keepsake = Arc::new(appearance_set);
+            self.kept.insert(Arc::clone(&keepsake));
+            Arc::clone(self.kept.get(&keepsake).unwrap())
         }
     }
 
     // --------------- Posit ----------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
     pub struct Posit<V, T> {
-        appearance_set: Ref<AppearanceSet>,
+        appearance_set: Arc<AppearanceSet>,
         value: V, // imprecise value
         time: T,  // imprecise time
     }
     impl<V, T> Posit<V, T> {
-        pub fn new(appearance_set: Ref<AppearanceSet>, value: V, time: T) -> Posit<V, T> {
+        pub fn new(appearance_set: Arc<AppearanceSet>, value: V, time: T) -> Posit<V, T> {
             Self {
                 value,
                 time,
@@ -259,7 +257,7 @@ mod bareclad {
 
     // This key needs to be defined in order to store posits in a TypeMap.
     impl<V: 'static, T: 'static> Key for Posit<V, T> {
-        type Value = HashMap<Ref<Posit<V, T>>, Ref<Identity>>;
+        type Value = HashMap<Arc<Posit<V, T>>, Arc<Identity>>;
     }
 
     pub struct PositKeeper {
@@ -274,34 +272,34 @@ mod bareclad {
         pub fn keep<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
             posit: Posit<V, T>,
-        ) -> Ref<Posit<V, T>> {
+        ) -> Arc<Posit<V, T>> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
-            let keepsake = Ref::new(posit);
-            map.insert(Ref::clone(&keepsake), Ref::new(GENESIS)); // will be set to an actual identity once asserted
-            Ref::clone(map.get_key_value(&keepsake).unwrap().0)
+                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
+            let keepsake = Arc::new(posit);
+            map.insert(Arc::clone(&keepsake), Arc::new(GENESIS)); // will be set to an actual identity once asserted
+            Arc::clone(map.get_key_value(&keepsake).unwrap().0)
         }
         pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
-            posit: Ref<Posit<V, T>>,
-        ) -> Ref<Identity> {
+            posit: Arc<Posit<V, T>>,
+        ) -> Arc<Identity> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
-            Ref::clone(map.get(&posit).unwrap())
+                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
+            Arc::clone(map.get(&posit).unwrap())
         }
         pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
-            posit: Ref<Posit<V, T>>,
-            identity: Ref<Identity>,
+            posit: Arc<Posit<V, T>>,
+            identity: Arc<Identity>,
         ) {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Ref<Posit<V, T>>, Ref<Identity>>::new());
+                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
             map.insert(posit, identity);
         }
     }
@@ -397,19 +395,19 @@ mod bareclad {
     // ------------- Lookups -------------
     #[derive(Debug)]
     pub struct Lookup<K, V, H = RandomState> {
-        index: HashMap<Ref<K>, Ref<V>, H>,
+        index: HashMap<Arc<K>, Arc<V>, H>,
     }
     impl<K: Eq + Hash, V, H: BuildHasher + Default> Lookup<K, V, H> {
         pub fn new() -> Self {
             Self {
-                index: HashMap::<Ref<K>, Ref<V>, H>::default(),
+                index: HashMap::<Arc<K>, Arc<V>, H>::default(),
             }
         }
-        pub fn insert(&mut self, key: Ref<K>, value: Ref<V>) {
+        pub fn insert(&mut self, key: Arc<K>, value: Arc<V>) {
             self.index.insert(key, value);
         }
-        pub fn lookup(&self, key: &K) -> Ref<V> {
-            Ref::clone(self.index.get(key).unwrap())
+        pub fn lookup(&self, key: &K) -> Arc<V> {
+            Arc::clone(self.index.get(key).unwrap())
         }
     }
 
@@ -426,26 +424,26 @@ mod bareclad {
     */
 
     pub struct AppearanceSetToPositLookup {
-        index: HashMap<(Ref<AppearanceSet>, TypeId), Ref<dyn Any + Send + Sync>>,
+        index: HashMap<(Arc<AppearanceSet>, TypeId), Arc<dyn Any + Send + Sync>>,
     }
     impl AppearanceSetToPositLookup {
         pub fn new() -> Self {
             Self {
-                index: HashMap::<(Ref<AppearanceSet>, TypeId), Ref<dyn Any + Send + Sync>>::new(),
+                index: HashMap::<(Arc<AppearanceSet>, TypeId), Arc<dyn Any + Send + Sync>>::new(),
             }
         }
         pub fn insert<V: 'static + Send + Sync, T: 'static + Send + Sync>(
             &mut self,
-            key: Ref<AppearanceSet>,
-            value: Ref<Posit<V, T>>,
+            key: Arc<AppearanceSet>,
+            value: Arc<Posit<V, T>>,
         ) {
             self.index
                 .insert((key, TypeId::of::<Posit<T, V>>()), value.clone());
         }
         pub fn lookup<V: 'static + Send + Sync, T: 'static + Send + Sync>(
             &self,
-            key: Ref<AppearanceSet>,
-        ) -> Option<Ref<Posit<V, T>>> {
+            key: Arc<AppearanceSet>,
+        ) -> Option<Arc<Posit<V, T>>> {
             self.index
                 .get(&(key, TypeId::of::<Posit<T, V>>()))
                 .map(Arc::clone)
@@ -457,17 +455,17 @@ mod bareclad {
     // This sets up the database with the necessary structures
     pub struct Database {
         // owns an identity generator
-        pub identity_generator: Ref<Mutex<IdentityGenerator>>,
+        pub identity_generator: Arc<Mutex<IdentityGenerator>>,
         // owns keepers for the available constructs
-        pub role_keeper: Ref<Mutex<RoleKeeper>>,
-        pub appearance_keeper: Ref<Mutex<AppearanceKeeper>>,
-        pub appearance_set_keeper: Ref<Mutex<AppearanceSetKeeper>>,
-        pub posit_keeper: Ref<Mutex<PositKeeper>>,
+        pub role_keeper: Arc<Mutex<RoleKeeper>>,
+        pub appearance_keeper: Arc<Mutex<AppearanceKeeper>>,
+        pub appearance_set_keeper: Arc<Mutex<AppearanceSetKeeper>>,
+        pub posit_keeper: Arc<Mutex<PositKeeper>>,
         // owns lookups between constructs (similar to database indexes)
-        pub identity_to_appearance_lookup: Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
-        pub role_to_appearance_lookup: Ref<Mutex<Lookup<Role, Appearance>>>,
-        pub appearance_to_appearance_set_lookup: Ref<Mutex<Lookup<Appearance, AppearanceSet>>>,
-        pub appearance_set_to_posit_lookup: Ref<Mutex<AppearanceSetToPositLookup>>,
+        pub identity_to_appearance_lookup: Arc<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
+        pub role_to_appearance_lookup: Arc<Mutex<Lookup<Role, Appearance>>>,
+        pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Appearance, AppearanceSet>>>,
+        pub appearance_set_to_posit_lookup: Arc<Mutex<AppearanceSetToPositLookup>>,
     }
 
     impl Database {
@@ -489,59 +487,59 @@ mod bareclad {
             role_keeper.keep(Role::new(String::from("posit"), true));
 
             Self {
-                identity_generator: Ref::new(Mutex::new(identity_generator)),
-                role_keeper: Ref::new(Mutex::new(role_keeper)),
-                appearance_keeper: Ref::new(Mutex::new(appearance_keeper)),
-                appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
-                posit_keeper: Ref::new(Mutex::new(posit_keeper)),
-                identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup)),
-                role_to_appearance_lookup: Ref::new(Mutex::new(role_to_appearance_lookup)),
-                appearance_to_appearance_set_lookup: Ref::new(Mutex::new(
+                identity_generator: Arc::new(Mutex::new(identity_generator)),
+                role_keeper: Arc::new(Mutex::new(role_keeper)),
+                appearance_keeper: Arc::new(Mutex::new(appearance_keeper)),
+                appearance_set_keeper: Arc::new(Mutex::new(appearance_set_keeper)),
+                posit_keeper: Arc::new(Mutex::new(posit_keeper)),
+                identity_to_appearance_lookup: Arc::new(Mutex::new(identity_to_appearance_lookup)),
+                role_to_appearance_lookup: Arc::new(Mutex::new(role_to_appearance_lookup)),
+                appearance_to_appearance_set_lookup: Arc::new(Mutex::new(
                     appearance_to_appearance_set_lookup,
                 )),
-                appearance_set_to_posit_lookup: Ref::new(Mutex::new(
+                appearance_set_to_posit_lookup: Arc::new(Mutex::new(
                     appearance_set_to_posit_lookup,
                 )),
             }
         }
         // functions to access the owned generator and keepers
-        pub fn identity_generator(&self) -> Ref<Mutex<IdentityGenerator>> {
-            Ref::clone(&self.identity_generator)
+        pub fn identity_generator(&self) -> Arc<Mutex<IdentityGenerator>> {
+            Arc::clone(&self.identity_generator)
         }
-        pub fn role_keeper(&self) -> Ref<Mutex<RoleKeeper>> {
-            Ref::clone(&self.role_keeper)
+        pub fn role_keeper(&self) -> Arc<Mutex<RoleKeeper>> {
+            Arc::clone(&self.role_keeper)
         }
-        pub fn appearance_keeper(&self) -> Ref<Mutex<AppearanceKeeper>> {
-            Ref::clone(&self.appearance_keeper)
+        pub fn appearance_keeper(&self) -> Arc<Mutex<AppearanceKeeper>> {
+            Arc::clone(&self.appearance_keeper)
         }
-        pub fn appearance_set_keeper(&self) -> Ref<Mutex<AppearanceSetKeeper>> {
-            Ref::clone(&self.appearance_set_keeper)
+        pub fn appearance_set_keeper(&self) -> Arc<Mutex<AppearanceSetKeeper>> {
+            Arc::clone(&self.appearance_set_keeper)
         }
-        pub fn posit_keeper(&self) -> Ref<Mutex<PositKeeper>> {
-            Ref::clone(&self.posit_keeper)
+        pub fn posit_keeper(&self) -> Arc<Mutex<PositKeeper>> {
+            Arc::clone(&self.posit_keeper)
         }
         pub fn identity_to_appearance_lookup(
             &self,
-        ) -> Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
-            Ref::clone(&self.identity_to_appearance_lookup)
+        ) -> Arc<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
+            Arc::clone(&self.identity_to_appearance_lookup)
         }
-        pub fn role_to_appearance_lookup(&self) -> Ref<Mutex<Lookup<Role, Appearance>>> {
-            Ref::clone(&self.role_to_appearance_lookup)
+        pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Role, Appearance>>> {
+            Arc::clone(&self.role_to_appearance_lookup)
         }
         pub fn appearance_to_appearance_set_lookup(
             &self,
-        ) -> Ref<Mutex<Lookup<Appearance, AppearanceSet>>> {
-            Ref::clone(&self.appearance_to_appearance_set_lookup)
+        ) -> Arc<Mutex<Lookup<Appearance, AppearanceSet>>> {
+            Arc::clone(&self.appearance_to_appearance_set_lookup)
         }
-        pub fn appearance_set_to_posit_lookup(&self) -> Ref<Mutex<AppearanceSetToPositLookup>> {
-            Ref::clone(&self.appearance_set_to_posit_lookup)
+        pub fn appearance_set_to_posit_lookup(&self) -> Arc<Mutex<AppearanceSetToPositLookup>> {
+            Arc::clone(&self.appearance_set_to_posit_lookup)
         }
         // function that generates an identity
-        pub fn generate_identity(&self) -> Ref<Identity> {
-            Ref::new(self.identity_generator.lock().unwrap().generate())
+        pub fn generate_identity(&self) -> Arc<Identity> {
+            Arc::new(self.identity_generator.lock().unwrap().generate())
         }
         // functions to create constructs for the keepers to keep that also populate the lookups
-        pub fn create_role(&self, role: String, reserved: bool) -> Ref<Role> {
+        pub fn create_role(&self, role: String, reserved: bool) -> Arc<Role> {
             self.role_keeper
                 .lock()
                 .unwrap()
@@ -549,11 +547,11 @@ mod bareclad {
         }
         pub fn create_apperance(
             &self,
-            role: Ref<Role>,
-            identity: Ref<Identity>,
-        ) -> Ref<Appearance> {
-            let lookup_identity = Ref::clone(&identity);
-            let lookup_role = Ref::clone(&role);
+            role: Arc<Role>,
+            identity: Arc<Identity>,
+        ) -> Arc<Appearance> {
+            let lookup_identity = Arc::clone(&identity);
+            let lookup_role = Arc::clone(&role);
             let kept_appearance = self
                 .appearance_keeper
                 .lock()
@@ -562,19 +560,19 @@ mod bareclad {
             self.identity_to_appearance_lookup
                 .lock()
                 .unwrap()
-                .insert(lookup_identity, Ref::clone(&kept_appearance));
+                .insert(lookup_identity, Arc::clone(&kept_appearance));
             if lookup_role.reserved {
                 self.role_to_appearance_lookup
                     .lock()
                     .unwrap()
-                    .insert(lookup_role, Ref::clone(&kept_appearance));
+                    .insert(lookup_role, Arc::clone(&kept_appearance));
             }
             kept_appearance
         }
         pub fn create_appearance_set(
             &self,
-            appearance_set: Vec<Ref<Appearance>>,
-        ) -> Ref<AppearanceSet> {
+            appearance_set: Vec<Arc<Appearance>>,
+        ) -> Arc<AppearanceSet> {
             let lookup_appearance_set = appearance_set.clone();
             let appearance_set = self
                 .appearance_set_keeper
@@ -585,16 +583,16 @@ mod bareclad {
                 self.appearance_to_appearance_set_lookup
                     .lock()
                     .unwrap()
-                    .insert(Ref::clone(&appearance), Ref::clone(&appearance_set));
+                    .insert(Arc::clone(&appearance), Arc::clone(&appearance_set));
             }
             appearance_set
         }
         pub fn create_posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &self,
-            appearance_set: Ref<AppearanceSet>,
+            appearance_set: Arc<AppearanceSet>,
             value: V,
             time: T,
-        ) -> Ref<Posit<V, T>> {
+        ) -> Arc<Posit<V, T>> {
             self.posit_keeper
                 .lock()
                 .unwrap()
@@ -603,22 +601,22 @@ mod bareclad {
         // finally, now that the database exists we can start to make assertions
         pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &self,
-            asserter: Ref<Identity>,
-            posit: Ref<Posit<V, T>>,
+            asserter: Arc<Identity>,
+            posit: Arc<Posit<V, T>>,
             certainty: Certainty,
             assertion_time: DateTime<Utc>,
-        ) -> Ref<Posit<Certainty, DateTime<Utc>>> {
-            let mut posit_identity: Ref<Identity> = self
+        ) -> Arc<Posit<Certainty, DateTime<Utc>>> {
+            let mut posit_identity: Arc<Identity> = self
                 .posit_keeper
                 .lock()
                 .unwrap()
-                .identify(Ref::clone(&posit));
+                .identify(Arc::clone(&posit));
             if *posit_identity == GENESIS {
                 posit_identity = self.generate_identity();
                 self.posit_keeper
                     .lock()
                     .unwrap()
-                    .assign(posit, Ref::clone(&posit_identity));
+                    .assign(posit, Arc::clone(&posit_identity));
             }
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
@@ -638,8 +636,6 @@ use std::sync::Arc;
 
 use bareclad::{Appearance, AppearanceSet, Certainty, Database, Identity, Posit, Role};
 
-pub type Ref<T> = Arc<T>;
-
 fn main() {
     let bareclad = Database::new();
     // does it really have to be this elaborate?
@@ -648,17 +644,17 @@ fn main() {
     let rdup = bareclad.create_role(String::from("color"), false);
     println!("{:?}", bareclad.role_keeper());
     // drop(r); // just to make sure it moved
-    let a1 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1));
-    let a2 = bareclad.create_apperance(Ref::clone(&r1), Ref::clone(&i1));
+    let a1 = bareclad.create_apperance(Arc::clone(&r1), Arc::clone(&i1));
+    let a2 = bareclad.create_apperance(Arc::clone(&r1), Arc::clone(&i1));
     println!("{:?}", bareclad.appearance_keeper());
     let i2 = bareclad.generate_identity();
     let r2 = bareclad.create_role(String::from("intensity"), false);
-    let a3 = bareclad.create_apperance(Ref::clone(&r2), Ref::clone(&i2));
+    let a3 = bareclad.create_apperance(Arc::clone(&r2), Arc::clone(&i2));
     let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
-    let p1 = bareclad.create_posit(Ref::clone(&as1), String::from("same value"), 42i64);
-    let p2 = bareclad.create_posit(Ref::clone(&as1), String::from("same value"), 42i64);
-    let p3 = bareclad.create_posit(Ref::clone(&as1), String::from("different value"), 21i64);
+    let p1 = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
+    let p2 = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
+    let p3 = bareclad.create_posit(Arc::clone(&as1), String::from("different value"), 21i64);
     println!("{:?}", p1);
     println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
@@ -673,10 +669,10 @@ fn main() {
     let asserter = bareclad.generate_identity();
     let c1: Certainty = Certainty::new(100);
     let t1: DateTime<Utc> = Utc::now();
-    bareclad.assert(Ref::clone(&asserter), Ref::clone(&p3), c1, t1);
+    bareclad.assert(Arc::clone(&asserter), Arc::clone(&p3), c1, t1);
     let c2: Certainty = Certainty::new(99);
     let t2: DateTime<Utc> = Utc::now();
-    bareclad.assert(Ref::clone(&asserter), Ref::clone(&p3), c2, t2);
+    bareclad.assert(Arc::clone(&asserter), Arc::clone(&p3), c2, t2);
     println!("--- Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
     println!(
         "{:?}",
