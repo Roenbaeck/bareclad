@@ -394,6 +394,7 @@ mod bareclad {
     }
 
     // ------------- Lookups -------------
+    #[derive(Debug)]
     pub struct Lookup<K, V, H = RandomState> {
         index: HashMap<Ref<K>, Ref<V>, H>,
     }
@@ -423,7 +424,9 @@ mod bareclad {
         pub posit_keeper: Ref<Mutex<PositKeeper>>,
         // owns lookups between constructs (similar to database indexes)
         pub identity_to_appearance_lookup: Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
+        pub role_to_appearance_lookup: Ref<Mutex<Lookup<Role, Appearance>>>,
         pub appearance_to_appearance_set_lookup: Ref<Mutex<Lookup<Appearance, AppearanceSet>>>,
+        //pub appearance_set_to_posit_lookup: Ref<Mutex<Lookup<AppearanceSet, Posit<V,T>>>>
     }
 
     impl Database {
@@ -435,6 +438,7 @@ mod bareclad {
             let posit_keeper = PositKeeper::new();
             let identity_to_appearance_lookup =
                 Lookup::<Identity, Appearance, IdentityHasher>::new();
+            let role_to_appearance_lookup = Lookup::<Role, Appearance>::new();
             let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
 
             // Reserve some roles that will be necessary for implementing features
@@ -449,6 +453,7 @@ mod bareclad {
                 appearance_set_keeper: Ref::new(Mutex::new(appearance_set_keeper)),
                 posit_keeper: Ref::new(Mutex::new(posit_keeper)),
                 identity_to_appearance_lookup: Ref::new(Mutex::new(identity_to_appearance_lookup)),
+                role_to_appearance_lookup: Ref::new(Mutex::new(role_to_appearance_lookup)),
                 appearance_to_appearance_set_lookup: Ref::new(Mutex::new(
                     appearance_to_appearance_set_lookup,
                 )),
@@ -475,6 +480,11 @@ mod bareclad {
         ) -> Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
             Ref::clone(&self.identity_to_appearance_lookup)
         }
+        pub fn role_to_appearance_lookup(
+            &self,
+        ) -> Ref<Mutex<Lookup<Role, Appearance>>> {
+            Ref::clone(&self.role_to_appearance_lookup)
+        }
         pub fn appearance_to_appearance_set_lookup(
             &self,
         ) -> Ref<Mutex<Lookup<Appearance, AppearanceSet>>> {
@@ -497,6 +507,7 @@ mod bareclad {
             identity: Ref<Identity>,
         ) -> Ref<Appearance> {
             let lookup_identity = Ref::clone(&identity);
+            let lookup_role = Ref::clone(&role);
             let kept_appearance = self
                 .appearance_keeper
                 .lock()
@@ -506,6 +517,12 @@ mod bareclad {
                 .lock()
                 .unwrap()
                 .insert(lookup_identity, Ref::clone(&kept_appearance));
+            if lookup_role.reserved {
+                self.role_to_appearance_lookup
+                    .lock()
+                    .unwrap()
+                    .insert(lookup_role, Ref::clone(&kept_appearance));
+            }
             kept_appearance
         }
         pub fn create_appearance_set(
@@ -635,5 +652,15 @@ fn main() {
             .unwrap()
             .kept
             .get::<Posit<String, i64>>()
+    );
+    println!(
+        "--- Contents of the appearance to appearance set lookup:"
+    );
+    println!(
+        "{:?}",
+        bareclad
+            .appearance_to_appearance_set_lookup()
+            .lock()
+            .unwrap()
     );
 }
