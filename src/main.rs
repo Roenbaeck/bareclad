@@ -49,6 +49,9 @@ mod bareclad {
     // used in the keeper of posits, since they are generically typed: Posit<V,T> and therefore require a HashSet per type combo
     use typemap::{Key, TypeMap};
 
+    // used to keep the one-to-one mapping between posits and their assigned identities
+    use bimap::{BiMap};
+
     // other keepers use HashSet or HashMap
     use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
     use std::any::{Any, TypeId};
@@ -257,7 +260,7 @@ mod bareclad {
 
     // This key needs to be defined in order to store posits in a TypeMap.
     impl<V: 'static, T: 'static> Key for Posit<V, T> {
-        type Value = HashMap<Arc<Posit<V, T>>, Arc<Identity>>;
+        type Value = BiMap<Arc<Posit<V, T>>, Arc<Identity>>;
     }
 
     pub struct PositKeeper {
@@ -272,35 +275,39 @@ mod bareclad {
         pub fn keep<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
             posit: Posit<V, T>,
-        ) -> Arc<Posit<V, T>> {
+            identity_generator: Arc<Mutex<IdentityGenerator>>
+        ) -> (Arc<Posit<V, T>>, Arc<Identity>) {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new()); // TODO: use BiMap?
+                .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Identity>>::new()); 
             let keepsake = Arc::new(posit);
-            map.insert(Arc::clone(&keepsake), Arc::new(GENESIS)); // will be set to an actual identity once asserted
-            Arc::clone(map.get_key_value(&keepsake).unwrap().0)
+            let kept_identity = match map.get_by_left(&keepsake) {
+                Some(id) => Arc::clone(id),
+                None => Arc::new(identity_generator.lock().unwrap().generate())
+            };
+            map.insert(Arc::clone(&keepsake), Arc::clone(&kept_identity));
+            (Arc::clone(map.get_by_right(&kept_identity).unwrap()), Arc::clone(&kept_identity))
         }
-        pub fn identify<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn identity<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
             posit: Arc<Posit<V, T>>,
         ) -> Arc<Identity> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
-            Arc::clone(map.get(&posit).unwrap())
+                .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
+            Arc::clone(map.get_by_left(&posit).unwrap())
         }
-        pub fn assign<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
             &mut self,
-            posit: Arc<Posit<V, T>>,
             identity: Arc<Identity>,
-        ) {
+        ) -> Arc<Posit<V, T>> {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
-            map.insert(posit, identity);
+                .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
+            Arc::clone(map.get_by_right(&identity).unwrap())
         }
     }
 
@@ -411,46 +418,6 @@ mod bareclad {
         }
     }
 
-    /*
-    s3bk (from official Rust discord server):
-    basically internally you store HashMap<(Key, TypeId), Box<dyn Any>>
-    on insert you want to get the TypeId of the Posit<T, V> with TypeId::of::<Posit<T, V>>()
-    then convert the Arc< Posit<T, V>> into Arc<dyn Any> and store it
-    the lookup function needs the two type parameters and again, get the TypeId of it
-    then look (key, TypeId::of::<Posit<T, V>>()) up
-    and use Any::downcast_ref to get the &Posit<T, V>
-    actually, you can use Arc::downcast
-    and get an Arc<Posit<T, V>> out if you prefer that
-    */
-
-    pub struct AppearanceSetToPositLookup {
-        index: HashMap<(Arc<AppearanceSet>, TypeId), Arc<dyn Any + Send + Sync>>,
-    }
-    impl AppearanceSetToPositLookup {
-        pub fn new() -> Self {
-            Self {
-                index: HashMap::<(Arc<AppearanceSet>, TypeId), Arc<dyn Any + Send + Sync>>::new(),
-            }
-        }
-        pub fn insert<V: 'static + Send + Sync, T: 'static + Send + Sync>(
-            &mut self,
-            key: Arc<AppearanceSet>,
-            value: Arc<Posit<V, T>>,
-        ) {
-            self.index
-                .insert((key, TypeId::of::<Posit<T, V>>()), value.clone());
-        }
-        pub fn lookup<V: 'static + Send + Sync, T: 'static + Send + Sync>(
-            &self,
-            key: Arc<AppearanceSet>,
-        ) -> Option<Arc<Posit<V, T>>> {
-            self.index
-                .get(&(key, TypeId::of::<Posit<T, V>>()))
-                .map(Arc::clone)
-                .and_then(|arc| arc.downcast::<Posit<V, T>>().ok())        
-        }
-    }
-
     // ------------- Database -------------
     // This sets up the database with the necessary structures
     pub struct Database {
@@ -465,7 +432,7 @@ mod bareclad {
         pub identity_to_appearance_lookup: Arc<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
         pub role_to_appearance_lookup: Arc<Mutex<Lookup<Role, Appearance>>>,
         pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Appearance, AppearanceSet>>>,
-        pub appearance_set_to_posit_lookup: Arc<Mutex<AppearanceSetToPositLookup>>,
+        pub appearance_set_to_posit_identity_lookup: Arc<Mutex<Lookup<AppearanceSet, Identity>>>,
     }
 
     impl Database {
@@ -479,7 +446,7 @@ mod bareclad {
                 Lookup::<Identity, Appearance, IdentityHasher>::new();
             let role_to_appearance_lookup = Lookup::<Role, Appearance>::new();
             let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
-            let appearance_set_to_posit_lookup = AppearanceSetToPositLookup::new();
+            let appearance_set_to_posit_identity_lookup = Lookup::<AppearanceSet, Identity>::new();
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other databases.
@@ -497,8 +464,8 @@ mod bareclad {
                 appearance_to_appearance_set_lookup: Arc::new(Mutex::new(
                     appearance_to_appearance_set_lookup,
                 )),
-                appearance_set_to_posit_lookup: Arc::new(Mutex::new(
-                    appearance_set_to_posit_lookup,
+                appearance_set_to_posit_identity_lookup: Arc::new(Mutex::new(
+                    appearance_set_to_posit_identity_lookup,
                 )),
             }
         }
@@ -531,8 +498,8 @@ mod bareclad {
         ) -> Arc<Mutex<Lookup<Appearance, AppearanceSet>>> {
             Arc::clone(&self.appearance_to_appearance_set_lookup)
         }
-        pub fn appearance_set_to_posit_lookup(&self) -> Arc<Mutex<AppearanceSetToPositLookup>> {
-            Arc::clone(&self.appearance_set_to_posit_lookup)
+        pub fn appearance_set_to_posit_identity_lookup(&self) -> Arc<Mutex<Lookup<AppearanceSet, Identity>>> {
+            Arc::clone(&self.appearance_set_to_posit_identity_lookup)
         }
         // function that generates an identity
         pub fn generate_identity(&self) -> Arc<Identity> {
@@ -592,14 +559,14 @@ mod bareclad {
             appearance_set: Arc<AppearanceSet>,
             value: V,
             time: T,
-        ) -> Arc<Posit<V, T>> {
+        ) -> (Arc<Posit<V, T>>, Arc<Identity>) {
             let lookup_appearance_set = appearance_set.clone();
-            let posit = self.posit_keeper
+            let (posit, identity) = self.posit_keeper
                 .lock()
                 .unwrap()
-                .keep(Posit::new(appearance_set, value, time));
-            self.appearance_set_to_posit_lookup.lock().unwrap().insert(Arc::clone(&lookup_appearance_set), Arc::clone(&posit));
-            posit
+                .keep(Posit::new(appearance_set, value, time), Arc::clone(&self.identity_generator));
+            self.appearance_set_to_posit_identity_lookup.lock().unwrap().insert(Arc::clone(&lookup_appearance_set), Arc::clone(&identity));
+            (posit, identity)
         }
         // finally, now that the database exists we can start to make assertions
         pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
@@ -609,25 +576,18 @@ mod bareclad {
             certainty: Certainty,
             assertion_time: DateTime<Utc>,
         ) -> Arc<Posit<Certainty, DateTime<Utc>>> {
-            let mut posit_identity: Arc<Identity> = self
+            let posit_identity: Arc<Identity> = self
                 .posit_keeper
                 .lock()
                 .unwrap()
-                .identify(Arc::clone(&posit));
-            if *posit_identity == GENESIS {
-                posit_identity = self.generate_identity();
-                self.posit_keeper
-                    .lock()
-                    .unwrap()
-                    .assign(posit, Arc::clone(&posit_identity));
-            }
+                .identity(Arc::clone(&posit));
             let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
             let asserter_appearance = self.create_apperance(asserter_role, asserter);
             let posit_appearance = self.create_apperance(posit_role, posit_identity);
             let appearance_set =
                 self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
-            self.create_posit(appearance_set, certainty, assertion_time)
+            self.create_posit(appearance_set, certainty, assertion_time).0
         }
     }
 }
@@ -655,10 +615,12 @@ fn main() {
     let a3 = bareclad.create_apperance(Arc::clone(&r2), Arc::clone(&i2));
     let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
-    let p1 = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
-    let p2 = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
-    let p3 = bareclad.create_posit(Arc::clone(&as1), String::from("different value"), 21i64);
+    let (p1, pid1) = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
+    let (p2, pid2) = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
+    let (p3, pid3) = bareclad.create_posit(Arc::clone(&as1), String::from("different value"), 21i64);
     println!("{:?}", p1);
+    println!("{:?}", pid1);
+    println!("{:?}", pid2);
     println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
         "{:?}",
