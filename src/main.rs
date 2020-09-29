@@ -276,7 +276,7 @@ mod bareclad {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
-                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
+                .or_insert(HashMap::<Arc<Posit<V, T>>, Arc<Identity>>::new()); // TODO: use BiMap?
             let keepsake = Arc::new(posit);
             map.insert(Arc::clone(&keepsake), Arc::new(GENESIS)); // will be set to an actual identity once asserted
             Arc::clone(map.get_key_value(&keepsake).unwrap().0)
@@ -579,24 +579,27 @@ mod bareclad {
                 .lock()
                 .unwrap()
                 .keep(AppearanceSet::new(appearance_set).unwrap());
-            for appearance in lookup_appearance_set.iter() {
+            for lookup_appearance in lookup_appearance_set.iter() {
                 self.appearance_to_appearance_set_lookup
                     .lock()
                     .unwrap()
-                    .insert(Arc::clone(&appearance), Arc::clone(&appearance_set));
+                    .insert(Arc::clone(&lookup_appearance), Arc::clone(&appearance_set));
             }
             appearance_set
         }
-        pub fn create_posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn create_posit<V: 'static + Eq + Hash + Send + Sync, T: 'static + Eq + Hash + Send + Sync>(
             &self,
             appearance_set: Arc<AppearanceSet>,
             value: V,
             time: T,
         ) -> Arc<Posit<V, T>> {
-            self.posit_keeper
+            let lookup_appearance_set = appearance_set.clone();
+            let posit = self.posit_keeper
                 .lock()
                 .unwrap()
-                .keep(Posit::new(appearance_set, value, time))
+                .keep(Posit::new(appearance_set, value, time));
+            self.appearance_set_to_posit_lookup.lock().unwrap().insert(Arc::clone(&lookup_appearance_set), Arc::clone(&posit));
+            posit
         }
         // finally, now that the database exists we can start to make assertions
         pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
