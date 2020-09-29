@@ -51,6 +51,7 @@ mod bareclad {
 
     // other keepers use HashSet or HashMap
     use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
+    use std::any::{Any, TypeId};
     use std::collections::hash_map::{Entry, RandomState};
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
@@ -412,6 +413,46 @@ mod bareclad {
         }
     }
 
+    /*
+    s3bk (from official Rust discord server):
+    basically internally you store HashMap<(Key, TypeId), Box<dyn Any>>
+    on insert you want to get the TypeId of the Posit<T, V> with TypeId::of::<Posit<T, V>>()
+    then convert the Arc< Posit<T, V>> into Arc<dyn Any> and store it
+    the lookup function needs the two type parameters and again, get the TypeId of it
+    then look (key, TypeId::of::<Posit<T, V>>()) up
+    and use Any::downcast_ref to get the &Posit<T, V>
+    actually, you can use Arc::downcast
+    and get an Arc<Posit<T, V>> out if you prefer that
+    */
+
+    pub struct AppearanceSetToPositLookup {
+        index: HashMap<(Ref<AppearanceSet>, TypeId), Ref<dyn Any + Send + Sync>>,
+    }
+    impl AppearanceSetToPositLookup {
+        pub fn new() -> Self {
+            Self {
+                index: HashMap::<(Ref<AppearanceSet>, TypeId), Ref<dyn Any + Send + Sync>>::new(),
+            }
+        }
+        pub fn insert<V: 'static + Send + Sync, T: 'static + Send + Sync>(
+            &mut self,
+            key: Ref<AppearanceSet>,
+            value: Ref<Posit<V, T>>,
+        ) {
+            self.index
+                .insert((key, TypeId::of::<Posit<T, V>>()), value.clone());
+        }
+        pub fn lookup<V: 'static + Send + Sync, T: 'static + Send + Sync>(
+            &self,
+            key: Ref<AppearanceSet>,
+        ) -> Option<Ref<Posit<V, T>>> {
+            self.index
+                .get(&(key, TypeId::of::<Posit<T, V>>()))
+                .map(Arc::clone)
+                .and_then(|arc| arc.downcast::<Posit<V, T>>().ok())        
+        }
+    }
+
     // ------------- Database -------------
     // This sets up the database with the necessary structures
     pub struct Database {
@@ -426,7 +467,7 @@ mod bareclad {
         pub identity_to_appearance_lookup: Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>>,
         pub role_to_appearance_lookup: Ref<Mutex<Lookup<Role, Appearance>>>,
         pub appearance_to_appearance_set_lookup: Ref<Mutex<Lookup<Appearance, AppearanceSet>>>,
-        //pub appearance_set_to_posit_lookup: Ref<Mutex<Lookup<AppearanceSet, Posit<V,T>>>>
+        pub appearance_set_to_posit_lookup: Ref<Mutex<AppearanceSetToPositLookup>>,
     }
 
     impl Database {
@@ -440,6 +481,7 @@ mod bareclad {
                 Lookup::<Identity, Appearance, IdentityHasher>::new();
             let role_to_appearance_lookup = Lookup::<Role, Appearance>::new();
             let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
+            let appearance_set_to_posit_lookup = AppearanceSetToPositLookup::new();
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other databases.
@@ -456,6 +498,9 @@ mod bareclad {
                 role_to_appearance_lookup: Ref::new(Mutex::new(role_to_appearance_lookup)),
                 appearance_to_appearance_set_lookup: Ref::new(Mutex::new(
                     appearance_to_appearance_set_lookup,
+                )),
+                appearance_set_to_posit_lookup: Ref::new(Mutex::new(
+                    appearance_set_to_posit_lookup,
                 )),
             }
         }
@@ -480,15 +525,16 @@ mod bareclad {
         ) -> Ref<Mutex<Lookup<Identity, Appearance, IdentityHasher>>> {
             Ref::clone(&self.identity_to_appearance_lookup)
         }
-        pub fn role_to_appearance_lookup(
-            &self,
-        ) -> Ref<Mutex<Lookup<Role, Appearance>>> {
+        pub fn role_to_appearance_lookup(&self) -> Ref<Mutex<Lookup<Role, Appearance>>> {
             Ref::clone(&self.role_to_appearance_lookup)
         }
         pub fn appearance_to_appearance_set_lookup(
             &self,
         ) -> Ref<Mutex<Lookup<Appearance, AppearanceSet>>> {
             Ref::clone(&self.appearance_to_appearance_set_lookup)
+        }
+        pub fn appearance_set_to_posit_lookup(&self) -> Ref<Mutex<AppearanceSetToPositLookup>> {
+            Ref::clone(&self.appearance_set_to_posit_lookup)
         }
         // function that generates an identity
         pub fn generate_identity(&self) -> Ref<Identity> {
@@ -653,9 +699,7 @@ fn main() {
             .kept
             .get::<Posit<String, i64>>()
     );
-    println!(
-        "--- Contents of the appearance to appearance set lookup:"
-    );
+    println!("--- Contents of the appearance to appearance set lookup:");
     println!(
         "{:?}",
         bareclad
