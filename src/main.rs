@@ -629,19 +629,6 @@ mod bareclad {
             }
             posits
         }
-        /* TODO: figure out why I cannot union a HashSet behind a Mutex with a borrowed HashSet
-        pub fn posits_involving_identities(&self, identities:&HashSet<Identity>) -> Vec<Arc<Identity>> {
-            let mut posits: Vec<Arc<Identity>> = Vec::new();
-            for appearance in self.identity_to_appearance_lookup.lock().unwrap().union(identities) {
-                for appearance_set in self.appearance_to_appearance_set_lookup.lock().unwrap().lookup(appearance) {
-                    for posit_identity in self.appearance_set_to_posit_identity_lookup.lock().unwrap().lookup(appearance_set) {
-                        posits.push(Arc::clone(posit_identity));
-                    };
-                };
-            };
-            posits
-        }
-        */
     }
 }
  
