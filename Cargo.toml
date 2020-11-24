@@ -8,3 +8,4 @@ authors = ["Lars Rönnbäck <lars@bareclad.com>"]
 chrono = "0.4"
 bimap = "0.1"
 typemap = "0.3.3"
+text_io = "0.1.8"

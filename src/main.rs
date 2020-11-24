@@ -636,6 +636,7 @@ mod bareclad {
 
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
+use text_io::read;
 
 use bareclad::{Appearance, AppearanceSet, Certainty, Database, Identity, Posit, Role};
 
@@ -643,22 +644,37 @@ fn main() {
     let bareclad = Database::new();
     // does it really have to be this elaborate?
     let i1 = bareclad.generate_identity();
-    let r1 = bareclad.create_role(String::from("color"), false);
-    let rdup = bareclad.create_role(String::from("color"), false);
+    println!("Enter a role name: ");
+    let role: String = read!("{}\n");
+
+    let r1 = bareclad.create_role(role.clone(), false);
+    let rdup = bareclad.create_role(role.clone(), false);
     println!("{:?}", bareclad.role_keeper());
     // drop(r); // just to make sure it moved
     let a1 = bareclad.create_apperance(Arc::clone(&r1), Arc::clone(&i1));
     let a2 = bareclad.create_apperance(Arc::clone(&r1), Arc::clone(&i1));
     println!("{:?}", bareclad.appearance_keeper());
     let i2 = bareclad.generate_identity();
-    let r2 = bareclad.create_role(String::from("intensity"), false);
+
+    println!("Enter another role name: ");
+    let another_role: String = read!("{}\n");
+
+    let r2 = bareclad.create_role(another_role.clone(), false);
     let a3 = bareclad.create_apperance(Arc::clone(&r2), Arc::clone(&i2));
     let as1 = bareclad.create_appearance_set([a1, a3].to_vec());
     println!("{:?}", bareclad.appearance_set_keeper());
-    let (p1, pid1) = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
-    let (p2, pid2) = bareclad.create_posit(Arc::clone(&as1), String::from("same value"), 42i64);
+
+    println!("Enter a value that appears with '{}' and '{}': ", role, another_role);
+    let v1: String = read!("{}\n");
+
+    let (p1, pid1) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64);
+    let (p2, pid2) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64);
+
+    println!("Enter a different value that appears with '{}' and '{}': ", role, another_role);
+    let v2: String = read!("{}\n");
+
     let (p3, pid3) =
-        bareclad.create_posit(Arc::clone(&as1), String::from("different value"), 21i64);
+        bareclad.create_posit(Arc::clone(&as1), v2.clone(), 21i64);
     println!("{:?}", p1);
     println!("{:?}", pid1);
     println!("{:?}", pid2);
