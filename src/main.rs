@@ -54,7 +54,6 @@ mod bareclad {
 
     // other keepers use HashSet or HashMap
     use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
-    use std::any::{Any, TypeId};
     use std::collections::hash_map::{Entry, RandomState};
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
@@ -64,6 +63,11 @@ mod bareclad {
 
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
+
+    pub trait DataType : ToString + Eq + Hash + Send + Sync {
+    }
+    pub trait TimeType : ToString + Eq + Hash + Send + Sync {
+    }
 
     // ------------- Identity -------------
     // TODO: Investigate using AtomicUsize instead.
@@ -234,12 +238,12 @@ mod bareclad {
 
     // --------------- Posit ----------------
     #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-    pub struct Posit<V, T> {
+    pub struct Posit<V: DataType, T: TimeType> {
         appearance_set: Arc<AppearanceSet>,
         value: V, // imprecise value
         time: T,  // imprecise time
     }
-    impl<V, T> Posit<V, T> {
+    impl<V: DataType, T: TimeType> Posit<V, T> {
         pub fn new(appearance_set: Arc<AppearanceSet>, value: V, time: T) -> Posit<V, T> {
             Self {
                 value,
@@ -259,7 +263,7 @@ mod bareclad {
     }
 
     // This key needs to be defined in order to store posits in a TypeMap.
-    impl<V: 'static, T: 'static> Key for Posit<V, T> {
+    impl<V: 'static + DataType, T: 'static + TimeType> Key for Posit<V, T> {
         type Value = BiMap<Arc<Posit<V, T>>, Arc<Identity>>;
     }
 
@@ -272,7 +276,7 @@ mod bareclad {
                 kept: TypeMap::new(),
             }
         }
-        pub fn keep<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn keep<V: 'static + DataType, T: 'static + TimeType>(
             &mut self,
             posit: Posit<V, T>,
             identity_generator: Arc<Mutex<IdentityGenerator>>,
@@ -292,7 +296,7 @@ mod bareclad {
                 Arc::clone(&kept_identity),
             )
         }
-        pub fn identity<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn identity<V: 'static + DataType, T: 'static + TimeType>(
             &mut self,
             posit: Arc<Posit<V, T>>,
         ) -> Arc<Identity> {
@@ -302,7 +306,7 @@ mod bareclad {
                 .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Identity>>::new());
             Arc::clone(map.get_by_left(&posit).unwrap())
         }
-        pub fn posit<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn posit<V: 'static + DataType, T: 'static + TimeType>(
             &mut self,
             identity: Arc<Identity>,
         ) -> Arc<Posit<V, T>> {
@@ -421,6 +425,12 @@ mod bareclad {
             self.index.get(key).unwrap()
         }
     }
+
+    // ------------- Data Types --------------
+    impl DataType for Certainty { }
+    impl DataType for String { }
+    impl TimeType for DateTime<Utc> { }
+    impl TimeType for i64 { }
 
     // ------------- Database -------------
     // This sets up the database with the necessary structures
@@ -561,8 +571,8 @@ mod bareclad {
             appearance_set
         }
         pub fn create_posit<
-            V: 'static + Eq + Hash + Send + Sync,
-            T: 'static + Eq + Hash + Send + Sync,
+            V: 'static + DataType,
+            T: 'static + TimeType,
         >(
             &self,
             appearance_set: Arc<AppearanceSet>,
@@ -581,7 +591,7 @@ mod bareclad {
             (posit, identity)
         }
         // finally, now that the database exists we can start to make assertions
-        pub fn assert<V: 'static + Eq + Hash, T: 'static + Eq + Hash>(
+        pub fn assert<V: 'static + DataType, T: 'static + TimeType>(
             &self,
             asserter: Arc<Identity>,
             posit: Arc<Posit<V, T>>,
