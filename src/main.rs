@@ -71,6 +71,7 @@ mod bareclad {
 
     // ------------- Identity -------------
     // TODO: Investigate using AtomicUsize instead.
+    // https://rust-lang.github.io/rust-clippy/master/index.html#mutex_integer
     pub type Identity = usize;
     const GENESIS: Identity = 0;
 
@@ -463,9 +464,11 @@ mod bareclad {
             let appearance_set_to_posit_identity_lookup = Lookup::<AppearanceSet, Identity>::new();
 
             // Reserve some roles that will be necessary for implementing features
-            // commonly found in many other databases.
-            role_keeper.keep(Role::new(String::from("asserter"), true));
-            role_keeper.keep(Role::new(String::from("posit"), true));
+            // commonly found in many other (including non-tradtional) databases.
+            role_keeper.keep(Role::new(String::from("posit"), false));
+            role_keeper.keep(Role::new(String::from("ascertains"), true));
+            role_keeper.keep(Role::new(String::from("thing"), false));
+            role_keeper.keep(Role::new(String::from("classification"), true));
 
             Self {
                 identity_generator: Arc::new(Mutex::new(identity_generator)),
@@ -603,7 +606,7 @@ mod bareclad {
                 .lock()
                 .unwrap()
                 .identity(Arc::clone(&posit));
-            let asserter_role = self.role_keeper.lock().unwrap().get(&"asserter".to_owned());
+            let asserter_role = self.role_keeper.lock().unwrap().get(&"ascertains".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
             let asserter_appearance = self.create_apperance(asserter_role, asserter);
             let posit_appearance = self.create_apperance(posit_role, posit_identity);
@@ -677,7 +680,7 @@ fn main() {
     println!("Enter a value that appears with '{}' and '{}': ", role, another_role);
     let v1: String = read!("{}\n");
 
-    let (p1, pid1) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64);
+    let (p1, pid1) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64); // this 42 represents a point in time (for now)
     let (p2, pid2) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64);
 
     println!("Enter a different value that appears with '{}' and '{}': ", role, another_role);
@@ -735,4 +738,21 @@ fn main() {
             .lock()
             .unwrap()
     );
+    println!("--- Posit identities for thing identity 1: ");
+    let ids: Vec<Arc<Identity>> = bareclad.posits_involving_identity(&1);
+    println!(
+        "{:?}",
+        ids
+    );
+    println!("--- and the actual posits are: ");
+    for px in ids.iter() {
+        println!(
+            "{:?}",
+            bareclad            
+                .posit_keeper()
+                .lock()
+                .unwrap()
+                .posit::<String, i64>(px.clone()) // you need to know the data type of what you want to find
+        );    
+    }
 }
