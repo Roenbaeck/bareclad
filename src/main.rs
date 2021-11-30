@@ -658,7 +658,8 @@ fn main() {
     // does it really have to be this elaborate?
     let i1 = bareclad.generate_identity();
     println!("Enter a role name: ");
-    let role: String = read!("{}\n");
+    let mut role: String = read!("{}");
+    role.truncate(role.trim_end().len());
 
     let r1 = bareclad.create_role(role.clone(), false);
     let rdup = bareclad.create_role(role.clone(), false);
@@ -670,7 +671,8 @@ fn main() {
     let i2 = bareclad.generate_identity();
 
     println!("Enter another role name: ");
-    let another_role: String = read!("{}\n");
+    let mut another_role: String = read!("{}");
+    another_role.truncate(another_role.trim_end().len());
 
     let r2 = bareclad.create_role(another_role.clone(), false);
     let a3 = bareclad.create_apperance(Arc::clone(&r2), Arc::clone(&i2));
@@ -678,13 +680,15 @@ fn main() {
     println!("{:?}", bareclad.appearance_set_keeper());
 
     println!("Enter a value that appears with '{}' and '{}': ", role, another_role);
-    let v1: String = read!("{}\n");
+    let mut v1: String = read!("{}");
+    v1.truncate(v1.trim_end().len());
 
     let (p1, pid1) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64); // this 42 represents a point in time (for now)
     let (p2, pid2) = bareclad.create_posit(Arc::clone(&as1), v1.clone(), 42i64);
 
     println!("Enter a different value that appears with '{}' and '{}': ", role, another_role);
-    let v2: String = read!("{}\n");
+    let mut v2: String = read!("{}");
+    v2.truncate(v2.trim_end().len());
 
     let (p3, pid3) =
         bareclad.create_posit(Arc::clone(&as1), v2.clone(), 21i64);
