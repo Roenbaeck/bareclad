@@ -61,6 +61,9 @@ mod bareclad {
     use std::fmt;
     use std::ops;
 
+    // used for persistence
+    use rusqlite::{params, Connection, Result, OpenFlags};
+
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
 
@@ -427,6 +430,116 @@ mod bareclad {
         }
     }
 
+    // ------------- Persistence -------------
+    pub struct Persistor {
+        pub db: Connection
+    }
+    impl Persistor {
+        pub fn new() -> Self {
+            let db = Connection::open_with_flags(
+                "bareclad.db",
+                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
+            ).unwrap();
+            println!("The path to the database file is '{}'.", db.path().unwrap().display());
+            db.execute_batch(
+                "
+                create table if not exists Thing (
+                    Thing_Identity integer not null, 
+                    constraint unique_and_referenceable_Thing_Identity primary key (
+                        Thing_Identity
+                    )
+                );
+                create table if not exists Internal (
+                    Internal_Identity integer not null, 
+                    constraint unique_and_referenceable_Internal_Identity primary key (
+                        Internal_Identity
+                    )
+                );
+                create table if not exists Role (
+                    Role_Identity bigint not null,
+                    Role text not null,
+                    constraint Role_is_Internal foreign key (
+                        Role_Identity
+                    ) references Internal(Internal_Identity),
+                    constraint referenceable_Role_Identity primary key (
+                        Role_Identity
+                    ),
+                    constraint unique_Role unique (
+                        Role
+                    )
+                );
+                create table if not exists Appearance (
+                    Appearance_Identity integer not null,
+                    Thing_Identity integer not null,
+                    Role_Identity integer not null,
+                    constraint Appearance_is_Internal foreign key (
+                        Appearance_Identity
+                    ) references Internal(Internal_Identity),
+                    constraint ensure_existing_Thing foreign key (
+                        Thing_Identity
+                    ) references Thing(Thing_Identity),
+                    constraint ensure_existing_Role foreign key (
+                        Role_Identity
+                    ) references Role(Role_Identity),
+                    constraint referenceable_Appearance_Identity primary key (
+                        Appearance_Identity
+                    ),
+                    constraint unique_Appearance unique (
+                        Thing_Identity,
+                        Role_Identity
+                    )
+                );
+                create table AppearanceSet (
+                    AppearanceSet_Identity integer not null,
+                    constraint AppearanceSet_is_Internal foreign key (
+                        AppearanceSet_Identity
+                    ) references Internal(Internal_Identity),
+                    constraint unique_AppearanceSet primary key (
+                        AppearanceSet_Identity
+                    )
+                );
+                create table Appearance_in_AppearanceSet (
+                    AppearanceSet_Identity integer not null,
+                    Appearance_Identity integer not null,
+                    constraint reference_to_AppearanceSet foreign key (
+                        AppearanceSet_Identity
+                    ) references AppearanceSet(AppearanceSet_Identity),
+                    constraint reference_to_Appearance foreign key (
+                        Appearance_Identity
+                    ) references Appearance(Appearance_Identity),
+                    constraint unique_Appearance_in_AppearanceSet primary key (
+                        AppearanceSet_Identity,
+                        Appearance_Identity
+                    )
+                );
+                create table [Posit] (
+                    Posit_Identity integer not null,
+                    AppearanceSet_Identity integer not null,
+                    AppearingValue text null, 
+                    AppearanceTime text null,
+                    constraint ensure_existing_AppearanceSet foreign key (
+                        AppearanceSet_Identity
+                    ) references AppearanceSet(AppearanceSet_Identity),
+                    constraint Posit_is_Thing foreign key (
+                        Posit_Identity
+                    ) references Thing(Thing_Identity),
+                    constraint referenceable_Posit_Identity primary key (
+                        Posit_Identity
+                    ),
+                    constraint unique_Posit unique (
+                        AppearanceSet_Identity,
+                        AppearingValue,
+                        AppearanceTime
+                    )
+                );
+                "
+            ).unwrap();
+            Self {
+                db: db 
+            }
+        }
+    }
+
     // ------------- Data Types --------------
     impl DataType for Certainty { }
     impl DataType for String { }
@@ -651,9 +764,10 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use text_io::read;
 
-use bareclad::{Appearance, AppearanceSet, Certainty, Database, Identity, Posit, Role};
+use bareclad::{Appearance, AppearanceSet, Certainty, Database, Identity, Posit, Role, Persistor};
 
 fn main() {
+    let persistor = Persistor::new();
     let bareclad = Database::new();
     // does it really have to be this elaborate?
     let i1 = bareclad.generate_identity();
