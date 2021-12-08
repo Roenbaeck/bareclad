@@ -448,15 +448,15 @@ mod bareclad {
                     constraint unique_and_referenceable_Thing_Identity primary key (
                         Thing_Identity
                     )
-                );
+                );-- STRICT;
                 create table if not exists Internal (
                     Internal_Identity integer not null, 
                     constraint unique_and_referenceable_Internal_Identity primary key (
                         Internal_Identity
                     )
-                );
+                );-- STRICT;
                 create table if not exists Role (
-                    Role_Identity bigint not null,
+                    Role_Identity integer not null,
                     Role text not null,
                     constraint Role_is_Internal foreign key (
                         Role_Identity
@@ -467,7 +467,7 @@ mod bareclad {
                     constraint unique_Role unique (
                         Role
                     )
-                );
+                );-- STRICT;
                 create table if not exists Appearance (
                     Appearance_Identity integer not null,
                     Thing_Identity integer not null,
@@ -488,8 +488,8 @@ mod bareclad {
                         Thing_Identity,
                         Role_Identity
                     )
-                );
-                create table AppearanceSet (
+                );-- STRICT;
+                create table if not exists AppearanceSet (
                     AppearanceSet_Identity integer not null,
                     constraint AppearanceSet_is_Internal foreign key (
                         AppearanceSet_Identity
@@ -497,8 +497,8 @@ mod bareclad {
                     constraint unique_AppearanceSet primary key (
                         AppearanceSet_Identity
                     )
-                );
-                create table Appearance_in_AppearanceSet (
+                );-- STRICT;
+                create table if not exists Appearance_in_AppearanceSet (
                     AppearanceSet_Identity integer not null,
                     Appearance_Identity integer not null,
                     constraint reference_to_AppearanceSet foreign key (
@@ -511,12 +511,12 @@ mod bareclad {
                         AppearanceSet_Identity,
                         Appearance_Identity
                     )
-                );
-                create table [Posit] (
+                );-- STRICT;
+                create table if not exists Posit (
                     Posit_Identity integer not null,
                     AppearanceSet_Identity integer not null,
-                    AppearingValue text null, 
-                    AppearanceTime text null,
+                    AppearingValue any null, 
+                    AppearanceTime any null,
                     constraint ensure_existing_AppearanceSet foreign key (
                         AppearanceSet_Identity
                     ) references AppearanceSet(AppearanceSet_Identity),
@@ -531,7 +531,7 @@ mod bareclad {
                         AppearingValue,
                         AppearanceTime
                     )
-                );
+                );-- STRICT;
                 "
             ).unwrap();
             Self {
