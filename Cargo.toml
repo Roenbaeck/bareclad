@@ -12,5 +12,5 @@ text_io = "0.1.9"
 jql = "3.0.4"
 serde = "1.0.130"
 serde_json = "1.0.72"
-rusqlite = { version = "0.26.2", features = ["chrono", "serde_json", "bundled"] }
+rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
 

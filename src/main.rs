@@ -62,7 +62,7 @@ mod bareclad {
     use std::ops;
 
     // used for persistence
-    use rusqlite::{params, Connection, Result, OpenFlags};
+    use rusqlite::{Connection, Result, OpenFlags, Statement};
 
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
@@ -431,17 +431,20 @@ mod bareclad {
     }
 
     // ------------- Persistence -------------
-    pub struct Persistor {
-        pub db: Connection
+    pub struct Persistor<'db> {
+        pub add_thing: Statement<'db>,
+        pub add_internal: Statement<'db>,
+        pub add_role: Statement<'db>,
+        pub add_appearance: Statement<'db>,
+        pub add_appearance_set: Statement<'db>,
+        pub add_appearance_in_appearance_set: Statement<'db>,
+        pub add_posit: Statement<'db>
     }
-    impl Persistor {
-        pub fn new() -> Self {
-            let db = Connection::open_with_flags(
-                "bareclad.db",
-                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
-            ).unwrap();
-            println!("The path to the database file is '{}'.", db.path().unwrap().display());
-            db.execute_batch(
+    impl<'db> Persistor<'db> {
+        pub fn new<'connection>(connection: &'connection Connection) -> Persistor<'connection> {
+            // The "STRICT" keyword introduced in 3.37.0 breaks JDBC connections, which makes 
+            // debugging using an external tool like DBeaver impossible
+            connection.execute_batch(
                 "
                 create table if not exists Thing (
                     Thing_Identity integer not null, 
@@ -534,8 +537,14 @@ mod bareclad {
                 );-- STRICT;
                 "
             ).unwrap();
-            Self {
-                db: db 
+            Persistor {
+                add_thing: connection.prepare("").unwrap(),
+                add_internal: connection.prepare("").unwrap(),
+                add_role: connection.prepare("").unwrap(),
+                add_appearance: connection.prepare("").unwrap(),
+                add_appearance_set: connection.prepare("").unwrap(),
+                add_appearance_in_appearance_set: connection.prepare("").unwrap(),
+                add_posit: connection.prepare("").unwrap(),
             }
         }
     }
@@ -548,7 +557,7 @@ mod bareclad {
 
     // ------------- Database -------------
     // This sets up the database with the necessary structures
-    pub struct Database {
+    pub struct Database<'db> {
         // owns an identity generator
         pub identity_generator: Arc<Mutex<IdentityGenerator>>,
         // owns keepers for the available constructs
@@ -561,10 +570,11 @@ mod bareclad {
         pub role_to_appearance_lookup: Arc<Mutex<Lookup<Role, Appearance>>>,
         pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Appearance, AppearanceSet>>>,
         pub appearance_set_to_posit_identity_lookup: Arc<Mutex<Lookup<AppearanceSet, Identity>>>,
+        pub persistor: Arc<Mutex<Persistor<'db>>>,
     }
 
-    impl Database {
-        pub fn new() -> Self {
+    impl<'db> Database<'db> {
+        pub fn new<'connection>(connection: &'connection Connection) -> Database<'connection> {
             let identity_generator = IdentityGenerator::new();
             let mut role_keeper = RoleKeeper::new();
             let appearance_keeper = AppearanceKeeper::new();
@@ -574,7 +584,8 @@ mod bareclad {
                 Lookup::<Identity, Appearance, IdentityHasher>::new();
             let role_to_appearance_lookup = Lookup::<Role, Appearance>::new();
             let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
-            let appearance_set_to_posit_identity_lookup = Lookup::<AppearanceSet, Identity>::new();
+            let appearance_set_to_posit_identity_lookup = Lookup::<AppearanceSet, Identity>::new();   
+            let persistor = Persistor::new(connection);
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other (including non-tradtional) databases.
@@ -583,7 +594,7 @@ mod bareclad {
             role_keeper.keep(Role::new(String::from("thing"), false));
             role_keeper.keep(Role::new(String::from("classification"), true));
 
-            Self {
+            Database {
                 identity_generator: Arc::new(Mutex::new(identity_generator)),
                 role_keeper: Arc::new(Mutex::new(role_keeper)),
                 appearance_keeper: Arc::new(Mutex::new(appearance_keeper)),
@@ -597,6 +608,7 @@ mod bareclad {
                 appearance_set_to_posit_identity_lookup: Arc::new(Mutex::new(
                     appearance_set_to_posit_identity_lookup,
                 )),
+                persistor: Arc::new(Mutex::new(persistor)),
             }
         }
         // functions to access the owned generator and keepers
@@ -764,11 +776,13 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use text_io::read;
 
+use rusqlite::{Connection};
 use bareclad::{Appearance, AppearanceSet, Certainty, Database, Identity, Posit, Role, Persistor};
 
 fn main() {
-    let persistor = Persistor::new();
-    let bareclad = Database::new();
+    let database = Connection::open("bareclad.db").unwrap();
+    println!("The path to the database file is '{}'.", database.path().unwrap().display());       
+    let bareclad = Database::new(&database);
     // does it really have to be this elaborate?
     let i1 = bareclad.generate_identity();
     println!("Enter a role name: ");
