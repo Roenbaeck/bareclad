@@ -62,7 +62,7 @@ mod bareclad {
     use std::ops;
 
     // used for persistence
-    use rusqlite::{Connection, Result, OpenFlags, Statement};
+    use rusqlite::{params, Connection, Result, OpenFlags, Statement, Error};
 
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
@@ -432,13 +432,15 @@ mod bareclad {
 
     // ------------- Persistence -------------
     pub struct Persistor<'db> {
+        pub db: &'db Connection,
         pub add_thing: Statement<'db>,
         pub add_internal: Statement<'db>,
         pub add_role: Statement<'db>,
         pub add_appearance: Statement<'db>,
         pub add_appearance_set: Statement<'db>,
         pub add_appearance_in_appearance_set: Statement<'db>,
-        pub add_posit: Statement<'db>
+        pub add_posit: Statement<'db>, 
+        pub get_role: Statement<'db>
     }
     impl<'db> Persistor<'db> {
         pub fn new<'connection>(connection: &'connection Connection) -> Persistor<'connection> {
@@ -538,13 +540,31 @@ mod bareclad {
                 "
             ).unwrap();
             Persistor {
-                add_thing: connection.prepare("").unwrap(),
-                add_internal: connection.prepare("").unwrap(),
-                add_role: connection.prepare("").unwrap(),
-                add_appearance: connection.prepare("").unwrap(),
-                add_appearance_set: connection.prepare("").unwrap(),
-                add_appearance_in_appearance_set: connection.prepare("").unwrap(),
-                add_posit: connection.prepare("").unwrap(),
+                db: connection,
+                add_thing: connection.prepare(
+                    "insert into Thing (Thing_Identity) values (?)"
+                ).unwrap(),
+                add_internal: connection.prepare(
+                    "insert into Internal (Internal_Identity) values (NULL)" // use last_insert_rowid to get the created identity
+                ).unwrap(),
+                add_role: connection.prepare(
+                    "insert into Role (Role_Identity, Role) values (?, ?)"
+                ).unwrap(),
+                add_appearance: connection.prepare(
+                    "insert into Appearance (Appearance_Identity, Thing_Identity, Role_Identity) values (?, ?, ?)"
+                ).unwrap(),
+                add_appearance_set: connection.prepare(
+                    "insert into AppearanceSet (AppearanceSet_Identity) values (?)"
+                ).unwrap(),
+                add_appearance_in_appearance_set: connection.prepare(
+                    "insert into Appearance_in_AppearanceSet (AppearanceSet_Identity, Appearance_Identity) values (?, ?)"
+                ).unwrap(),
+                add_posit: connection.prepare(
+                    "insert into Posit (Posit_Identity, AppearanceSet_Identity, AppearingValue, AppearanceTime) values (?, ?, ?, ?)"
+                ).unwrap(),
+                get_role: connection.prepare(
+                    "select Role_Identity from Role where Role = ?"
+                ).unwrap()
             }
         }
     }
@@ -651,6 +671,20 @@ mod bareclad {
         }
         // functions to create constructs for the keepers to keep that also populate the lookups
         pub fn create_role(&self, role: String, reserved: bool) -> Arc<Role> {
+            let mut locked_persistor = self.persistor.lock().unwrap();
+            match locked_persistor.get_role.query_row([&role], |r| r.get(0)) {
+                Ok(id) => {
+                    let role_identity: Identity = id;
+                }
+                Err(Error::QueryReturnedNoRows) => {
+                    locked_persistor.add_internal.execute([]).unwrap();
+                    let id = locked_persistor.db.last_insert_rowid();
+                    locked_persistor.add_role.execute(params![id, &role]).unwrap();
+                }
+                Err(err) => {
+                    panic!("Could not check for a persisted role: {}", err);
+                }
+            }
             self.role_keeper
                 .lock()
                 .unwrap()
