@@ -440,6 +440,7 @@ mod bareclad {
         pub add_appearance_set: Statement<'db>,
         pub add_appearance_in_appearance_set: Statement<'db>,
         pub add_posit: Statement<'db>, 
+        pub get_thing: Statement<'db>,
         pub get_role: Statement<'db>
     }
     impl<'db> Persistor<'db> {
@@ -562,6 +563,9 @@ mod bareclad {
                 add_posit: connection.prepare(
                     "insert into Posit (Posit_Identity, AppearanceSet_Identity, AppearingValue, AppearanceTime) values (?, ?, ?, ?)"
                 ).unwrap(),
+                get_thing: connection.prepare(
+                    "select Thing_Identity from Thing where Thing_Identity = ?"
+                ).unwrap(),
                 get_role: connection.prepare(
                     "select Role_Identity from Role where Role = ?"
                 ).unwrap()
@@ -596,7 +600,7 @@ mod bareclad {
     impl<'db> Database<'db> {
         pub fn new<'connection>(connection: &'connection Connection) -> Database<'connection> {
             let identity_generator = IdentityGenerator::new();
-            let mut role_keeper = RoleKeeper::new();
+            let role_keeper = RoleKeeper::new();
             let appearance_keeper = AppearanceKeeper::new();
             let appearance_set_keeper = AppearanceSetKeeper::new();
             let posit_keeper = PositKeeper::new();
@@ -606,13 +610,6 @@ mod bareclad {
             let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
             let appearance_set_to_posit_identity_lookup = Lookup::<AppearanceSet, Identity>::new();   
             let persistor = Persistor::new(connection);
-
-            // Reserve some roles that will be necessary for implementing features
-            // commonly found in many other (including non-tradtional) databases.
-            role_keeper.keep(Role::new(String::from("posit"), false));
-            role_keeper.keep(Role::new(String::from("ascertains"), true));
-            role_keeper.keep(Role::new(String::from("thing"), false));
-            role_keeper.keep(Role::new(String::from("classification"), true));
 
             Database {
                 identity_generator: Arc::new(Mutex::new(identity_generator)),
@@ -667,7 +664,20 @@ mod bareclad {
         }
         // function that generates an identity
         pub fn generate_identity(&self) -> Arc<Identity> {
-            Arc::new(self.identity_generator.lock().unwrap().generate())
+            let identity = self.identity_generator.lock().unwrap().generate();
+            let mut locked_persistor = self.persistor.lock().unwrap();
+            match locked_persistor.get_thing.query_row([&identity], |r| r.get(0)) {
+                Ok(id) => {
+                    let thing_identity: Identity = id;
+                }
+                Err(Error::QueryReturnedNoRows) => {
+                    locked_persistor.add_thing.execute(params![&identity]).unwrap();
+                }
+                Err(err) => {
+                    panic!("Could not check if the identity '{}' is persisted: {}", identity, err);
+                }
+            }
+            Arc::new(identity)
         }
         // functions to create constructs for the keepers to keep that also populate the lookups
         pub fn create_role(&self, role: String, reserved: bool) -> Arc<Role> {
@@ -682,7 +692,7 @@ mod bareclad {
                     locked_persistor.add_role.execute(params![id, &role]).unwrap();
                 }
                 Err(err) => {
-                    panic!("Could not check for a persisted role: {}", err);
+                    panic!("Could not check if the role '{}' is persisted: {}", role, err);
                 }
             }
             self.role_keeper
@@ -817,6 +827,14 @@ fn main() {
     let database = Connection::open("bareclad.db").unwrap();
     println!("The path to the database file is '{}'.", database.path().unwrap().display());       
     let bareclad = Database::new(&database);
+
+    // Reserve some roles that will be necessary for implementing features
+    // commonly found in many other (including non-tradtional) databases.
+    bareclad.create_role(String::from("posit"), false);
+    bareclad.create_role(String::from("ascertains"), true);
+    bareclad.create_role(String::from("thing"), false);
+    bareclad.create_role(String::from("classification"), true);
+
     // does it really have to be this elaborate?
     let i1 = bareclad.generate_identity();
     println!("Enter a role name: ");
