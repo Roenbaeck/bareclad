@@ -500,7 +500,7 @@ mod bareclad {
                     constraint AppearanceSet_is_Internal foreign key (
                         AppearanceSet_Identity
                     ) references Internal(Internal_Identity),
-                    constraint unique_AppearanceSet primary key (
+                    constraint referenceable_AppearanceSet_Identity primary key (
                         AppearanceSet_Identity
                     )
                 );-- STRICT;
