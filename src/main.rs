@@ -599,6 +599,7 @@ mod bareclad {
 
     impl<'db> Database<'db> {
         pub fn new<'connection>(connection: &'connection Connection) -> Database<'connection> {
+            // Create all the stuff that goes into a database engine
             let identity_generator = IdentityGenerator::new();
             let role_keeper = RoleKeeper::new();
             let appearance_keeper = AppearanceKeeper::new();
@@ -611,7 +612,8 @@ mod bareclad {
             let appearance_set_to_posit_identity_lookup = Lookup::<AppearanceSet, Identity>::new();   
             let persistor = Persistor::new(connection);
 
-            Database {
+            // Create the database so that we can prime it before returning it
+            let database = Database {
                 identity_generator: Arc::new(Mutex::new(identity_generator)),
                 role_keeper: Arc::new(Mutex::new(role_keeper)),
                 appearance_keeper: Arc::new(Mutex::new(appearance_keeper)),
@@ -626,7 +628,16 @@ mod bareclad {
                     appearance_set_to_posit_identity_lookup,
                 )),
                 persistor: Arc::new(Mutex::new(persistor)),
-            }
+            };
+            
+            // Reserve some roles that will be necessary for implementing features
+            // commonly found in many other (including non-tradtional) databases.
+            database.create_role(String::from("posit"), false);
+            database.create_role(String::from("ascertains"), true);
+            database.create_role(String::from("thing"), false);
+            database.create_role(String::from("classification"), true);
+
+            database
         }
         // functions to access the owned generator and keepers
         pub fn identity_generator(&self) -> Arc<Mutex<IdentityGenerator>> {
@@ -729,7 +740,7 @@ mod bareclad {
             appearance_set: Vec<Arc<Appearance>>,
         ) -> Arc<AppearanceSet> {
             let lookup_appearance_set = appearance_set.clone();
-            let appearance_set = self
+            let kept_appearance_set = self
                 .appearance_set_keeper
                 .lock()
                 .unwrap()
@@ -738,9 +749,9 @@ mod bareclad {
                 self.appearance_to_appearance_set_lookup
                     .lock()
                     .unwrap()
-                    .insert(Arc::clone(&lookup_appearance), Arc::clone(&appearance_set));
+                    .insert(Arc::clone(&lookup_appearance), Arc::clone(&kept_appearance_set));
             }
-            appearance_set
+            kept_appearance_set
         }
         pub fn create_posit<
             V: 'static + DataType,
@@ -827,13 +838,6 @@ fn main() {
     let database = Connection::open("bareclad.db").unwrap();
     println!("The path to the database file is '{}'.", database.path().unwrap().display());       
     let bareclad = Database::new(&database);
-
-    // Reserve some roles that will be necessary for implementing features
-    // commonly found in many other (including non-tradtional) databases.
-    bareclad.create_role(String::from("posit"), false);
-    bareclad.create_role(String::from("ascertains"), true);
-    bareclad.create_role(String::from("thing"), false);
-    bareclad.create_role(String::from("classification"), true);
 
     // does it really have to be this elaborate?
     let i1 = bareclad.generate_identity();
