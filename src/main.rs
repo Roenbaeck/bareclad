@@ -438,7 +438,6 @@ mod bareclad {
         pub add_role: Statement<'db>,
         pub add_appearance: Statement<'db>,
         pub add_appearance_set: Statement<'db>,
-        pub add_appearance_in_appearance_set: Statement<'db>,
         pub add_posit: Statement<'db>, 
         pub get_thing: Statement<'db>,
         pub get_role: Statement<'db>
@@ -492,30 +491,20 @@ mod bareclad {
                     ),
                     constraint unique_Appearance unique (
                         Thing_Identity,
-                        Role_Identity
+                        Role_Identity 
                     )
                 );-- STRICT;
                 create table if not exists AppearanceSet (
                     AppearanceSet_Identity integer not null,
+                    AppearanceSet_Member_Identities text not null,
                     constraint AppearanceSet_is_Internal foreign key (
                         AppearanceSet_Identity
-                    ) references Internal(Internal_Identity),
+                    ) references Internal(Internal_Identity), 
                     constraint referenceable_AppearanceSet_Identity primary key (
                         AppearanceSet_Identity
-                    )
-                );-- STRICT;
-                create table if not exists Appearance_in_AppearanceSet (
-                    AppearanceSet_Identity integer not null,
-                    Appearance_Identity integer not null,
-                    constraint reference_to_AppearanceSet foreign key (
-                        AppearanceSet_Identity
-                    ) references AppearanceSet(AppearanceSet_Identity),
-                    constraint reference_to_Appearance foreign key (
-                        Appearance_Identity
-                    ) references Appearance(Appearance_Identity),
-                    constraint unique_Appearance_in_AppearanceSet primary key (
-                        AppearanceSet_Identity,
-                        Appearance_Identity
+                    ),
+                    constraint unique_AppearanceSet unique (
+                        AppearanceSet_Member_Identities
                     )
                 );-- STRICT;
                 create table if not exists Posit (
@@ -555,10 +544,7 @@ mod bareclad {
                     "insert into Appearance (Appearance_Identity, Thing_Identity, Role_Identity) values (?, ?, ?)"
                 ).unwrap(),
                 add_appearance_set: connection.prepare(
-                    "insert into AppearanceSet (AppearanceSet_Identity) values (?)"
-                ).unwrap(),
-                add_appearance_in_appearance_set: connection.prepare(
-                    "insert into Appearance_in_AppearanceSet (AppearanceSet_Identity, Appearance_Identity) values (?, ?)"
+                    "insert into AppearanceSet (AppearanceSet_Identity, AppearanceSet_Member_Identities) values (?, ?)"
                 ).unwrap(),
                 add_posit: connection.prepare(
                     "insert into Posit (Posit_Identity, AppearanceSet_Identity, AppearingValue, AppearanceTime) values (?, ?, ?, ?)"
