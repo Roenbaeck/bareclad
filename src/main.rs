@@ -505,7 +505,7 @@ mod bareclad {
                 );-- STRICT;
                 create table if not exists AppearanceSet (
                     AppearanceSet_Identity integer not null,
-                    AppearanceSet_Member_Identities text not null,
+                    AppearanceSet_Appearance_Identities text not null,
                     constraint AppearanceSet_is_Internal foreign key (
                         AppearanceSet_Identity
                     ) references Internal(Internal_Identity), 
@@ -513,7 +513,7 @@ mod bareclad {
                         AppearanceSet_Identity
                     ),
                     constraint unique_AppearanceSet unique (
-                        AppearanceSet_Member_Identities
+                        AppearanceSet_Appearance_Identities
                     )
                 );-- STRICT;
                 create table if not exists Posit (
@@ -553,7 +553,7 @@ mod bareclad {
                     "insert into Appearance (Appearance_Identity, Role_Identity, Thing_Identity) values (?, ?, ?)"
                 ).unwrap(),
                 add_appearance_set: connection.prepare(
-                    "insert into AppearanceSet (AppearanceSet_Identity, AppearanceSet_Member_Identities) values (?, ?)"
+                    "insert into AppearanceSet (AppearanceSet_Identity, AppearanceSet_Appearance_Identities) values (?, ?)"
                 ).unwrap(),
                 add_posit: connection.prepare(
                     "insert into Posit (Posit_Identity, AppearanceSet_Identity, AppearingValue, AppearanceTime) values (?, ?, ?, ?)"
@@ -570,7 +570,7 @@ mod bareclad {
                 // this will be a comma separated and ordered list of identities (for now)
                 // in order to ensure uniqueness in a fairly perfomant way given that we are using a relational database
                 get_appearance_set: connection.prepare(
-                    "select AppearanceSet_Identity from AppearanceSet where AppearanceSet_Member_Identities = ?"
+                    "select AppearanceSet_Identity from AppearanceSet where AppearanceSet_Appearance_Identities = ?"
                 ).unwrap()
             }
         }
@@ -734,7 +734,6 @@ mod bareclad {
                             Err(Error::QueryReturnedNoRows) => {
                                 locked_persistor.add_internal.execute([]).unwrap();
                                 let id = locked_persistor.db.last_insert_rowid();
-                                println!("{} {} {}", &id, &lookup_role.name(), &lookup_thing);
                                 locked_persistor.add_appearance.execute(params![id, role_identity, &lookup_thing]).unwrap();
                             }
                             Err(err) => {
@@ -770,12 +769,41 @@ mod bareclad {
                 .unwrap()
                 .keep(AppearanceSet::new(appearance_set).unwrap());
             if !previously_kept {
+                let mut locked_persistor = self.persistor.lock().unwrap();
+                let mut appearance_identities = Vec::new();
                 for lookup_appearance in lookup_appearance_set.iter() {
+                    match locked_persistor.get_role.query_row::<usize, _, _>(params![&lookup_appearance.role().name()], |r| r.get(0)) {
+                        Ok(role_identity) => {
+                            match locked_persistor.get_appearance.query_row::<usize, _, _>(params![&role_identity, &lookup_appearance.thing()], |r| r.get(0)) {
+                                Ok(appearance_identity) => {
+                                    appearance_identities.push(appearance_identity.to_string());
+                                },
+                                Err(err) => {
+                                    panic!("The appearance ({}, {}) is not persisted: {}", lookup_appearance.role().name(), lookup_appearance.thing(), err);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            panic!("The role '{}' is not persisted: {}", lookup_appearance.role().name(), err);
+                        }
+                    }
                     self.appearance_to_appearance_set_lookup
                         .lock()
                         .unwrap()
                         .insert(Arc::clone(&lookup_appearance), Arc::clone(&kept_appearance_set));
                 }
+                let list_of_appearance_identities = appearance_identities.join(",");
+                match locked_persistor.get_appearance_set.query_row::<usize, _, _>(params![&list_of_appearance_identities], |r| r.get(0)) {
+                    Ok(_id) => (),
+                    Err(Error::QueryReturnedNoRows) => {
+                        locked_persistor.add_internal.execute([]).unwrap();
+                        let id = locked_persistor.db.last_insert_rowid();
+                        locked_persistor.add_appearance_set.execute(params![id, list_of_appearance_identities]).unwrap();
+                    }
+                    Err(err) => {
+                        panic!("Could not check if the appearance set [{}] is persisted: {}", list_of_appearance_identities, err);
+                    }
+                }       
             }
             kept_appearance_set
         }
