@@ -148,15 +148,21 @@ mod bareclad {
                 kept: HashMap::new(),
             }
         }
-        pub fn keep(&mut self, role: Role) -> Arc<Role> {
+        // TODO: All keepers should return (Arc<type of keepsake>, bool)
+        // where the bool indicates whether the keepsake already had 
+        // been kept. This way we can avoid persistence operations for
+        // already kept keepsakes.
+        pub fn keep(&mut self, role: Role) -> (Arc<Role>, bool) {
             let keepsake = role.name().to_owned();
+            let mut previously_kept = true;
             match self.kept.entry(keepsake.clone()) {
                 Entry::Vacant(e) => {
                     e.insert(Arc::new(role));
+                    previously_kept = false;
                 }
                 Entry::Occupied(_e) => (),
             };
-            Arc::clone(self.kept.get(&keepsake).unwrap())
+            (Arc::clone(self.kept.get(&keepsake).unwrap()), previously_kept)
         }
         pub fn get(&self, name: &String) -> Arc<Role> {
             Arc::clone(self.kept.get(name).unwrap())
@@ -191,10 +197,10 @@ mod bareclad {
                 kept: HashSet::new(),
             }
         }
-        pub fn keep(&mut self, appearance: Appearance) -> Arc<Appearance> {
+        pub fn keep(&mut self, appearance: Appearance) -> (Arc<Appearance>, bool) {
             let keepsake = Arc::new(appearance);
-            self.kept.insert(Arc::clone(&keepsake));
-            Arc::clone(self.kept.get(&keepsake).unwrap())
+            let previously_kept = !self.kept.insert(Arc::clone(&keepsake));
+            (Arc::clone(self.kept.get(&keepsake).unwrap()), previously_kept)
         }
     }
 
@@ -228,10 +234,10 @@ mod bareclad {
                 kept: HashSet::new(),
             }
         }
-        pub fn keep(&mut self, appearance_set: AppearanceSet) -> Arc<AppearanceSet> {
+        pub fn keep(&mut self, appearance_set: AppearanceSet) -> (Arc<AppearanceSet>, bool) {
             let keepsake = Arc::new(appearance_set);
-            self.kept.insert(Arc::clone(&keepsake));
-            Arc::clone(self.kept.get(&keepsake).unwrap())
+            let previously_kept = !self.kept.insert(Arc::clone(&keepsake));
+            (Arc::clone(self.kept.get(&keepsake).unwrap()), previously_kept)
         }
     }
 
@@ -279,20 +285,25 @@ mod bareclad {
             &mut self,
             posit: Posit<V, T>,
             thing_generator: Arc<Mutex<ThingGenerator>>,
-        ) -> (Arc<Posit<V, T>>, Arc<Thing>) {
+        ) -> (Arc<Posit<V, T>>, Arc<Thing>, bool) {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
             let keepsake = Arc::new(posit);
+            let mut previously_kept = false;
             let kept_thing = match map.get_by_left(&keepsake) {
-                Some(id) => Arc::clone(id),
+                Some(id) => {
+                    previously_kept = true;
+                    Arc::clone(id)
+                },
                 None => Arc::new(thing_generator.lock().unwrap().generate()),
             };
             map.insert(Arc::clone(&keepsake), Arc::clone(&kept_thing));
             (
                 Arc::clone(map.get_by_right(&kept_thing).unwrap()),
                 Arc::clone(&kept_thing),
+                previously_kept
             )
         }
         pub fn thing<V: 'static + DataType, T: 'static + TimeType>(
@@ -682,64 +693,69 @@ mod bareclad {
         }
         // functions to create constructs for the keepers to keep that also populate the lookups
         pub fn create_role(&self, role_name: String, reserved: bool) -> Arc<Role> {
-            let mut locked_persistor = self.persistor.lock().unwrap();
-            match locked_persistor.get_role.query_row::<usize, _, _>(params![&role_name], |r| r.get(0)) {
-                Ok(_id) => (),
-                Err(Error::QueryReturnedNoRows) => {
-                    locked_persistor.add_internal.execute([]).unwrap();
-                    let id = locked_persistor.db.last_insert_rowid();
-                    locked_persistor.add_role.execute(params![id, &role_name]).unwrap();
-                },
-                Err(err) => {
-                    panic!("Could not check if the role '{}' is persisted: {}", role_name, err);
-                }
-            }
-            self.role_keeper
+            let (kept_role, previously_kept) = self.role_keeper
                 .lock()
                 .unwrap()
-                .keep(Role::new(role_name, reserved))
+                .keep(Role::new(role_name, reserved));
+            if !previously_kept {
+                let mut locked_persistor = self.persistor.lock().unwrap();
+                match locked_persistor.get_role.query_row::<usize, _, _>(params![&kept_role.name()], |r| r.get(0)) {
+                    Ok(_id) => (),
+                    Err(Error::QueryReturnedNoRows) => {
+                        locked_persistor.add_internal.execute([]).unwrap();
+                        let id = locked_persistor.db.last_insert_rowid();
+                        locked_persistor.add_role.execute(params![id, &kept_role.name()]).unwrap();
+                    },
+                    Err(err) => {
+                        panic!("Could not check if the role '{}' is persisted: {}", kept_role.name(), err);
+                    }
+                }
+            }
+            kept_role     
         }
         pub fn create_apperance(
             &self,
             role: Arc<Role>,
             thing: Arc<Thing>,
         ) -> Arc<Appearance> {
-            let mut locked_persistor = self.persistor.lock().unwrap();
-            match locked_persistor.get_role.query_row::<usize, _, _>(params![&role.name()], |r| r.get(0)) {
-                Ok(role_identity) => {
-                    match locked_persistor.get_appearance.query_row::<usize, _, _>(params![&role_identity, &thing], |r| r.get(0)) {
-                        Ok(_id) => (),
-                        Err(Error::QueryReturnedNoRows) => {
-                            locked_persistor.add_internal.execute([]).unwrap();
-                            let id = locked_persistor.db.last_insert_rowid();
-                            println!("{} {} {}", &id, &role.name(), &thing);
-                            locked_persistor.add_appearance.execute(params![id, role_identity, &thing]).unwrap();
-                        }
-                        Err(err) => {
-                            panic!("Could not check if the appearance ({}, {}) is persisted: {}", role.name(), thing, err);
-                        }
-                    }
-                }
-                Err(err) => {
-                    panic!("The role '{}' is not persisted: {}", role.name(), err);
-                }
-            }
             let lookup_thing = Arc::clone(&thing);
             let lookup_role = Arc::clone(&role);
-            let kept_appearance = self
+            let (kept_appearance, previously_kept) = self
                 .appearance_keeper
                 .lock()
                 .unwrap()
                 .keep(Appearance::new(role, thing));
-            self.thing_to_appearance_lookup
-                .lock()
-                .unwrap()
-                .insert(lookup_thing, Arc::clone(&kept_appearance));
-            if lookup_role.reserved {
-                self.role_to_appearance_lookup
+            if !previously_kept {
+                let mut locked_persistor = self.persistor.lock().unwrap();
+                match locked_persistor.get_role.query_row::<usize, _, _>(params![&lookup_role.name()], |r| r.get(0)) {
+                    Ok(role_identity) => {
+                        match locked_persistor.get_appearance.query_row::<usize, _, _>(params![&role_identity, &lookup_thing], |r| r.get(0)) {
+                            Ok(_id) => (),
+                            Err(Error::QueryReturnedNoRows) => {
+                                locked_persistor.add_internal.execute([]).unwrap();
+                                let id = locked_persistor.db.last_insert_rowid();
+                                println!("{} {} {}", &id, &lookup_role.name(), &lookup_thing);
+                                locked_persistor.add_appearance.execute(params![id, role_identity, &lookup_thing]).unwrap();
+                            }
+                            Err(err) => {
+                                panic!("Could not check if the appearance ({}, {}) is persisted: {}", lookup_role.name(), lookup_thing, err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        panic!("The role '{}' is not persisted: {}", lookup_role.name(), err);
+                    }
+                }
+                self.thing_to_appearance_lookup
                     .lock()
                     .unwrap()
-                    .insert(lookup_role, Arc::clone(&kept_appearance));
+                    .insert(lookup_thing, Arc::clone(&kept_appearance));
+                if lookup_role.reserved {
+                    self.role_to_appearance_lookup
+                        .lock()
+                        .unwrap()
+                        .insert(lookup_role, Arc::clone(&kept_appearance));
+                }
             }
             kept_appearance
         }
@@ -748,16 +764,18 @@ mod bareclad {
             appearance_set: Vec<Arc<Appearance>>,
         ) -> Arc<AppearanceSet> {
             let lookup_appearance_set = appearance_set.clone();
-            let kept_appearance_set = self
+            let (kept_appearance_set, previously_kept) = self
                 .appearance_set_keeper
                 .lock()
                 .unwrap()
                 .keep(AppearanceSet::new(appearance_set).unwrap());
-            for lookup_appearance in lookup_appearance_set.iter() {
-                self.appearance_to_appearance_set_lookup
-                    .lock()
-                    .unwrap()
-                    .insert(Arc::clone(&lookup_appearance), Arc::clone(&kept_appearance_set));
+            if !previously_kept {
+                for lookup_appearance in lookup_appearance_set.iter() {
+                    self.appearance_to_appearance_set_lookup
+                        .lock()
+                        .unwrap()
+                        .insert(Arc::clone(&lookup_appearance), Arc::clone(&kept_appearance_set));
+                }
             }
             kept_appearance_set
         }
@@ -771,24 +789,26 @@ mod bareclad {
             time: T,
         ) -> (Arc<Posit<V, T>>, Arc<Thing>) {
             let lookup_appearance_set = appearance_set.clone();
-            let (posit, posit_thing) = self.posit_keeper.lock().unwrap().keep(
+            let (posit, posit_thing, previously_kept) = self.posit_keeper.lock().unwrap().keep(
                 Posit::new(appearance_set, value, time),
                 Arc::clone(&self.thing_generator),
             );
-            let mut locked_persistor = self.persistor.lock().unwrap();
-            match locked_persistor.get_thing.query_row::<usize, _, _>(params![&posit_thing], |r| r.get(0)) {
-                Ok(_id) => (),
-                Err(Error::QueryReturnedNoRows) => {
-                    locked_persistor.add_thing.execute(params![&posit_thing]).unwrap();
-                },
-                Err(err) => {
-                    panic!("Could not check if the posit thing '{}' is persisted: {}", posit_thing, err);
+            if !previously_kept {
+                let mut locked_persistor = self.persistor.lock().unwrap();
+                match locked_persistor.get_thing.query_row::<usize, _, _>(params![&posit_thing], |r| r.get(0)) {
+                    Ok(_id) => (),
+                    Err(Error::QueryReturnedNoRows) => {
+                        locked_persistor.add_thing.execute(params![&posit_thing]).unwrap();
+                    },
+                    Err(err) => {
+                        panic!("Could not check if the posit thing '{}' is persisted: {}", posit_thing, err);
+                    }
                 }
+                self.appearance_set_to_posit_thing_lookup
+                    .lock()
+                    .unwrap()
+                    .insert(Arc::clone(&lookup_appearance_set), Arc::clone(&posit_thing));
             }
-            self.appearance_set_to_posit_thing_lookup
-                .lock()
-                .unwrap()
-                .insert(Arc::clone(&lookup_appearance_set), Arc::clone(&posit_thing));
             (posit, posit_thing)
         }
         // finally, now that the database exists we can start to make assertions
