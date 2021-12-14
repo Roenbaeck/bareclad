@@ -1036,8 +1036,8 @@ fn main() {
     let (p3, pid3) =
         bareclad.create_posit(Arc::clone(&as1), v2.clone(), 21i64);
     println!("{:?}", p1);
-    println!("{:?}", pid1);
-    println!("{:?}", pid2);
+    println!("Posit id: {:?}", pid1);
+    println!("Posit id: {:?} (should be the same)", pid2);
     println!("--- Contents of the Posit<String, i64> keeper:");
     println!(
         "{:?}",
@@ -1049,12 +1049,16 @@ fn main() {
             .get::<Posit<String, i64>>()
     );
     let asserter = bareclad.create_thing();
-    let c1: Certainty = Certainty::new(100);
+    let c1: Certainty = Certainty::new(1.0);
+    println!("Certainty 1: {:?}", c1);
     let t1: DateTime<Utc> = Utc::now();
     bareclad.assert(Arc::clone(&asserter), Arc::clone(&p3), c1, t1);
-    let c2: Certainty = Certainty::new(99);
+    let c2: Certainty = Certainty::new(0.5);
+    println!("Certainty 2: {:?}", c2);
     let t2: DateTime<Utc> = Utc::now();
     bareclad.assert(Arc::clone(&asserter), Arc::clone(&p3), c2, t2);
+    
+    
     println!("--- Contents of the Posit<Certainty, DateTime<Utc>> keeper (after two assertions):");
     println!(
         "{:?}",

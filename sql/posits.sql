@@ -25,7 +25,13 @@ WITH RECURSIVE AppearanceSet_Members(AppearanceSet_Identity, Appearance_Identity
 	WHERE m.Appearance_Identity != ''
 	GROUP BY m.AppearanceSet_Identity
 )
-SELECT p.Posit_Identity || ' = [{' || s.AppearanceSet || '}, "' || p.AppearingValue || '", ' || p.AppearanceTime || ']'
+SELECT 
+	p.Posit_Identity || 
+	' [{' || s.AppearanceSet || '}, "' || 
+	p.AppearingValue || '", ' || 
+	p.AppearanceTime || ']' AS Posit
 FROM "Posit" p
 JOIN "flattened_AppearanceSet" s 
-ON s.AppearanceSet_Identity = p.AppearanceSet_Identity;
+ON s.AppearanceSet_Identity = p.AppearanceSet_Identity
+ORDER BY p.Posit_Identity;
+
