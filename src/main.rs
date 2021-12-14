@@ -675,7 +675,7 @@ mod bareclad {
         pub fn persist_thing(&mut self, thing: &Thing) -> bool {
             let mut existing = false;
             match self.get_thing.query_row::<usize, _, _>(params![&thing], |r| r.get(0)) {
-                Ok(_id) => {
+                Ok(_) => {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
@@ -690,7 +690,7 @@ mod bareclad {
         pub fn persist_role(&mut self, role: &Role) -> bool {
             let mut existing = false;
             match self.get_role.query_row::<usize, _, _>(params![&role.name()], |r| r.get(0)) {
-                Ok(_id) => {
+                Ok(_) => {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
@@ -705,7 +705,7 @@ mod bareclad {
         pub fn persist_appearance(&mut self, appearance: &Appearance) -> bool {
             let mut existing = false;
             match self.get_appearance.query_row::<usize, _, _>(params![&appearance.role().name(), &appearance.thing()], |r| r.get(0)) {
-                Ok(_id) => {
+                Ok(_) => {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
@@ -725,7 +725,7 @@ mod bareclad {
             }
             let list_of_appearance_identities = appearance_identities.join(",");
             match self.get_appearance_set.query_row::<usize, _, _>(params![&list_of_appearance_identities], |r| r.get(0)) {
-                Ok(_id) => {
+                Ok(_) => {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
@@ -743,7 +743,7 @@ mod bareclad {
         >(&mut self, posit: &Posit<V, T>) -> bool {
             let mut existing = false;
             match self.get_posit.query_row::<usize, _, _>(params![&posit.appearance_set().appearance_set(), &posit.value(), posit.time()], |r| r.get(0)) {
-                Ok(_id) => {
+                Ok(_) => {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
@@ -786,7 +786,7 @@ mod bareclad {
                 })
             }).unwrap();
             for appearance in appearance_iter {
-                let (kept_appearance, previously_kept) = db.appearance_keeper().lock().unwrap().keep(appearance.unwrap());
+                let (kept_appearance, _) = db.appearance_keeper().lock().unwrap().keep(appearance.unwrap());
                 let lookup_thing = Arc::new(kept_appearance.appearance);
                 db.thing_to_appearance_lookup()
                     .lock()
