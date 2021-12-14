@@ -37,6 +37,8 @@
 //! A datatype for Certainty is also available, since this is something that will be
 //! used frequently and that needs to be treated with special care.
 //!
+//! TODO: Remove internal identities from the relational model and let everything be "Things"
+//! TODO: Extend Role, Appearance and AppearanceSet with an additional field for the thing_identity.
 //! TODO: Check what needs to keep pub scope.
 mod bareclad {
     use std::sync::{Arc, Mutex};
@@ -53,18 +55,19 @@ mod bareclad {
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
 
-    use std::fmt;
+    use std::fmt::{self};
     use std::ops;
 
     // used for persistence
-    use rusqlite::{params, Connection, Result, OpenFlags, Statement, Error};
+    use rusqlite::{params, Connection, Statement, Error, ToSql};
+    use rusqlite::types::ToSqlOutput;
 
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
 
-    pub trait DataType : ToString + Eq + Hash + Send + Sync {
+    pub trait DataType : ToString + Eq + Hash + Send + Sync + ToSql {
     }
-    pub trait TimeType : ToString + Eq + Hash + Send + Sync {
+    pub trait TimeType : ToString + Eq + Hash + Send + Sync + ToSql {
     }
 
     // ------------- Thing -------------
@@ -117,24 +120,43 @@ mod bareclad {
     type ThingHasher = BuildHasherDefault<ThingHash>;
 
     // ------------- Role -------------
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    #[derive(Eq, PartialOrd, Ord, Debug)]
     pub struct Role {
+        role: Thing,
         name: String,
         reserved: bool,
     }
 
     impl Role {
-        pub fn new(role: String, reserved: bool) -> Self {
+        pub fn new(name: String, reserved: bool) -> Self {
             Self {
-                name: role,
+                role: GENESIS, // not yet fully a thing
+                name,
                 reserved,
             }
         }
         // It's intentional to encapsulate the name in the struct
         // and only expose it using a "getter", because this yields
         // true immutability for objects after creation.
+        pub fn role(&self) -> &Thing {
+            &self.role
+        }
         pub fn name(&self) -> &str {
             &self.name
+        }
+        pub fn reserved(&self) -> bool {
+            self.reserved
+        }
+    }
+    impl PartialEq for Role {
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name && self.reserved == other.reserved
+        }
+    }
+    impl Hash for Role {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.name.hash(state);
+            self.reserved.hash(state);
         }
     }
 
@@ -148,15 +170,12 @@ mod bareclad {
                 kept: HashMap::new(),
             }
         }
-        // TODO: All keepers should return (Arc<type of keepsake>, bool)
-        // where the bool indicates whether the keepsake already had 
-        // been kept. This way we can avoid persistence operations for
-        // already kept keepsakes.
-        pub fn keep(&mut self, role: Role) -> (Arc<Role>, bool) {
+        pub fn keep(&mut self, mut role: Role, thing_generator: &mut ThingGenerator) -> (Arc<Role>, bool) {
             let keepsake = role.name().to_owned();
             let mut previously_kept = true;
             match self.kept.entry(keepsake.clone()) {
                 Entry::Vacant(e) => {
+                    role.role = thing_generator.generate(); // fully becomes a thing
                     e.insert(Arc::new(role));
                     previously_kept = false;
                 }
@@ -170,20 +189,39 @@ mod bareclad {
     }
 
     // ------------- Appearance -------------
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    #[derive(Eq, PartialOrd, Ord, Debug)]
     pub struct Appearance {
+        appearance: Thing,
         role: Arc<Role>,
         thing: Arc<Thing>,
     }
     impl Appearance {
         pub fn new(role: Arc<Role>, thing: Arc<Thing>) -> Self {
-            Self { role, thing }
+            Self { 
+                appearance: GENESIS,
+                role, 
+                thing 
+            }
+        }
+        pub fn appearance(&self) -> &Thing {
+            &self.appearance
         }
         pub fn role(&self) -> &Role {
             &self.role
         }
         pub fn thing(&self) -> &Thing {
             &self.thing
+        }
+    }
+    impl PartialEq for Appearance {
+        fn eq(&self, other: &Self) -> bool {
+            self.role == other.role && self.thing == other.thing
+        }
+    }
+    impl Hash for Appearance {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.role.hash(state);
+            self.thing.hash(state);
         }
     }
 
@@ -197,16 +235,19 @@ mod bareclad {
                 kept: HashSet::new(),
             }
         }
-        pub fn keep(&mut self, appearance: Appearance) -> (Arc<Appearance>, bool) {
+        pub fn keep(&mut self, mut appearance: Appearance, thing_generator: &mut ThingGenerator) -> (Arc<Appearance>, bool) {
+            appearance.appearance = thing_generator.generate();
             let keepsake = Arc::new(appearance);
             let previously_kept = !self.kept.insert(Arc::clone(&keepsake));
+            if previously_kept { thing_generator.release(keepsake.appearance); } 
             (Arc::clone(self.kept.get(&keepsake).unwrap()), previously_kept)
         }
     }
 
     // ------------- AppearanceSet -------------
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    #[derive(Eq, PartialOrd, Ord, Debug)]
     pub struct AppearanceSet {
+        appearance_set: Thing,
         members: Arc<Vec<Arc<Appearance>>>,
     }
     impl AppearanceSet {
@@ -216,11 +257,25 @@ mod bareclad {
                 return None;
             }
             Some(Self {
+                appearance_set: GENESIS,
                 members: Arc::new(set),
             })
         }
         pub fn members(&self) -> &Vec<Arc<Appearance>> {
             &self.members
+        }
+        pub fn appearance_set(&self) -> &Thing {
+            &self.appearance_set
+        }
+    }
+    impl PartialEq for AppearanceSet {
+        fn eq(&self, other: &Self) -> bool {
+            self.members == other.members
+        }
+    }
+    impl Hash for AppearanceSet {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.members.hash(state);
         }
     }
 
@@ -234,16 +289,19 @@ mod bareclad {
                 kept: HashSet::new(),
             }
         }
-        pub fn keep(&mut self, appearance_set: AppearanceSet) -> (Arc<AppearanceSet>, bool) {
+        pub fn keep(&mut self, mut appearance_set: AppearanceSet, thing_generator: &mut ThingGenerator) -> (Arc<AppearanceSet>, bool) {
+            appearance_set.appearance_set = thing_generator.generate();
             let keepsake = Arc::new(appearance_set);
             let previously_kept = !self.kept.insert(Arc::clone(&keepsake));
+            if previously_kept { thing_generator.release(keepsake.appearance_set); }
             (Arc::clone(self.kept.get(&keepsake).unwrap()), previously_kept)
         }
     }
 
     // --------------- Posit ----------------
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    #[derive(Eq, PartialOrd, Ord, Debug)]
     pub struct Posit<V: DataType, T: TimeType> {
+        posit: Thing,
         appearance_set: Arc<AppearanceSet>,
         value: V, // imprecise value
         time: T,  // imprecise time
@@ -251,10 +309,14 @@ mod bareclad {
     impl<V: DataType, T: TimeType> Posit<V, T> {
         pub fn new(appearance_set: Arc<AppearanceSet>, value: V, time: T) -> Posit<V, T> {
             Self {
+                posit: GENESIS,
                 value,
                 time,
                 appearance_set,
             }
+        }
+        pub fn posit(&self) -> &Thing {
+            &self.posit
         }
         pub fn value(&self) -> &V {
             &self.value
@@ -264,6 +326,20 @@ mod bareclad {
         }
         pub fn appearance_set(&self) -> &AppearanceSet {
             &self.appearance_set
+        }
+    }
+    impl<V: DataType, T: TimeType> PartialEq for Posit<V, T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.appearance_set == other.appearance_set &&
+            self.value == other.value &&
+            self.time == other.time
+        }
+    }
+    impl<V: DataType, T: TimeType> Hash for Posit<V, T> {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.appearance_set.hash(state);
+            self.value.hash(state);
+            self.time.hash(state);
         }
     }
 
@@ -283,21 +359,25 @@ mod bareclad {
         }
         pub fn keep<V: 'static + DataType, T: 'static + TimeType>(
             &mut self,
-            posit: Posit<V, T>,
-            thing_generator: Arc<Mutex<ThingGenerator>>,
+            mut posit: Posit<V, T>,
+            thing_generator: &mut ThingGenerator,
         ) -> (Arc<Posit<V, T>>, Arc<Thing>, bool) {
             let map = self
                 .kept
                 .entry::<Posit<V, T>>()
                 .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
+            posit.posit = thing_generator.generate();
             let keepsake = Arc::new(posit);
             let mut previously_kept = false;
             let kept_thing = match map.get_by_left(&keepsake) {
                 Some(id) => {
                     previously_kept = true;
+                    thing_generator.release(keepsake.posit);
                     Arc::clone(id)
                 },
-                None => Arc::new(thing_generator.lock().unwrap().generate()),
+                None => {
+                    Arc::new(keepsake.posit)
+                }
             };
             map.insert(Arc::clone(&keepsake), Arc::clone(&kept_thing));
             (
@@ -415,6 +495,11 @@ mod bareclad {
             r.alpha as f64 / 100f64
         }
     }
+    impl ToSql for Certainty {
+        fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+            Ok(ToSqlOutput::from(self.alpha))
+        }
+    }
 
     // ------------- Lookups -------------
     #[derive(Debug)]
@@ -440,7 +525,6 @@ mod bareclad {
     pub struct Persistor<'db> {
         pub db: &'db Connection,
         pub add_thing: Statement<'db>,
-        pub add_internal: Statement<'db>,
         pub add_role: Statement<'db>,
         pub add_appearance: Statement<'db>,
         pub add_appearance_set: Statement<'db>,
@@ -449,6 +533,7 @@ mod bareclad {
         pub get_role: Statement<'db>,
         pub get_appearance: Statement<'db>,
         pub get_appearance_set: Statement<'db>,
+        pub get_posit: Statement<'db>,
     }
     impl<'db> Persistor<'db> {
         pub fn new<'connection>(connection: &'connection Connection) -> Persistor<'connection> {
@@ -462,18 +547,12 @@ mod bareclad {
                         Thing_Identity
                     )
                 );-- STRICT;
-                create table if not exists Internal (
-                    Internal_Identity integer not null, 
-                    constraint unique_and_referenceable_Internal_Identity primary key (
-                        Internal_Identity
-                    )
-                );-- STRICT;
                 create table if not exists Role (
                     Role_Identity integer not null,
                     Role text not null,
-                    constraint Role_is_Internal foreign key (
+                    constraint Role_is_Thing foreign key (
                         Role_Identity
-                    ) references Internal(Internal_Identity),
+                    ) references Thing(Thing_Identity),
                     constraint referenceable_Role_Identity primary key (
                         Role_Identity
                     ),
@@ -485,9 +564,9 @@ mod bareclad {
                     Appearance_Identity integer not null,
                     Role_Identity integer not null,
                     Thing_Identity integer not null,
-                    constraint Appearance_is_Internal foreign key (
+                    constraint Appearance_is_Thing foreign key (
                         Appearance_Identity
-                    ) references Internal(Internal_Identity),
+                    ) references Thing(Thing_Identity),
                     constraint ensure_existing_Thing foreign key (
                         Thing_Identity
                     ) references Thing(Thing_Identity),
@@ -506,9 +585,9 @@ mod bareclad {
                 create table if not exists AppearanceSet (
                     AppearanceSet_Identity integer not null,
                     AppearanceSet_Appearance_Identities text not null,
-                    constraint AppearanceSet_is_Internal foreign key (
+                    constraint AppearanceSet_is_Thing foreign key (
                         AppearanceSet_Identity
-                    ) references Internal(Internal_Identity), 
+                    ) references Thing(Thing_Identity),
                     constraint referenceable_AppearanceSet_Identity primary key (
                         AppearanceSet_Identity
                     ),
@@ -543,9 +622,6 @@ mod bareclad {
                 add_thing: connection.prepare(
                     "insert into Thing (Thing_Identity) values (?)"
                 ).unwrap(),
-                add_internal: connection.prepare(
-                    "insert into Internal (Internal_Identity) values (NULL)" // use last_insert_rowid to get the created identity
-                ).unwrap(),
                 add_role: connection.prepare(
                     "insert into Role (Role_Identity, Role) values (?, ?)"
                 ).unwrap(),
@@ -571,8 +647,94 @@ mod bareclad {
                 // in order to ensure uniqueness in a fairly perfomant way given that we are using a relational database
                 get_appearance_set: connection.prepare(
                     "select AppearanceSet_Identity from AppearanceSet where AppearanceSet_Appearance_Identities = ?"
+                ).unwrap(),
+                get_posit: connection.prepare(
+                    "select Posit_Identity from Posit where AppearanceSet_Identity = ? and AppearingValue = ? and AppearanceTime = ?"
                 ).unwrap()
             }
+        }
+        pub fn persist_thing(&mut self, thing: &Thing) -> bool {
+            let mut existing = false;
+            match self.get_thing.query_row::<usize, _, _>(params![&thing], |r| r.get(0)) {
+                Ok(_id) => {
+                    existing = true;
+                },
+                Err(Error::QueryReturnedNoRows) => {
+                    self.add_thing.execute(params![&thing]).unwrap();
+                },
+                Err(err) => {
+                    panic!("Could not check if the thing '{}' is persisted: {}", &thing, err);
+                }
+            }
+            existing
+        }
+        pub fn persist_role(&mut self, role: &Role) -> bool {
+            let mut existing = false;
+            match self.get_role.query_row::<usize, _, _>(params![&role.name()], |r| r.get(0)) {
+                Ok(_id) => {
+                    existing = true;
+                },
+                Err(Error::QueryReturnedNoRows) => {
+                    self.add_role.execute(params![&role.role(), &role.name()]).unwrap();
+                },
+                Err(err) => {
+                    panic!("Could not check if the role '{}' is persisted: {}", &role.name(), err);
+                }
+            }
+            existing
+        }
+        pub fn persist_appearance(&mut self, appearance: &Appearance) -> bool {
+            let mut existing = false;
+            match self.get_appearance.query_row::<usize, _, _>(params![&appearance.role().name(), &appearance.thing()], |r| r.get(0)) {
+                Ok(_id) => {
+                    existing = true;
+                },
+                Err(Error::QueryReturnedNoRows) => {
+                    self.add_appearance.execute(params![&appearance.appearance(), &appearance.role().role(), &appearance.thing()]).unwrap();
+                },
+                Err(err) => {
+                    panic!("Could not check if the appearance ({}, {}) is persisted: {}", &appearance.role().name(), &appearance.thing(), err);
+                }
+            }
+            existing
+        }
+        pub fn persist_appearance_set(&mut self, appearance_set: &AppearanceSet) -> bool {
+            let mut existing = false;
+            let mut appearance_identities = Vec::new();
+            for appearance in appearance_set.members.iter() {
+                appearance_identities.push(appearance.appearance().to_string());
+            }
+            let list_of_appearance_identities = appearance_identities.join(",");
+            match self.get_appearance_set.query_row::<usize, _, _>(params![&list_of_appearance_identities], |r| r.get(0)) {
+                Ok(_id) => {
+                    existing = true;
+                },
+                Err(Error::QueryReturnedNoRows) => {
+                    self.add_appearance_set.execute(params![&appearance_set.appearance_set(), &list_of_appearance_identities]).unwrap();
+                }
+                Err(err) => {
+                    panic!("Could not check if the appearance set [{}] is persisted: {}", &list_of_appearance_identities, err);
+                }
+            }       
+            existing
+        }
+        pub fn persist_posit<
+            V: 'static + DataType,
+            T: 'static + TimeType,
+        >(&mut self, posit: &Posit<V, T>) -> bool {
+            let mut existing = false;
+            match self.get_posit.query_row::<usize, _, _>(params![&posit.appearance_set().appearance_set(), &posit.value(), posit.time()], |r| r.get(0)) {
+                Ok(_id) => {
+                    existing = true;
+                },
+                Err(Error::QueryReturnedNoRows) => {
+                    self.add_posit.execute(params![&posit.posit(), &posit.appearance_set().appearance_set(), &posit.value(), posit.time()]).unwrap();
+                },
+                Err(err) => {
+                    panic!("Could not check if the posit {} is persisted: {}", &posit.posit(), err);
+                }
+            }
+            existing
         }
     }
 
@@ -676,19 +838,9 @@ mod bareclad {
         ) -> Arc<Mutex<Lookup<AppearanceSet, Thing>>> {
             Arc::clone(&self.appearance_set_to_posit_thing_lookup)
         }
-        // function that generates a thing
-        pub fn generate_thing(&self) -> Arc<Thing> {
+        pub fn create_thing(&self) -> Arc<Thing> {
             let thing = self.thing_generator.lock().unwrap().generate();
-            let mut locked_persistor = self.persistor.lock().unwrap();
-            match locked_persistor.get_thing.query_row::<usize, _, _>(params![&thing], |r| r.get(0)) {
-                Ok(_id) => (),
-                Err(Error::QueryReturnedNoRows) => {
-                    locked_persistor.add_thing.execute(params![&thing]).unwrap();
-                },
-                Err(err) => {
-                    panic!("Could not check if the thing '{}' is persisted: {}", thing, err);
-                }
-            }
+            self.persistor.lock().unwrap().persist_thing(&thing);
             Arc::new(thing)
         }
         // functions to create constructs for the keepers to keep that also populate the lookups
@@ -696,20 +848,10 @@ mod bareclad {
             let (kept_role, previously_kept) = self.role_keeper
                 .lock()
                 .unwrap()
-                .keep(Role::new(role_name, reserved));
+                .keep(Role::new(role_name, reserved), &mut self.thing_generator.lock().unwrap());
             if !previously_kept {
-                let mut locked_persistor = self.persistor.lock().unwrap();
-                match locked_persistor.get_role.query_row::<usize, _, _>(params![&kept_role.name()], |r| r.get(0)) {
-                    Ok(_id) => (),
-                    Err(Error::QueryReturnedNoRows) => {
-                        locked_persistor.add_internal.execute([]).unwrap();
-                        let id = locked_persistor.db.last_insert_rowid();
-                        locked_persistor.add_role.execute(params![id, &kept_role.name()]).unwrap();
-                    },
-                    Err(err) => {
-                        panic!("Could not check if the role '{}' is persisted: {}", kept_role.name(), err);
-                    }
-                }
+                self.persistor.lock().unwrap().persist_thing(&kept_role.role());
+                self.persistor.lock().unwrap().persist_role(&kept_role);
             }
             kept_role     
         }
@@ -724,27 +866,10 @@ mod bareclad {
                 .appearance_keeper
                 .lock()
                 .unwrap()
-                .keep(Appearance::new(role, thing));
+                .keep(Appearance::new(role, thing), &mut self.thing_generator.lock().unwrap());
             if !previously_kept {
-                let mut locked_persistor = self.persistor.lock().unwrap();
-                match locked_persistor.get_role.query_row::<usize, _, _>(params![&lookup_role.name()], |r| r.get(0)) {
-                    Ok(role_identity) => {
-                        match locked_persistor.get_appearance.query_row::<usize, _, _>(params![&role_identity, &lookup_thing], |r| r.get(0)) {
-                            Ok(_id) => (),
-                            Err(Error::QueryReturnedNoRows) => {
-                                locked_persistor.add_internal.execute([]).unwrap();
-                                let id = locked_persistor.db.last_insert_rowid();
-                                locked_persistor.add_appearance.execute(params![id, role_identity, &lookup_thing]).unwrap();
-                            }
-                            Err(err) => {
-                                panic!("Could not check if the appearance ({}, {}) is persisted: {}", lookup_role.name(), lookup_thing, err);
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        panic!("The role '{}' is not persisted: {}", lookup_role.name(), err);
-                    }
-                }
+                self.persistor.lock().unwrap().persist_thing(&kept_appearance.appearance());
+                self.persistor.lock().unwrap().persist_appearance(&kept_appearance);
                 self.thing_to_appearance_lookup
                     .lock()
                     .unwrap()
@@ -767,43 +892,16 @@ mod bareclad {
                 .appearance_set_keeper
                 .lock()
                 .unwrap()
-                .keep(AppearanceSet::new(appearance_set).unwrap());
+                .keep(AppearanceSet::new(appearance_set).unwrap(), &mut self.thing_generator.lock().unwrap());
             if !previously_kept {
-                let mut locked_persistor = self.persistor.lock().unwrap();
-                let mut appearance_identities = Vec::new();
+                self.persistor.lock().unwrap().persist_thing(&kept_appearance_set.appearance_set());
+                self.persistor.lock().unwrap().persist_appearance_set(&kept_appearance_set);
                 for lookup_appearance in lookup_appearance_set.iter() {
-                    match locked_persistor.get_role.query_row::<usize, _, _>(params![&lookup_appearance.role().name()], |r| r.get(0)) {
-                        Ok(role_identity) => {
-                            match locked_persistor.get_appearance.query_row::<usize, _, _>(params![&role_identity, &lookup_appearance.thing()], |r| r.get(0)) {
-                                Ok(appearance_identity) => {
-                                    appearance_identities.push(appearance_identity.to_string());
-                                },
-                                Err(err) => {
-                                    panic!("The appearance ({}, {}) is not persisted: {}", lookup_appearance.role().name(), lookup_appearance.thing(), err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            panic!("The role '{}' is not persisted: {}", lookup_appearance.role().name(), err);
-                        }
-                    }
                     self.appearance_to_appearance_set_lookup
                         .lock()
                         .unwrap()
                         .insert(Arc::clone(&lookup_appearance), Arc::clone(&kept_appearance_set));
-                }
-                let list_of_appearance_identities = appearance_identities.join(",");
-                match locked_persistor.get_appearance_set.query_row::<usize, _, _>(params![&list_of_appearance_identities], |r| r.get(0)) {
-                    Ok(_id) => (),
-                    Err(Error::QueryReturnedNoRows) => {
-                        locked_persistor.add_internal.execute([]).unwrap();
-                        let id = locked_persistor.db.last_insert_rowid();
-                        locked_persistor.add_appearance_set.execute(params![id, list_of_appearance_identities]).unwrap();
-                    }
-                    Err(err) => {
-                        panic!("Could not check if the appearance set [{}] is persisted: {}", list_of_appearance_identities, err);
-                    }
-                }       
+                }   
             }
             kept_appearance_set
         }
@@ -817,27 +915,19 @@ mod bareclad {
             time: T,
         ) -> (Arc<Posit<V, T>>, Arc<Thing>) {
             let lookup_appearance_set = appearance_set.clone();
-            let (posit, posit_thing, previously_kept) = self.posit_keeper.lock().unwrap().keep(
+            let (kept_posit, posit_thing, previously_kept) = self.posit_keeper.lock().unwrap().keep(
                 Posit::new(appearance_set, value, time),
-                Arc::clone(&self.thing_generator),
+                &mut self.thing_generator.lock().unwrap(),
             );
             if !previously_kept {
-                let mut locked_persistor = self.persistor.lock().unwrap();
-                match locked_persistor.get_thing.query_row::<usize, _, _>(params![&posit_thing], |r| r.get(0)) {
-                    Ok(_id) => (),
-                    Err(Error::QueryReturnedNoRows) => {
-                        locked_persistor.add_thing.execute(params![&posit_thing]).unwrap();
-                    },
-                    Err(err) => {
-                        panic!("Could not check if the posit thing '{}' is persisted: {}", posit_thing, err);
-                    }
-                }
+                self.persistor.lock().unwrap().persist_thing(&kept_posit.posit());
+                self.persistor.lock().unwrap().persist_posit(&kept_posit);
                 self.appearance_set_to_posit_thing_lookup
                     .lock()
                     .unwrap()
                     .insert(Arc::clone(&lookup_appearance_set), Arc::clone(&posit_thing));
             }
-            (posit, posit_thing)
+            (kept_posit, posit_thing)
         }
         // finally, now that the database exists we can start to make assertions
         pub fn assert<V: 'static + DataType, T: 'static + TimeType>(
@@ -890,7 +980,9 @@ mod bareclad {
         }
     }
 }
+
  
+
 // =========== TESTING BELOW ===========
 
 use chrono::{DateTime, Utc};
@@ -901,12 +993,13 @@ use rusqlite::{Connection};
 use bareclad::{Appearance, AppearanceSet, Certainty, Database, Thing, Posit, Role, Persistor};
 
 fn main() {
-    let database = Connection::open("bareclad.db").unwrap();
-    println!("The path to the database file is '{}'.", database.path().unwrap().display());       
-    let bareclad = Database::new(&database);
+    let sqlite = Connection::open("bareclad.db").unwrap();
+    println!("The path to the database file is '{}'.", sqlite.path().unwrap().display());      
+    // TODO: if the file exists, populate the in-memory database
+    let bareclad = Database::new(&sqlite);
 
     // does it really have to be this elaborate?
-    let i1 = bareclad.generate_thing();
+    let i1 = bareclad.create_thing();
     println!("Enter a role name: ");
     let mut role: String = read!("{}");
     role.truncate(role.trim_end().len());
@@ -918,7 +1011,7 @@ fn main() {
     let a1 = bareclad.create_apperance(Arc::clone(&r1), Arc::clone(&i1));
     let a2 = bareclad.create_apperance(Arc::clone(&r1), Arc::clone(&i1));
     println!("{:?}", bareclad.appearance_keeper());
-    let i2 = bareclad.generate_thing();
+    let i2 = bareclad.create_thing();
 
     println!("Enter another role name: ");
     let mut another_role: String = read!("{}");
@@ -955,7 +1048,7 @@ fn main() {
             .kept
             .get::<Posit<String, i64>>()
     );
-    let asserter = bareclad.generate_thing();
+    let asserter = bareclad.create_thing();
     let c1: Certainty = Certainty::new(100);
     let t1: DateTime<Utc> = Utc::now();
     bareclad.assert(Arc::clone(&asserter), Arc::clone(&p3), c1, t1);
@@ -992,8 +1085,10 @@ fn main() {
             .lock()
             .unwrap()
     );
-    println!("--- Posit things for thing 1: ");
-    let ids: Vec<Arc<Thing>> = bareclad.posits_involving_thing(&1);
+    // TODO: Fix this, broken at the moment
+    /* 
+    println!("--- Posit things for thing {}: ", pid1);
+    let ids: Vec<Arc<Thing>> = bareclad.posits_involving_thing(&pid1);
     println!(
         "{:?}",
         ids
@@ -1009,4 +1104,5 @@ fn main() {
                 .posit::<String, i64>(px.clone()) // you need to know the data type of what you want to find
         );    
     }
+    */
 }
