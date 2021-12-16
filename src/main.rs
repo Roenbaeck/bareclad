@@ -64,10 +64,18 @@ mod bareclad {
 
     // used for timestamps in the database
     use chrono::{DateTime, Utc};
+    // used when parsing a string to a DateTime<Utc>
+    use std::str::FromStr;
 
     pub trait DataType : ToString + Eq + Hash + Send + Sync + ToSql + FromSql {
+        type TargetType;
+        fn convert(value: &ValueRef) -> Self::TargetType;
+        fn data_type(&self) -> &'static str;
     }
-    pub trait TimeType : ToString + Eq + Hash + Send + Sync + ToSql + FromSql {
+    pub trait TimeType : ToString + Ord + Eq + Hash + Send + Sync + ToSql + FromSql {
+        type TargetType;
+        fn convert(value: &ValueRef) -> Self::TargetType;
+        fn time_type(&self) -> &'static str;
     }
 
     // ------------- Thing -------------
@@ -488,6 +496,45 @@ mod bareclad {
         }
     }
 
+    // ------------- Data Types --------------
+    impl DataType for Certainty { 
+        type TargetType = Certainty;
+        fn data_type(&self) -> &'static str {
+            "Certainty"
+        }
+        fn convert(value: &ValueRef) -> Self::TargetType {
+            Certainty {
+                alpha: i8::try_from(value.as_i64().unwrap()).unwrap()
+            }
+        }
+    }
+    impl DataType for String { 
+        type TargetType = String;
+        fn data_type(&self) -> &'static str {
+            "String"
+        }
+        fn convert(value: &ValueRef) -> Self::TargetType {
+            String::from(value.as_str().unwrap())
+        }
+    }
+    impl TimeType for DateTime<Utc> { 
+        type TargetType = DateTime<Utc>;
+        fn time_type(&self) -> &'static str {
+            "DateTime<Utc>"
+        }
+        fn convert(value: &ValueRef) -> Self::TargetType {
+            DateTime::<Utc>::from_str(value.as_str().unwrap()).unwrap()
+        }
+    }
+    impl TimeType for i64 {
+        type TargetType = i64;
+        fn time_type(&self) -> &'static str {
+            "i64"
+        }
+        fn convert(value: &ValueRef) -> Self::TargetType {
+            value.as_i64().unwrap()
+        }
+    }
     // ------------- Persistence -------------
     pub struct Persistor<'db> {
         pub db: &'db Connection,
@@ -534,7 +581,9 @@ mod bareclad {
                     Posit_Identity integer not null,
                     AppearanceSet text not null,
                     AppearingValue any null, 
+                    ValueType text not null, -- normalize later
                     AppearanceTime any null,
+                    TimeType text not null, -- normalize later
                     constraint Posit_is_Thing foreign key (
                         Posit_Identity
                     ) references Thing(Thing_Identity),
@@ -558,7 +607,7 @@ mod bareclad {
                     "insert into Role (Role_Identity, Role, Reserved) values (?, ?, ?)"
                 ).unwrap(),
                 add_posit: connection.prepare(
-                    "insert into Posit (Posit_Identity, AppearanceSet, AppearingValue, AppearanceTime) values (?, ?, ?, ?)"
+                    "insert into Posit (Posit_Identity, AppearanceSet, AppearingValue, ValueType, AppearanceTime, TimeType) values (?, ?, ?, ?, ?, ?)"
                 ).unwrap(),
                 get_thing: connection.prepare(
                     "select Thing_Identity from Thing where Thing_Identity = ?"
@@ -576,7 +625,7 @@ mod bareclad {
                     "select Role_Identity, Role, Reserved from Role"
                 ).unwrap(),
                 all_posits: connection.prepare(
-                    "select Posit_Identity, AppearanceSet, AppearingValue, AppearanceTime from Posit"
+                    "select Posit_Identity, AppearanceSet, AppearingValue, ValueType, AppearanceTime, TimeType from Posit"
                 ).unwrap(),
             }
         }
@@ -621,12 +670,27 @@ mod bareclad {
             }
             let apperance_set_as_text = appearances.join("|");
             let mut existing = false;
-            match self.get_posit.query_row::<usize, _, _>(params![&apperance_set_as_text, &posit.value(), posit.time()], |r| r.get(0)) {
+            match self.get_posit.query_row::<usize, _, _>(
+                params![
+                    &apperance_set_as_text, 
+                    &posit.value(), 
+                    &posit.time()
+                ], |r| r.get(0)
+            ) {
                 Ok(_) => {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
-                    self.add_posit.execute(params![&posit.posit(), &apperance_set_as_text, &posit.value(), posit.time()]).unwrap();
+                    self.add_posit.execute(
+                        params![
+                            &posit.posit(), 
+                            &apperance_set_as_text, 
+                            &posit.value(), 
+                            &posit.value().data_type(), 
+                            &posit.time(),
+                            &posit.time().time_type()
+                        ]
+                    ).unwrap();
                 },
                 Err(err) => {
                     panic!("Could not check if the posit {} is persisted: {}", &posit.posit(), err);
@@ -656,43 +720,71 @@ mod bareclad {
                 db.keep_role(role.unwrap());
             }
         }
-        pub fn restore_posits<
-            V: 'static + DataType,
-            T: 'static + TimeType,
-        >(&mut self, db: &Database) {
-            let posit_iter = self.all_posits.query_map([], |row| {
-                Ok(Posit {
-                    posit: Arc::new(row.get(0).unwrap()),
-                    appearance_set: {
-                        let appearances: String = row.get(1).unwrap();
-                        let mut appearance_set = Vec::new();
-                        for appearance_text in appearances.split('|') {
-                            let (thing, role_name) = appearance_text.split_once(',').unwrap();
-                            let appearance = Appearance {
-                                thing: Arc::new(thing.parse().unwrap()),
-                                role: db.role_keeper().lock().unwrap().get(role_name)
-                            };
-                            let (kept_appearance, _) = db.keep_appearance(appearance);
-                            appearance_set.push(kept_appearance);
-                        }
-                        let (kept_appearance_set, _) = db.keep_appearance_set(AppearanceSet { appearances: Arc::new(appearance_set) });
-                        kept_appearance_set
+        pub fn restore_posits(&mut self, db: &Database) {
+            let mut rows = self.all_posits.query([]).unwrap();
+            while let Some(row) = rows.next().unwrap() {
+                let data_type: String = row.get_unwrap(3);
+                let time_type: String = row.get_unwrap(5);
+                let thing: usize = row.get_unwrap(0);
+                let appearances: String = row.get_unwrap(1);
+                let mut appearance_set = Vec::new();
+                for appearance_text in appearances.split('|') {
+                    let (thing, role_name) = appearance_text.split_once(',').unwrap();
+                    let appearance = Appearance {
+                        thing: Arc::new(thing.parse().unwrap()),
+                        role: db.role_keeper().lock().unwrap().get(role_name)
+                    };
+                    let (kept_appearance, _) = db.keep_appearance(appearance);
+                    appearance_set.push(kept_appearance);
+                }
+                let (kept_appearance_set, _) = db.keep_appearance_set(AppearanceSet { appearances: Arc::new(appearance_set) });
+                match (data_type.as_str(), time_type.as_str()) {
+                    // massive boilerplate here
+                    ("String", "i64") => {
+                        db.keep_posit(
+                            Posit { 
+                                posit: Arc::new(thing), 
+                                appearance_set: kept_appearance_set, 
+                                value: String::convert(&row.get_ref_unwrap(2)), 
+                                time: i64::convert(&row.get_ref_unwrap(4))
+                            }
+                        );
                     },
-                    value: row.get::<_, V>(2).unwrap(),
-                    time: row.get::<_, T>(3).unwrap(),
-                })
-            }).unwrap();
-            for posit in posit_iter {
-                println!("{:?}", posit.unwrap().appearance_set);
+                    ("String", "Datetime<Utc>") => {
+                        db.keep_posit(
+                            Posit { 
+                                posit: Arc::new(thing), 
+                                appearance_set: kept_appearance_set, 
+                                value: String::convert(&row.get_ref_unwrap(2)), 
+                                time: DateTime::<Utc>::convert(&row.get_ref_unwrap(4))
+                            }
+                        );
+                    },
+                    ("Certainty", "i64") => {
+                        db.keep_posit(
+                            Posit { 
+                                posit: Arc::new(thing), 
+                                appearance_set: kept_appearance_set, 
+                                value: Certainty::convert(&row.get_ref_unwrap(2)), 
+                                time: i64::convert(&row.get_ref_unwrap(4))
+                            }
+                        );
+                    },
+                    ("Certainty", "Datetime<Utc>") => {
+                        db.keep_posit(
+                            Posit { 
+                                posit: Arc::new(thing), 
+                                appearance_set: kept_appearance_set, 
+                                value: Certainty::convert(&row.get_ref_unwrap(2)), 
+                                time: DateTime::<Utc>::convert(&row.get_ref_unwrap(4))
+                            }
+                        );
+                    }, 
+                    _ => ()
+                }
             }
         }   
     }
-
-    // ------------- Data Types --------------
-    impl DataType for Certainty { }
-    impl DataType for String { }
-    impl TimeType for DateTime<Utc> { }
-    impl TimeType for i64 { }
 
     // ------------- Database -------------
     // This sets up the database with the necessary structures
@@ -748,7 +840,7 @@ mod bareclad {
             // Restore the existing database
             database.persistor.lock().unwrap().restore_things(&database);
             database.persistor.lock().unwrap().restore_roles(&database);
-            //database.persistor.lock().unwrap().restore_posits(&database);
+            database.persistor.lock().unwrap().restore_posits(&database);
 
             // Reserve some roles that will be necessary for implementing features
             // commonly found in many other (including non-tradtional) databases.
