@@ -72,11 +72,6 @@ mod bareclad {
         fn convert(value: &ValueRef) -> Self::TargetType;
         fn data_type(&self) -> &'static str;
     }
-    pub trait TimeType : ToString + Ord + Eq + Hash + Send + Sync + ToSql + FromSql {
-        type TargetType;
-        fn convert(value: &ValueRef) -> Self::TargetType;
-        fn time_type(&self) -> &'static str;
-    }
 
     // ------------- Thing -------------
     // TODO: Investigate using AtomicUsize instead.
@@ -171,14 +166,17 @@ mod bareclad {
     #[derive(Debug)]
     pub struct RoleKeeper {
         kept: HashMap<String, Arc<Role>>,
+        lookup: HashMap<Thing, Arc<Role>>
     }
     impl RoleKeeper {
         pub fn new() -> Self {
             Self {
                 kept: HashMap::new(),
+                lookup: HashMap::new()
             }
         }
         pub fn keep(&mut self, role: Role) -> (Arc<Role>, bool) {
+            let thing = role.role();
             let keepsake = role.name().to_owned();
             let mut previously_kept = true;
             match self.kept.entry(keepsake.clone()) {
@@ -188,10 +186,17 @@ mod bareclad {
                 }
                 Entry::Occupied(_e) => (),
             };
-            (Arc::clone(self.kept.get(&keepsake).unwrap()), previously_kept)
+            let kept_role = self.kept.get(&keepsake).unwrap();
+            if !previously_kept {
+                self.lookup.insert(*thing, Arc::clone(kept_role));
+            }
+            (Arc::clone(kept_role), previously_kept)
         }
         pub fn get(&self, name: &str) -> Arc<Role> {
             Arc::clone(self.kept.get(name).unwrap())
+        }
+        pub fn lookup(&self, role: &Thing) -> Arc<Role> {
+            Arc::clone(self.lookup.get(role).unwrap())
         }
     }
 
@@ -272,13 +277,13 @@ mod bareclad {
 
     // --------------- Posit ----------------
     #[derive(Eq, PartialOrd, Ord, Debug)]
-    pub struct Posit<V: DataType, T: TimeType> {
+    pub struct Posit<V: DataType, T: DataType + Ord> {
         posit: Arc<Thing>, // a posit is also a thing we can "talk" about
         appearance_set: Arc<AppearanceSet>,
         value: V, // imprecise value
-        time: T,  // imprecise time
+        time: T,  // imprecise time (note that this must be a data type with a natural ordering)
     }
-    impl<V: DataType, T: TimeType> Posit<V, T> {
+    impl<V: DataType, T: DataType + Ord> Posit<V, T> {
         pub fn new(posit: Thing, appearance_set: Arc<AppearanceSet>, value: V, time: T) -> Posit<V, T> {
             Self {
                 posit: Arc::new(posit),
@@ -300,14 +305,14 @@ mod bareclad {
             &self.time
         }
     }
-    impl<V: DataType, T: TimeType> PartialEq for Posit<V, T> {
+    impl<V: DataType, T: DataType + Ord> PartialEq for Posit<V, T> {
         fn eq(&self, other: &Self) -> bool {
             self.appearance_set == other.appearance_set &&
             self.value == other.value &&
             self.time == other.time
         }
     }
-    impl<V: DataType, T: TimeType> Hash for Posit<V, T> {
+    impl<V: DataType, T: DataType + Ord> Hash for Posit<V, T> {
         fn hash<H: Hasher>(&self, state: &mut H) {
             self.appearance_set.hash(state);
             self.value.hash(state);
@@ -316,7 +321,7 @@ mod bareclad {
     }
 
     // This key needs to be defined in order to store posits in a TypeMap.
-    impl<V: 'static + DataType, T: 'static + TimeType> Key for Posit<V, T> {
+    impl<V: 'static + DataType, T: 'static + DataType + Ord> Key for Posit<V, T> {
         type Value = BiMap<Arc<Posit<V, T>>, Arc<Thing>>;
     }
 
@@ -329,7 +334,7 @@ mod bareclad {
                 kept: TypeMap::new(),
             }
         }
-        pub fn keep<V: 'static + DataType, T: 'static + TimeType>(
+        pub fn keep<V: 'static + DataType, T: 'static + DataType + Ord>(
             &mut self,
             posit: Posit<V, T>,
         ) -> (Arc<Posit<V, T>>, bool) {
@@ -356,7 +361,7 @@ mod bareclad {
                 previously_kept
             )
         }
-        pub fn thing<V: 'static + DataType, T: 'static + TimeType>(
+        pub fn thing<V: 'static + DataType, T: 'static + DataType + Ord>(
             &mut self,
             posit: Arc<Posit<V, T>>,
         ) -> Arc<Thing> {
@@ -366,7 +371,7 @@ mod bareclad {
                 .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
             Arc::clone(map.get_by_left(&posit).unwrap())
         }
-        pub fn posit<V: 'static + DataType, T: 'static + TimeType>(
+        pub fn posit<V: 'static + DataType, T: 'static + DataType + Ord>(
             &mut self,
             thing: Arc<Thing>,
         ) -> Arc<Posit<V, T>> {
@@ -476,26 +481,6 @@ mod bareclad {
         }
     }
 
-    // ------------- Lookups -------------
-    #[derive(Debug)]
-    pub struct Lookup<K, V, H = RandomState> {
-        index: HashMap<Arc<K>, HashSet<Arc<V>>, H>,
-    }
-    impl<K: Eq + Hash, V: Eq + Hash, H: BuildHasher + Default> Lookup<K, V, H> {
-        pub fn new() -> Self {
-            Self {
-                index: HashMap::<Arc<K>, HashSet<Arc<V>>, H>::default(),
-            }
-        }
-        pub fn insert(&mut self, key: Arc<K>, value: Arc<V>) {
-            let map = self.index.entry(key).or_insert(HashSet::<Arc<V>>::new());
-            map.insert(value);
-        }
-        pub fn lookup(&self, key: &K) -> &HashSet<Arc<V>> {
-            self.index.get(key).unwrap()
-        }
-    }
-
     // ------------- Data Types --------------
     impl DataType for Certainty { 
         type TargetType = Certainty;
@@ -517,24 +502,207 @@ mod bareclad {
             String::from(value.as_str().unwrap())
         }
     }
-    impl TimeType for DateTime<Utc> { 
+    impl DataType for DateTime<Utc> { 
         type TargetType = DateTime<Utc>;
-        fn time_type(&self) -> &'static str {
-            "DateTime<Utc>"
+        fn data_type(&self) -> &'static str {
+            "DateTime::<Utc>"
         }
         fn convert(value: &ValueRef) -> Self::TargetType {
             DateTime::<Utc>::from_str(value.as_str().unwrap()).unwrap()
         }
     }
-    impl TimeType for i64 {
+    impl DataType for i64 {
         type TargetType = i64;
-        fn time_type(&self) -> &'static str {
+        fn data_type(&self) -> &'static str {
             "i64"
         }
         fn convert(value: &ValueRef) -> Self::TargetType {
             value.as_i64().unwrap()
         }
     }
+
+    // Macro courtsey of Chayim Friedman 
+    // https://stackoverflow.com/q/70390836/1407530
+    macro_rules! generate_match {
+        // First, we generate a table of permutations.
+        // Suppose we have the tuple (String, usize, ()).
+        // The table we generate will be the following:
+        // [
+        //     [ String, usize,  ()     ]
+        //     [ usize,  (),     String ]
+        //     [ (),     String, usize  ]
+        // ]
+    
+        // Empty case
+        { @generate_permutations_table
+            $row:ident
+            $thing:ident
+            $appearance_set:ident
+            $keeper:ident
+            match ($e:expr)
+            table = [ $($table:tt)* ]
+            rest = [ ]
+            transformed = [ $($transformed:ty,)* ]
+        } => {
+            generate_match! { @permutate_entry
+                $row
+                $thing
+                $appearance_set
+                $keeper
+                match ($e) { }
+                table = [ $($table)* ]
+            }
+        };
+        { @generate_permutations_table
+            $row:ident
+            $thing:ident
+            $appearance_set:ident
+            $keeper:ident
+            match ($e:expr)
+            table = [ $($table:tt)* ]
+            rest = [ $current:ty, $($rest:ty,)* ]
+            transformed = [ $($transformed:ty,)* ]
+        } => {
+            generate_match! { @generate_permutations_table
+                $row
+                $thing
+                $appearance_set
+                $keeper
+                match ($e)
+                table = [
+                    $($table)*
+                    [ $current, $($rest,)* $($transformed,)* ]
+                ]
+                rest = [ $($rest,)* ]
+                transformed = [ $($transformed,)* $current, ]
+            }
+        };
+    
+        // For each entry in the table, we generate all combinations of the first type with the others.
+        // For example, for the entry [ String, usize, () ] we'll generate the following permutations:
+        // [
+        //     (String, usize)
+        //     (String, ())
+        // ]
+    
+        // Empty case
+        { @permutate_entry
+            $row:ident
+            $thing:ident
+            $appearance_set:ident
+            $keeper:ident
+            match ($e:expr) { $($match_tt:tt)* }
+            table = [ ]
+        } => {
+            match $e {
+                $($match_tt)*
+                _ => {}
+            }
+        };
+        { @permutate_entry
+            $row:ident
+            $thing:ident
+            $appearance_set:ident
+            $keeper:ident
+            match ($e:expr) { $($match_tt:tt)* }
+            table = [
+                [ $current:ty, $($others:ty,)* ]
+                $($table:tt)*
+            ]
+        } => {
+            generate_match! { @generate_arm
+                $row
+                $thing
+                $appearance_set
+                $keeper
+                match ($e) { $($match_tt)* }
+                table = [ $($table)* ]
+                current = [ $current ]
+                others = [ $($others,)* ]
+            }
+        };
+    
+        // Finally, We generate `match` arms from each pair.
+        // For example, for the pair (String, usize):
+        //     ("String", "usize") => {
+        //         let value = GenericStruct {
+        //             value: <String as DataType>::convert(&row.get_ref_unwrap(0)),
+        //             time: <usize as DataType>::convert(&row.get_ref_unwrap(2)),
+        //         };
+        //         // Process `value...`
+        //     }
+    
+        // Empty case: permutate the next table entry.
+        { @generate_arm
+            $row:ident
+            $thing:ident
+            $appearance_set:ident
+            $keeper:ident
+            match ($e:expr) { $($match_tt:tt)* }
+            table = [ $($table:tt)* ]
+            current = [ $current:ty ]
+            others = [ ]
+        } => {
+            generate_match! { @permutate_entry
+                $row
+                $thing
+                $appearance_set
+                $keeper
+                match ($e) { $($match_tt)* }
+                table = [ $($table)* ]
+            }
+        };
+        { @generate_arm
+            $row:ident
+            $thing:ident
+            $appearance_set:ident
+            $keeper:ident
+            match ($e:expr) { $($match_tt:tt)* }
+            table = [ $($table:tt)* ]
+            current = [ $current:ty ]
+            others = [ $first_other:ty, $($others:ty,)* ]
+        } => {
+            generate_match! { @generate_arm
+                $row
+                $thing
+                $appearance_set
+                $keeper
+                match ($e) {
+                    $($match_tt)*
+                    (stringify!($current), stringify!($first_other)) => {
+                        $keeper.keep_posit(
+                            Posit { 
+                                posit: Arc::new($thing), 
+                                appearance_set: $appearance_set, 
+                                value: <$current as DataType>::convert(&$row.get_ref_unwrap(2)), 
+                                time: <$first_other as DataType>::convert(&$row.get_ref_unwrap(4))
+                            }
+                        );
+                    }
+                }
+                table = [ $($table)* ]
+                current = [ $current ]
+                others = [ $($others,)* ]
+            }
+        };
+    
+        // Entry
+        (
+            match ($e:expr) from ($($ty:ty),+) in $row:ident with $thing:ident, $appearance_set:ident into $keeper:ident
+        ) => {
+            generate_match! { @generate_permutations_table
+                $row
+                $thing
+                $appearance_set
+                $keeper
+                match ($e)
+                table = [ ]
+                rest = [ $($ty,)+ ]
+                transformed = [ ]
+            }
+        };
+    }
+
     // ------------- Persistence -------------
     pub struct Persistor<'db> {
         pub db: &'db Connection,
@@ -661,12 +829,12 @@ mod bareclad {
         }
         pub fn persist_posit<
             V: 'static + DataType,
-            T: 'static + TimeType,
+            T: 'static + DataType + Ord,
         >(&mut self, posit: &Posit<V, T>) -> bool {
             let mut appearances = Vec::new();
             let appearance_set = posit.appearance_set();
             for appearance in appearance_set.appearances().iter() {
-                appearances.push(appearance.thing().to_string() + "," + appearance.role().name());
+                appearances.push(appearance.thing().to_string() + "," + &appearance.role().role().to_string());
             }
             let apperance_set_as_text = appearances.join("|");
             let mut existing = false;
@@ -688,7 +856,7 @@ mod bareclad {
                             &posit.value(), 
                             &posit.value().data_type(), 
                             &posit.time(),
-                            &posit.time().time_type()
+                            &posit.time().data_type()
                         ]
                     ).unwrap();
                 },
@@ -729,61 +897,45 @@ mod bareclad {
                 let appearances: String = row.get_unwrap(1);
                 let mut appearance_set = Vec::new();
                 for appearance_text in appearances.split('|') {
-                    let (thing, role_name) = appearance_text.split_once(',').unwrap();
+                    let (thing, role) = appearance_text.split_once(',').unwrap();
                     let appearance = Appearance {
                         thing: Arc::new(thing.parse().unwrap()),
-                        role: db.role_keeper().lock().unwrap().get(role_name)
+                        role: db.role_keeper().lock().unwrap().lookup(&role.parse::<usize>().unwrap())
                     };
                     let (kept_appearance, _) = db.keep_appearance(appearance);
                     appearance_set.push(kept_appearance);
                 }
                 let (kept_appearance_set, _) = db.keep_appearance_set(AppearanceSet { appearances: Arc::new(appearance_set) });
-                match (data_type.as_str(), time_type.as_str()) {
-                    // massive boilerplate here
-                    ("String", "i64") => {
-                        db.keep_posit(
-                            Posit { 
-                                posit: Arc::new(thing), 
-                                appearance_set: kept_appearance_set, 
-                                value: String::convert(&row.get_ref_unwrap(2)), 
-                                time: i64::convert(&row.get_ref_unwrap(4))
-                            }
-                        );
-                    },
-                    ("String", "Datetime<Utc>") => {
-                        db.keep_posit(
-                            Posit { 
-                                posit: Arc::new(thing), 
-                                appearance_set: kept_appearance_set, 
-                                value: String::convert(&row.get_ref_unwrap(2)), 
-                                time: DateTime::<Utc>::convert(&row.get_ref_unwrap(4))
-                            }
-                        );
-                    },
-                    ("Certainty", "i64") => {
-                        db.keep_posit(
-                            Posit { 
-                                posit: Arc::new(thing), 
-                                appearance_set: kept_appearance_set, 
-                                value: Certainty::convert(&row.get_ref_unwrap(2)), 
-                                time: i64::convert(&row.get_ref_unwrap(4))
-                            }
-                        );
-                    },
-                    ("Certainty", "Datetime<Utc>") => {
-                        db.keep_posit(
-                            Posit { 
-                                posit: Arc::new(thing), 
-                                appearance_set: kept_appearance_set, 
-                                value: Certainty::convert(&row.get_ref_unwrap(2)), 
-                                time: DateTime::<Utc>::convert(&row.get_ref_unwrap(4))
-                            }
-                        );
-                    }, 
-                    _ => ()
-                }
+                // the magical macro that generates all the boilerplate stuff
+                generate_match!(
+                    match ((data_type.as_str(), time_type.as_str()))
+                        from (String, i64, DateTime::<Utc>, Certainty)
+                        in row
+                        with thing, kept_appearance_set
+                        into db
+                );               
             }
         }   
+    }
+    
+    // ------------- Lookups -------------
+    #[derive(Debug)]
+    pub struct Lookup<K, V, H = RandomState> {
+        index: HashMap<Arc<K>, HashSet<Arc<V>>, H>,
+    }
+    impl<K: Eq + Hash, V: Eq + Hash, H: BuildHasher + Default> Lookup<K, V, H> {
+        pub fn new() -> Self {
+            Self {
+                index: HashMap::<Arc<K>, HashSet<Arc<V>>, H>::default(),
+            }
+        }
+        pub fn insert(&mut self, key: Arc<K>, value: Arc<V>) {
+            let map = self.index.entry(key).or_insert(HashSet::<Arc<V>>::new());
+            map.insert(value);
+        }
+        pub fn lookup(&self, key: &K) -> &HashSet<Arc<V>> {
+            self.index.get(key).unwrap()
+        }
     }
 
     // ------------- Database -------------
@@ -801,6 +953,7 @@ mod bareclad {
         pub role_to_appearance_lookup: Arc<Mutex<Lookup<Role, Appearance>>>,
         pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Appearance, AppearanceSet>>>,
         pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<AppearanceSet, Thing>>>,
+        // responsible for the the persistence layer
         pub persistor: Arc<Mutex<Persistor<'db>>>,
     }
 
@@ -956,7 +1109,7 @@ mod bareclad {
         }
         pub fn keep_posit<
             V: 'static + DataType,
-            T: 'static + TimeType,
+            T: 'static + DataType + Ord,
         >(&self, posit: Posit<V, T>) -> (Arc<Posit<V, T>>, bool) {
             let (kept_posit, previously_kept) = self.posit_keeper.lock().unwrap().keep(posit);
             if !previously_kept {
@@ -969,7 +1122,7 @@ mod bareclad {
         }
         pub fn create_posit<
             V: 'static + DataType,
-            T: 'static + TimeType,
+            T: 'static + DataType + Ord,
         >(
             &self,
             appearance_set: Arc<AppearanceSet>,
@@ -990,7 +1143,7 @@ mod bareclad {
             kept_posit
         }
         // finally, now that the database exists we can start to make assertions
-        pub fn assert<V: 'static + DataType, T: 'static + TimeType>(
+        pub fn assert<V: 'static + DataType, T: 'static + DataType + Ord>(
             &self,
             asserter: Arc<Thing>,
             posit: Arc<Posit<V, T>>,
