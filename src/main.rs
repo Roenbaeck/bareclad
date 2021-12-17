@@ -68,9 +68,14 @@ mod bareclad {
     use std::str::FromStr;
 
     pub trait DataType : ToString + Eq + Hash + Send + Sync + ToSql + FromSql {
+        // static stuff which needs to be implemented downstream
         type TargetType;
         fn convert(value: &ValueRef) -> Self::TargetType;
-        fn data_type(&self) -> &'static str;
+        fn rust_type() -> &'static str;
+        // instance callable with pre-made implementation
+        fn data_type(&self) -> &'static str {
+            Self::rust_type()
+        }
     }
 
     // ------------- Thing -------------
@@ -484,7 +489,7 @@ mod bareclad {
     // ------------- Data Types --------------
     impl DataType for Certainty { 
         type TargetType = Certainty;
-        fn data_type(&self) -> &'static str {
+        fn rust_type() -> &'static str {
             "Certainty"
         }
         fn convert(value: &ValueRef) -> Self::TargetType {
@@ -495,7 +500,7 @@ mod bareclad {
     }
     impl DataType for String { 
         type TargetType = String;
-        fn data_type(&self) -> &'static str {
+        fn rust_type() -> &'static str {
             "String"
         }
         fn convert(value: &ValueRef) -> Self::TargetType {
@@ -504,7 +509,7 @@ mod bareclad {
     }
     impl DataType for DateTime<Utc> { 
         type TargetType = DateTime<Utc>;
-        fn data_type(&self) -> &'static str {
+        fn rust_type() -> &'static str {
             "DateTime::<Utc>"
         }
         fn convert(value: &ValueRef) -> Self::TargetType {
@@ -513,7 +518,7 @@ mod bareclad {
     }
     impl DataType for i64 {
         type TargetType = i64;
-        fn data_type(&self) -> &'static str {
+        fn rust_type() -> &'static str {
             "i64"
         }
         fn convert(value: &ValueRef) -> Self::TargetType {
