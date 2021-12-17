@@ -891,7 +891,7 @@ mod bareclad {
         pub fn restore_posits(&mut self, db: &Database) {
             let mut rows = self.all_posits.query([]).unwrap();
             while let Some(row) = rows.next().unwrap() {
-                let data_type: String = row.get_unwrap(3);
+                let value_type: String = row.get_unwrap(3);
                 let time_type: String = row.get_unwrap(5);
                 let thing: usize = row.get_unwrap(0);
                 let appearances: String = row.get_unwrap(1);
@@ -908,7 +908,7 @@ mod bareclad {
                 let (kept_appearance_set, _) = db.keep_appearance_set(AppearanceSet { appearances: Arc::new(appearance_set) });
                 // the magical macro that generates all the boilerplate stuff
                 generate_match!(
-                    match ((data_type.as_str(), time_type.as_str()))
+                    match ((value_type.as_str(), time_type.as_str()))
                         from (String, i64, DateTime::<Utc>, Certainty)
                         in row
                         with thing, kept_appearance_set
