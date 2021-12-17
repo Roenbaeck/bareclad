@@ -70,11 +70,15 @@ mod bareclad {
     pub trait DataType : ToString + Eq + Hash + Send + Sync + ToSql + FromSql {
         // static stuff which needs to be implemented downstream
         type TargetType;
+        const UID: u8;
+        const DATA_TYPE: &'static str;
         fn convert(value: &ValueRef) -> Self::TargetType;
-        fn rust_type() -> &'static str;
         // instance callable with pre-made implementation
         fn data_type(&self) -> &'static str {
-            Self::rust_type()
+            Self::DATA_TYPE
+        }
+        fn identifier(&self) -> u8 {
+            Self::UID
         }
     }
 
@@ -489,9 +493,8 @@ mod bareclad {
     // ------------- Data Types --------------
     impl DataType for Certainty { 
         type TargetType = Certainty;
-        fn rust_type() -> &'static str {
-            "Certainty"
-        }
+        const UID: u8 = 1; // needs to be unique
+        const DATA_TYPE: &'static str = "Certainty";
         fn convert(value: &ValueRef) -> Self::TargetType {
             Certainty {
                 alpha: i8::try_from(value.as_i64().unwrap()).unwrap()
@@ -500,27 +503,24 @@ mod bareclad {
     }
     impl DataType for String { 
         type TargetType = String;
-        fn rust_type() -> &'static str {
-            "String"
-        }
+        const UID: u8 = 2;
+        const DATA_TYPE: &'static str = "String";
         fn convert(value: &ValueRef) -> Self::TargetType {
             String::from(value.as_str().unwrap())
         }
     }
     impl DataType for DateTime<Utc> { 
         type TargetType = DateTime<Utc>;
-        fn rust_type() -> &'static str {
-            "DateTime::<Utc>"
-        }
+        const UID: u8 = 3;
+        const DATA_TYPE: &'static str = "DateTime::<Utc>";
         fn convert(value: &ValueRef) -> Self::TargetType {
             DateTime::<Utc>::from_str(value.as_str().unwrap()).unwrap()
         }
     }
     impl DataType for i64 {
         type TargetType = i64;
-        fn rust_type() -> &'static str {
-            "i64"
-        }
+        const UID: u8 = 4;
+        const DATA_TYPE: &'static str = "i64";
         fn convert(value: &ValueRef) -> Self::TargetType {
             value.as_i64().unwrap()
         }
@@ -723,6 +723,9 @@ mod bareclad {
         pub all_things: Statement<'db>,
         pub all_roles: Statement<'db>,
         pub all_posits: Statement<'db>,
+        // DataType particulars
+        pub add_data_type: Statement<'db>,
+        pub seen_data_types: Vec<u8>
     }
     impl<'db> Persistor<'db> {
         pub fn new<'connection>(connection: &'connection Connection) -> Persistor<'connection> {
@@ -750,16 +753,32 @@ mod bareclad {
                         Role
                     )
                 );-- STRICT;
+                create table if not exists DataType (
+                    DataType_Identity integer not null,
+                    DataType text not null,
+                    constraint referenceable_DataType_Identity primary key (
+                        DataType_Identity
+                    ),
+                    constraint unique_DataType unique (
+                        DataType
+                    )
+                );-- STRICT;
                 create table if not exists Posit (
                     Posit_Identity integer not null,
                     AppearanceSet text not null,
                     AppearingValue any null, 
-                    ValueType text not null, -- normalize later
+                    ValueType_Identity integer not null, 
                     AppearanceTime any null,
-                    TimeType text not null, -- normalize later
+                    TimeType_Identity integer not null, 
                     constraint Posit_is_Thing foreign key (
                         Posit_Identity
                     ) references Thing(Thing_Identity),
+                    constraint ValueType_is_DataType foreign key (
+                        ValueType_Identity
+                    ) references DataType(DataType_Identity),
+                    constraint TimeType_is_DataType foreign key (
+                        TimeType_Identity
+                    ) references DataType(DataType_Identity),
                     constraint referenceable_Posit_Identity primary key (
                         Posit_Identity
                     ),
@@ -773,33 +792,73 @@ mod bareclad {
             ).unwrap();
             Persistor {
                 db: connection,
-                add_thing: connection.prepare(
-                    "insert into Thing (Thing_Identity) values (?)"
-                ).unwrap(),
-                add_role: connection.prepare(
-                    "insert into Role (Role_Identity, Role, Reserved) values (?, ?, ?)"
-                ).unwrap(),
-                add_posit: connection.prepare(
-                    "insert into Posit (Posit_Identity, AppearanceSet, AppearingValue, ValueType, AppearanceTime, TimeType) values (?, ?, ?, ?, ?, ?)"
-                ).unwrap(),
-                get_thing: connection.prepare(
-                    "select Thing_Identity from Thing where Thing_Identity = ?"
-                ).unwrap(),
-                get_role: connection.prepare(
-                    "select Role_Identity from Role where Role = ?"
-                ).unwrap(),
-                get_posit: connection.prepare(
-                    "select Posit_Identity from Posit where AppearanceSet = ? and AppearingValue = ? and AppearanceTime = ?"
-                ).unwrap(), 
-                all_things: connection.prepare(
-                    "select coalesce(max(Thing_Identity), 0) from Thing"
-                ).unwrap(),
-                all_roles: connection.prepare(
-                    "select Role_Identity, Role, Reserved from Role"
-                ).unwrap(),
-                all_posits: connection.prepare(
-                    "select Posit_Identity, AppearanceSet, AppearingValue, ValueType, AppearanceTime, TimeType from Posit"
-                ).unwrap(),
+                add_thing: connection.prepare("
+                    insert into Thing (
+                        Thing_Identity
+                    ) values (?)
+                ").unwrap(),
+                add_role: connection.prepare("
+                    insert into Role (
+                        Role_Identity, 
+                        Role, 
+                        Reserved
+                    ) values (?, ?, ?)
+                ").unwrap(),
+                add_posit: connection.prepare("
+                    insert into Posit (
+                        Posit_Identity, 
+                        AppearanceSet, 
+                        AppearingValue, 
+                        ValueType_Identity, 
+                        AppearanceTime, 
+                        TimeType_Identity
+                    ) values (?, ?, ?, ?, ?, ?)
+                ").unwrap(),
+                get_thing: connection.prepare("
+                    select Thing_Identity 
+                      from Thing 
+                     where Thing_Identity = ?
+                ").unwrap(),
+                get_role: connection.prepare("
+                    select Role_Identity 
+                      from Role 
+                     where Role = ?
+                ").unwrap(),
+                get_posit: connection.prepare("
+                    select Posit_Identity 
+                      from Posit 
+                     where AppearanceSet = ? 
+                       and AppearingValue = ? 
+                       and AppearanceTime = ?
+                ").unwrap(), 
+                all_things: connection.prepare("
+                    select coalesce(max(Thing_Identity), 0) as Max_Thing_Identity
+                      from Thing
+                ").unwrap(),
+                all_roles: connection.prepare("
+                    select Role_Identity, Role, Reserved 
+                      from Role
+                ").unwrap(),
+                all_posits: connection.prepare("
+                    select p.Posit_Identity, 
+                           p.AppearanceSet, 
+                           p.AppearingValue, 
+                           v.DataType as ValueType, 
+                           p.AppearanceTime, 
+                           t.DataType as TimeType 
+                      from Posit p
+                      join DataType v
+                        on v.DataType_Identity = p.ValueType_Identity
+                      join DataType t
+                        on t.DataType_Identity = p.TimeType_Identity
+                ").unwrap(),
+                add_data_type: connection.prepare("
+                    insert or ignore into DataType (
+                        DataType_Identity, 
+                        DataType
+                    ) values (?, ?)
+                ").unwrap(),
+                seen_data_types: Vec::new()
             }
         }
         pub fn persist_thing(&mut self, thing: &Thing) -> bool {
@@ -854,14 +913,32 @@ mod bareclad {
                     existing = true;
                 },
                 Err(Error::QueryReturnedNoRows) => {
+                    if !self.seen_data_types.contains(&posit.value().identifier()) {
+                        self.add_data_type.execute(
+                            params![
+                                &posit.value().identifier(),
+                                &posit.value().data_type()
+                            ]
+                        ).unwrap();
+                        self.seen_data_types.push(posit.value().identifier());
+                    }
+                    if !self.seen_data_types.contains(&posit.time().identifier()) {
+                        self.add_data_type.execute(
+                            params![
+                                &posit.time().identifier(),
+                                &posit.time().data_type()
+                            ]
+                        ).unwrap();
+                        self.seen_data_types.push(posit.time().identifier());
+                    }
                     self.add_posit.execute(
                         params![
                             &posit.posit(), 
                             &apperance_set_as_text, 
                             &posit.value(), 
-                            &posit.value().data_type(), 
+                            &posit.value().identifier(), 
                             &posit.time(),
-                            &posit.time().data_type()
+                            &posit.time().identifier()
                         ]
                     ).unwrap();
                 },

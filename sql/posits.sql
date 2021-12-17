@@ -34,9 +34,13 @@ SELECT
 	' [{' || s.AppearanceSet || '}, "' || 
 	p.AppearingValue || '", ' || 
 	p.AppearanceTime || ']' || ' ' || 
-	p.ValueType || ', ' ||
-	p.TimeType AS Posit
+	v.DataType || ', ' ||
+	t.DataType AS Posit
 FROM ResolvedAppearanceSet s
 JOIN Posit p 
   ON p.Posit_Identity = s.Posit_Identity
+JOIN DataType v 
+  ON v.DataType_Identity = p.ValueType_Identity
+JOIN DataType t
+  ON t.DataType_Identity = p.TimeType_Identity
 ORDER BY s.Posit_Identity;
