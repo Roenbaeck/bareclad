@@ -4,12 +4,12 @@ add posit [{($idw, name)}, "Lars", '1972-08-20'];
 add posit [{($idh, name)}, "Anneli", '1972-02-13'];
 
 search as of @NOW, @NOW
-	[{($idw, wife), (*, husband)}, "married", $t],
+    [{($idw, wife), (*, husband)}, "married", $t],
     [{($idw, name)}, $w, *],
 where
-	$t >= '2001-01-01'
+    $t >= '2001-01-01'
 aggregate for $w
     $number_of_named_wives = count($idw)
 return 
-	$w,
-	$number_of_named_wives;  
+    $w,
+    $number_of_named_wives;  
