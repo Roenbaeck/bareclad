@@ -1356,25 +1356,223 @@ mod bareclad {
     }
 }
 
+mod traqula {
+    use regex::Regex;
+    use crate::bareclad::{Database};
+    /* 
+    use logos::Logos;
+
+    #[derive(Logos, Debug, PartialEq)]
+    enum Command {
+        #[error]
+        #[regex(r"[\t\n\r\f]+", logos::skip)] 
+        Error,
+
+        #[regex(r"add role ([a-z A-Z]+[,]?)+")]
+        AddRole,
+
+        #[regex(r"add posit (\[[^\]]*\][,]?)+")]
+        AddPosit,
+
+        #[regex(r"search [^;]+")]
+        Search,
+
+        #[token(";")]
+        CommandTerminator,
+    } 
+    
+    #[derive(Logos, Debug, PartialEq)]
+    enum AddRole {
+        #[error]
+        #[regex(r"[\t\n\r\f]+", logos::skip, priority = 2)] 
+        Error,
+
+        #[regex(r"[^,]+")]
+        Role,
+
+        #[token(",")]
+        ItemSeparator,
+    }
+
+    #[derive(Logos, Debug, PartialEq)]
+    enum AddPosit {
+        #[error]
+        #[regex(r"[\t\n\r\f]+", logos::skip)] 
+        Error,
+
+        #[regex(r"\[[^\]]+\]")]
+        Posit,
+
+        #[token(",")]
+        ItemSeparator,
+    }
+    
+    #[derive(Logos, Debug, PartialEq)]
+    enum Posit {
+        #[error]
+        #[regex(r"[\t\n\r\f]+", logos::skip)] 
+        Error,
+
+        #[regex(r"\{[^\}]+\}")]
+        AppearanceSet,
+
+        #[regex(r#""[^"]+""#)]
+        AppearingValue,
+
+        #[regex(r"'[^']+'")]
+        AppearanceTime,
+
+        #[token(",")]
+        ItemSeparator,
+    }
+    */
+    pub struct Engine<'db> {
+        database: Database<'db>
+    }
+    impl<'db> Engine<'db> {
+        pub fn new(database: Database<'db>) -> Self {
+            Self {
+                database
+            }
+        }
+        pub fn execute(&self, traqula: &str) {
+            let delimited_whitespace = Regex::new(r",[\s]+").unwrap();
+            let traqula = delimited_whitespace.replace_all(traqula, ",");
+            /* 
+            let mut command = Command::lexer(&traqula);
+            while match command.next() {
+                Some(Command::AddRole) => {
+                    println!("Adding roles...");
+                    let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
+                    let mut add_role = AddRole::lexer(&trimmed_command);
+                    while match add_role.next() {
+                        Some(AddRole::Role) => {
+                            let role_name = String::from(add_role.slice().trim());
+                            println!("\tAdding the role: {}", &role_name);
+                            self.database.create_role(role_name, false);
+                            true
+                        },
+                        Some(AddRole::ItemSeparator) => {
+                            true
+                        }, 
+                        None => {
+                            false
+                        }, 
+                        _ => {
+                            println!("Unrecognized item: {}", add_role.slice());
+                            true
+                        }
+                    } {}
+                    true
+                }, 
+                Some(Command::AddPosit) => {
+                    println!("Adding posits...");
+                    let trimmed_command = command.slice().trim().replacen("add posit ", "", 1);
+                    let mut add_posit = AddPosit::lexer(&trimmed_command);
+                    while match add_posit.next() {
+                        Some(AddPosit::Posit) => {
+                            let mut posit_part = Posit::lexer(add_posit.slice().trim());
+                            while match posit_part.next() {
+                                Some(Posit::AppearanceSet) => {
+                                    println!("\tAdding appearance set: {}", posit_part.slice()); 
+                                    true
+                                }
+                                Some(Posit::AppearingValue) => {
+                                    println!("\tThe value is: {}", posit_part.slice()); 
+                                    true
+                                },
+                                Some(Posit::AppearanceTime) => {
+                                    println!("\tThe time is: {}", posit_part.slice()); 
+                                    true
+                                },
+                                Some(Posit::ItemSeparator) => {
+                                    true
+                                }, 
+                                None => {
+                                    false
+                                }, 
+                                _ => {
+                                    println!("Unrecognized item: {}", posit_part.slice());
+                                    true
+                                }
+                            } {}
+                            // self.database.create_role(role_name, false);
+                            true
+                        },
+                        Some(AddPosit::ItemSeparator) => {
+                            true
+                        }, 
+                        None => {
+                            false
+                        }, 
+                        _ => {
+                            println!("Unrecognized item: {}", add_posit.slice());
+                            true
+                        }
+                    } {}
+                    true
+                }, 
+                Some(Command::Search) => {
+                    println!("Search: {}", command.slice());
+                    true
+                }, 
+                Some(Command::CommandTerminator) => {
+                    true
+                }, 
+                None => {
+                    false
+                }, 
+                _ => {
+                    println!("Unrecognized command: {}", command.slice());
+                    true
+                }
+            } {}
+            */
+        }
+    }
+}
+
 // =========== TESTING BELOW ===========
 
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
-use std::fs;
+use config::*;
+use std::fs::{remove_file, read_to_string};
 use text_io::read;
+use std::collections::{HashMap};
 
 use bareclad::{Appearance, AppearanceSet, Certainty, Database, Persistor, Posit, Role, Thing};
-use rusqlite::Connection;
+use traqula::{Engine};
+use rusqlite::{Connection, Error};
 
 fn main() {
-    let sqlite = Connection::open("bareclad.db").unwrap();
+    let mut settings = Config::default();
+    settings
+        .merge(File::with_name("bareclad.json")).unwrap();
+    let settings_lookup = settings.try_into::<HashMap<String, String>>().unwrap();
+    let database_file_and_path = settings_lookup.get("database_file_and_path").unwrap();
+    let recreate_database_on_startup = settings_lookup.get("recreate_database_on_startup").unwrap() == "true";
+    if recreate_database_on_startup {
+        match remove_file(database_file_and_path) {
+            Ok(_) => (), 
+            Err(e) => {
+                println!("Could not remove the file '{}': {}", database_file_and_path, e);
+            }
+        }
+    }
+    let sqlite = Connection::open(database_file_and_path).unwrap();
     println!(
         "The path to the database file is '{}'.",
         sqlite.path().unwrap().display()
     );
-    // TODO: if the file exists, populate the in-memory database
     let bareclad = Database::new(&sqlite);
+    let traqula = Engine::new(bareclad);
+    let traqula_file_to_run_on_startup = settings_lookup.get("traqula_file_to_run_on_startup").unwrap();
+    println!("Traqula file to run on startup: {}", traqula_file_to_run_on_startup);
+    let traqula_content = read_to_string(traqula_file_to_run_on_startup).unwrap();
+    traqula.execute(&traqula_content);
 
+    /* 
     // does it really have to be this elaborate?
     let i1 = bareclad.create_thing();
     println!("Enter a role name: ");
@@ -1470,6 +1668,8 @@ fn main() {
             .lock()
             .unwrap()
     );
+    */
+
     // TODO: Fix this, broken at the moment
     /*
     println!("--- Posit things for thing {}: ", pid1);

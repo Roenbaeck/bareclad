@@ -1,7 +1,7 @@
 add role wife, husband, name;
 add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'];
-add posit [{($idw, name)}, "Lars", '1972-08-20'];
-add posit [{($idh, name)}, "Anneli", '1972-02-13'];
+add posit [{($idw, name)}, "Lars",   '1972-08-20'], 
+          [{($idh, name)}, "Anneli", '1972-02-13'];
 
 search as of @NOW, @NOW
     [{($idw, wife), (*, husband)}, "married", $t],
