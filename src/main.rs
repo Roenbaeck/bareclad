@@ -1359,8 +1359,7 @@ mod bareclad {
 mod traqula {
     use regex::Regex;
     use crate::bareclad::{Database};
-    /* 
-    use logos::Logos;
+    use logos::{Logos, Lexer};
 
     #[derive(Logos, Debug, PartialEq)]
     enum Command {
@@ -1380,6 +1379,36 @@ mod traqula {
         #[token(";")]
         CommandTerminator,
     } 
+    fn parse_command(mut command: Lexer<Command>, database: &Database) {
+        while match command.next() {
+            Some(Command::AddRole) => {
+                println!("Adding roles...");
+                let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
+                parse_add_role(AddRole::lexer(&trimmed_command), database);
+                true
+            }, 
+            Some(Command::AddPosit) => {
+                println!("Adding posits...");
+                let trimmed_command = command.slice().trim().replacen("add posit ", "", 1);
+                parse_add_posit(AddPosit::lexer(&trimmed_command), database);
+                true
+            }, 
+            Some(Command::Search) => {
+                println!("Search: {}", command.slice());
+                true
+            }, 
+            Some(Command::CommandTerminator) => {
+                true
+            }, 
+            None => {
+                false
+            }, 
+            _ => {
+                println!("Unrecognized command: {}", command.slice());
+                true
+            }
+        } {}
+    }
     
     #[derive(Logos, Debug, PartialEq)]
     enum AddRole {
@@ -1393,6 +1422,26 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
+    fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) {
+        while match add_role.next() {
+            Some(AddRole::Role) => {
+                let role_name = String::from(add_role.slice().trim());
+                println!("\tAdding the role: {}", &role_name);
+                database.create_role(role_name, false);
+                true
+            },
+            Some(AddRole::ItemSeparator) => {
+                true
+            }, 
+            None => {
+                false
+            }, 
+            _ => {
+                println!("Unrecognized role: {}", add_role.slice());
+                true
+            }
+        } {}
+    }
 
     #[derive(Logos, Debug, PartialEq)]
     enum AddPosit {
@@ -1405,6 +1454,26 @@ mod traqula {
 
         #[token(",")]
         ItemSeparator,
+    }
+    fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database) {
+        while match add_posit.next() {
+            Some(AddPosit::Posit) => {
+                let posit_enclosure = Regex::new(r"\[|\]").unwrap();
+                let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
+                parse_posit(Posit::lexer(&posit), database);
+                true
+            },
+            Some(AddPosit::ItemSeparator) => {
+                true
+            }, 
+            None => {
+                false
+            }, 
+            _ => {
+                println!("Unrecognized posit: {}", add_posit.slice());
+                true
+            }
+        } {}
     }
     
     #[derive(Logos, Debug, PartialEq)]
@@ -1425,7 +1494,111 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
-    */
+    fn parse_posit(mut posit: Lexer<Posit>, database: &Database) {
+        while match posit.next() {
+            Some(Posit::AppearanceSet) => {
+                let appearance_set_enclosure = Regex::new(r"\{|\}").unwrap();
+                let appearance_set = appearance_set_enclosure.replace_all(posit.slice().trim(), "");
+                //println!("\tParsing appearance set: {}", appearance_set); 
+                parse_appearance_set(AppearanceSet::lexer(&appearance_set), database);
+                true
+            }
+            Some(Posit::AppearingValue) => {
+                println!("\tThe value is: {}", posit.slice()); 
+                true
+            },
+            Some(Posit::AppearanceTime) => {
+                println!("\tThe time is: {}", posit.slice()); 
+                true
+            },
+            Some(Posit::ItemSeparator) => {
+                true
+            }, 
+            None => {
+                false
+            }, 
+            _ => {
+                println!("Unrecognized posit component: {}", posit.slice());
+                true
+            }
+        } {}
+    }
+
+    #[derive(Logos, Debug, PartialEq)]
+    enum AppearanceSet {
+        #[error]
+        #[regex(r"[\t\n\r\f]+", logos::skip)] 
+        Error,
+
+        #[regex(r"\([^\)]+\)")]
+        Appearance,
+
+        #[token(",")]
+        ItemSeparator,
+    }
+    fn parse_appearance_set(mut appearance_set: Lexer<AppearanceSet>, database: &Database) {
+        while match appearance_set.next() {
+            Some(AppearanceSet::Appearance) => {
+                let appearance_enclosure = Regex::new(r"\(|\)").unwrap();
+                let appearance = appearance_enclosure.replace_all(appearance_set.slice().trim(), "");
+                //println!("\tParsing appearance: {}", appearance);
+                parse_appearance(Appearance::lexer(&appearance), database);
+                true
+            },
+            Some(AppearanceSet::ItemSeparator) => {
+                true
+            }, 
+            None => {
+                false
+            }, 
+            _ => {
+                println!("Unrecognized appearance: {}", appearance_set.slice());
+                true
+            }
+        } {}
+    }
+
+    #[derive(Logos, Debug, PartialEq)]
+    enum Appearance {
+        #[error]
+        #[regex(r"[\t\n\r\f]+", logos::skip, priority = 2)] 
+        Error,
+
+        #[regex(r"[+|$][^,]+")]
+        Thing,
+
+        #[regex(r"[^,]+")]
+        Role,
+
+        #[token(",")]
+        ItemSeparator,
+    }
+    fn parse_appearance(mut appearance: Lexer<Appearance>, database: &Database) {
+        while match appearance.next() {
+            Some(Appearance::Thing) => {
+                let mut chars = appearance.slice().chars();
+                let qualifier = chars.next().unwrap();
+                let thing = chars.as_str();
+                println!("\tThe qualifier is: {}", qualifier);
+                println!("\tThe thing is: {}", thing);
+                true
+            },
+            Some(Appearance::Role) => {
+                println!("\tThe role is: {}", appearance.slice());
+                true
+            }, 
+            Some(Appearance::ItemSeparator) => {
+                true
+            }, 
+            None => {
+                false
+            }, 
+            _ => {
+                println!("Unrecognized appearance component: {}", appearance.slice());
+                true
+            }
+        } {}
+    }
     pub struct Engine<'db> {
         database: Database<'db>
     }
@@ -1438,97 +1611,8 @@ mod traqula {
         pub fn execute(&self, traqula: &str) {
             let delimited_whitespace = Regex::new(r",[\s]+").unwrap();
             let traqula = delimited_whitespace.replace_all(traqula, ",");
-            /* 
-            let mut command = Command::lexer(&traqula);
-            while match command.next() {
-                Some(Command::AddRole) => {
-                    println!("Adding roles...");
-                    let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
-                    let mut add_role = AddRole::lexer(&trimmed_command);
-                    while match add_role.next() {
-                        Some(AddRole::Role) => {
-                            let role_name = String::from(add_role.slice().trim());
-                            println!("\tAdding the role: {}", &role_name);
-                            self.database.create_role(role_name, false);
-                            true
-                        },
-                        Some(AddRole::ItemSeparator) => {
-                            true
-                        }, 
-                        None => {
-                            false
-                        }, 
-                        _ => {
-                            println!("Unrecognized item: {}", add_role.slice());
-                            true
-                        }
-                    } {}
-                    true
-                }, 
-                Some(Command::AddPosit) => {
-                    println!("Adding posits...");
-                    let trimmed_command = command.slice().trim().replacen("add posit ", "", 1);
-                    let mut add_posit = AddPosit::lexer(&trimmed_command);
-                    while match add_posit.next() {
-                        Some(AddPosit::Posit) => {
-                            let mut posit_part = Posit::lexer(add_posit.slice().trim());
-                            while match posit_part.next() {
-                                Some(Posit::AppearanceSet) => {
-                                    println!("\tAdding appearance set: {}", posit_part.slice()); 
-                                    true
-                                }
-                                Some(Posit::AppearingValue) => {
-                                    println!("\tThe value is: {}", posit_part.slice()); 
-                                    true
-                                },
-                                Some(Posit::AppearanceTime) => {
-                                    println!("\tThe time is: {}", posit_part.slice()); 
-                                    true
-                                },
-                                Some(Posit::ItemSeparator) => {
-                                    true
-                                }, 
-                                None => {
-                                    false
-                                }, 
-                                _ => {
-                                    println!("Unrecognized item: {}", posit_part.slice());
-                                    true
-                                }
-                            } {}
-                            // self.database.create_role(role_name, false);
-                            true
-                        },
-                        Some(AddPosit::ItemSeparator) => {
-                            true
-                        }, 
-                        None => {
-                            false
-                        }, 
-                        _ => {
-                            println!("Unrecognized item: {}", add_posit.slice());
-                            true
-                        }
-                    } {}
-                    true
-                }, 
-                Some(Command::Search) => {
-                    println!("Search: {}", command.slice());
-                    true
-                }, 
-                Some(Command::CommandTerminator) => {
-                    true
-                }, 
-                None => {
-                    false
-                }, 
-                _ => {
-                    println!("Unrecognized command: {}", command.slice());
-                    true
-                }
-            } {}
-            */
-        }
+            parse_command(Command::lexer(&traqula), &self.database);  
+        }  
     }
 }
 
