@@ -1579,7 +1579,6 @@ mod traqula {
         // compiled regular expressions
         comment_regex: Regex,
         delimited_whitespace_regex: Regex, 
-        empty_line_regex: Regex,
     }
     impl<'db> Engine<'db> {
         pub fn new(database: Database<'db>) -> Self {
@@ -1587,13 +1586,20 @@ mod traqula {
                 database, 
                 comment_regex: Regex::new(r#"(?m)--(?<!["'])[^"']*?$"#).unwrap(),
                 delimited_whitespace_regex: Regex::new(r#",[\s]+"#).unwrap(),
-                empty_line_regex: Regex::new(r#"(?m)^[\s]*$"#).unwrap()
             }
         }
         pub fn execute(&self, traqula: &str) {
+            // remove comments
             let traqula = self.comment_regex.replace_all(&traqula, "");
+            // remove empty lines
+            let traqula = traqula
+                .lines()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            // remove unnecessary whitespace after commas
             let traqula = self.delimited_whitespace_regex.replace_all(&traqula, ",");
-            let traqula = self.empty_line_regex.replace_all(&traqula, "");
             println!("Traqula:\n{}", &traqula);
             parse_command(Command::lexer(&traqula), &self.database);  
         }  
