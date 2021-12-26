@@ -1357,7 +1357,7 @@ mod bareclad {
 }
 
 mod traqula {
-    use regex::Regex;
+    use fancy_regex::Regex;
     use crate::bareclad::{Database};
     use logos::{Logos, Lexer};
 
@@ -1575,17 +1575,26 @@ mod traqula {
         }
     }
     pub struct Engine<'db> {
-        database: Database<'db>
+        database: Database<'db>, 
+        // compiled regular expressions
+        comment_regex: Regex,
+        delimited_whitespace_regex: Regex, 
+        empty_line_regex: Regex,
     }
     impl<'db> Engine<'db> {
         pub fn new(database: Database<'db>) -> Self {
             Self {
-                database
+                database, 
+                comment_regex: Regex::new(r#"(?m)--(?<!["'])[^"']*?$"#).unwrap(),
+                delimited_whitespace_regex: Regex::new(r#",[\s]+"#).unwrap(),
+                empty_line_regex: Regex::new(r#"(?m)^[\s]*$"#).unwrap()
             }
         }
         pub fn execute(&self, traqula: &str) {
-            let delimited_whitespace = Regex::new(r",[\s]+").unwrap();
-            let traqula = delimited_whitespace.replace_all(traqula, ",");
+            let traqula = self.comment_regex.replace_all(&traqula, "");
+            let traqula = self.delimited_whitespace_regex.replace_all(&traqula, ",");
+            let traqula = self.empty_line_regex.replace_all(&traqula, "");
+            println!("Traqula:\n{}", &traqula);
             parse_command(Command::lexer(&traqula), &self.database);  
         }  
     }
