@@ -7,7 +7,7 @@ Modeling is bottom-up and respects the uncertain and subjecive nature of reality
 
 <br/>
 
-<img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/Traqula.svg" width="200">
+<img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/Traqula.svg" width="175">
 
 The database also features the new transitional query language, Traqula, structured as:
 
