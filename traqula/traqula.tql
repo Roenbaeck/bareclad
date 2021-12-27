@@ -3,9 +3,11 @@
 # as they are specified.
  
 add role wife, husband, name;
-add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'];
+add posit [{(+idw, wife), (42, husband)}, "married", '2004-06-19'];
 add posit [{($idw, name)}, "Lars # liker of comments,  and ""spaces""",       '1972-08-20'], 
-          [{($idh, name)}, "Anneli", '1972-02-13'];
+          [{($idh, name)}, "Anneli", '1972-02-13'],
+          [{($idh, age)}, 30, '2002-02-13'], 
+          [{(42, age)}, 30.5, '2003-02-20'];
 
 search 
     [{($idw, wife), (*, husband)}, "married", $t] as of @NOW,

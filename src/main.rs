@@ -1469,7 +1469,10 @@ mod traqula {
         AppearanceSet,
 
         #[regex(r#""[^"]+""#)]
-        AppearingValue,
+        AppearingStringValue,
+
+        #[regex(r#"([\d](\.[\d])?)+"#)]
+        AppearingNumericalValue,
 
         #[regex(r"'[^']+'")]
         AppearanceTime,
@@ -1486,8 +1489,12 @@ mod traqula {
                     //println!("\tParsing appearance set: {}", appearance_set); 
                     parse_appearance_set(AppearanceSet::lexer(&appearance_set), database);
                 }
-                Posit::AppearingValue => {
-                    println!("\tThe value is: {}", posit.slice()); 
+                Posit::AppearingStringValue => {
+                    let string_value = posit.slice().replace("\"", "").replace(Engine::substitute, "\"");
+                    println!("\tThe string value is: {}", string_value); 
+                },
+                Posit::AppearingNumericalValue => {
+                    println!("\tThe numerical value is: {}", posit.slice()); 
                 },
                 Posit::AppearanceTime => {
                     println!("\tThe time is: {}", posit.slice()); 
@@ -1609,8 +1616,10 @@ mod traqula {
                     oneliner.push(Engine::substitute);
                     previous_c = Engine::substitute;
                 }
-                else if c == '\n' && !in_string {
-                    if !previous_c.is_whitespace() { oneliner.push(' '); }
+                else if (c == '\n' || c == '\r') && !in_string {
+                    if !previous_c.is_whitespace() && previous_c != ',' { 
+                        oneliner.push(' '); 
+                    }
                     previous_c = ' ';
                 }
                 else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',') && !in_string {
