@@ -1,6 +1,7 @@
 # Traqula is a declarative language, but also instructive, in that 
 # queries will be executed according to the order of the operations
-# as they are specified.
+# as they are specified. It is based on conditional searches, with 
+# variables binding the results together.
  
 add role wife, husband, name;
 add posit [{(+idw, wife), (42, husband)}, "married", '2004-06-19'];
