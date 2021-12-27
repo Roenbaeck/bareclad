@@ -1357,7 +1357,7 @@ mod bareclad {
 }
 
 mod traqula {
-    use fancy_regex::Regex;
+    use regex::Regex;
     use crate::bareclad::{Database};
     use logos::{Logos, Lexer};
 
@@ -1576,32 +1576,54 @@ mod traqula {
     }
     pub struct Engine<'db> {
         database: Database<'db>, 
-        // compiled regular expressions
-        comment_regex: Regex,
-        delimited_whitespace_regex: Regex, 
     }
     impl<'db> Engine<'db> {
+        const substitute: char = 26 as char;
         pub fn new(database: Database<'db>) -> Self {
             Self {
-                database, 
-                comment_regex: Regex::new(r#"(?m)--(?<!["'])[^"']*?$"#).unwrap(),
-                delimited_whitespace_regex: Regex::new(r#",[\s]+"#).unwrap(),
+                database
             }
         }
         pub fn execute(&self, traqula: &str) {
-            // remove comments
-            let traqula = self.comment_regex.replace_all(&traqula, "");
-            // remove empty lines
-            let traqula = traqula
-                .lines()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            // remove unnecessary whitespace after commas
-            let traqula = self.delimited_whitespace_regex.replace_all(&traqula, ",");
-            println!("Traqula:\n{}", &traqula);
-            parse_command(Command::lexer(&traqula), &self.database);  
+            let mut in_string = false;
+            let mut in_comment = false;
+            let mut previous_c = Engine::substitute;
+            let mut oneliner = String::new();
+            for c in traqula.chars() {
+                // first determine mode
+                if c == '#' && !in_string {
+                    in_comment = true;
+                }
+                else if c == '\n' && !in_string {
+                    in_comment = false;
+                }
+                else if c == '"' && !in_string {
+                    in_string = true;
+                }
+                else if c == '"' && previous_c != '"' && in_string {
+                    in_string = false;
+                }
+                // mode dependent push
+                if c == '"' && previous_c == '"' && in_string {
+                    oneliner.pop();
+                    oneliner.push(Engine::substitute);
+                    previous_c = Engine::substitute;
+                }
+                else if c == '\n' && !in_string {
+                    if !previous_c.is_whitespace() { oneliner.push(' '); }
+                    previous_c = ' ';
+                }
+                else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',') && !in_string {
+                    previous_c = c;
+                }
+                else if !in_comment {
+                    oneliner.push(c);
+                    previous_c = c;
+                }
+            }
+        
+            println!("Traqula:\n{}", &oneliner.trim());
+            parse_command(Command::lexer(&oneliner.trim()), &self.database);  
         }  
     }
 }

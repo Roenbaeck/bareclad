@@ -1,10 +1,10 @@
--- Traqula is a declarative language, but also instructive, in that 
--- queries will be executed according to the order of the operations
--- as they are specified.
+# Traqula is a declarative language, but also instructive, in that 
+# queries will be executed according to the order of the operations
+# as they are specified.
  
 add role wife, husband, name;
 add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'];
-add posit [{($idw, name)}, "Lars -- liker of comments,  and spaces",       '1972-08-20'], 
+add posit [{($idw, name)}, "Lars # liker of comments,  and ""spaces""",       '1972-08-20'], 
           [{($idh, name)}, "Anneli", '1972-02-13'];
 
 search 
@@ -12,8 +12,8 @@ search
     [{($idw, name)}, $w, *] as of $t,
 where
     $t >= '2001-01-01'
-aggregate for $w
-    $number_of_named_wives = count($idw)
+aggregate 
+    $w { $number_of_named_wives = count($idw) }
 return 
     $w,
     $number_of_named_wives;  
