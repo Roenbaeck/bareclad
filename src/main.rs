@@ -1630,12 +1630,12 @@ mod traqula {
                     previous_c = Engine::substitute;
                 }
                 else if (c == '\n' || c == '\r') && !in_string {
-                    if !previous_c.is_whitespace() && previous_c != ',' { 
+                    if !previous_c.is_whitespace() && previous_c != ',' && previous_c != ';' { 
                         oneliner.push(' '); 
                     }
                     previous_c = ' ';
                 }
-                else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',') && !in_string {
+                else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',' || previous_c == ';') && !in_string {
                     previous_c = c;
                 }
                 else if !in_comment {

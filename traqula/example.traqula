@@ -12,7 +12,7 @@ add posit [{($idw, name)}, "Lars # liker of comments,  and ""spaces""",       '1
 
 search 
     [{($idw, wife), (*, husband)}, "married", $t] as of @NOW,
-    [{($idw, name)}, $w, *] as of $t,
+    [{($idw, name)}, $w, *] as of $t
 where
     $t >= '2001-01-01'
 aggregate 
