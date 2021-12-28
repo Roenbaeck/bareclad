@@ -101,8 +101,13 @@ mod bareclad {
                 released: Vec::new(),
             }
         }
-        pub fn release(&mut self, g: Thing) {
-            self.released.push(g);
+        pub fn retain(&mut self, t: Thing) {
+            if t > self.lower_bound {
+                self.lower_bound = t;
+            }
+        }
+        pub fn release(&mut self, t: Thing) {
+            self.released.push(t);
         }
         pub fn generate(&mut self) -> Thing {
             self.released.pop().unwrap_or_else(|| {
@@ -1021,7 +1026,7 @@ mod bareclad {
         pub fn restore_things(&mut self, db: &Database) {
             match self.all_things.query_row::<usize, _, _>([], |r| r.get(0)) {
                 Ok(max_thing) => {
-                    db.thing_generator().lock().unwrap().lower_bound = max_thing;
+                    db.thing_generator().lock().unwrap().retain(max_thing);
                 }
                 Err(err) => {
                     panic!("Could not restore things: {}", err);
@@ -1240,9 +1245,8 @@ mod bareclad {
             }
             (kept_appearance, previously_kept)
         }
-        pub fn create_apperance(&self, thing: Arc<Thing>, role: Arc<Role>) -> Arc<Appearance> {
-            let (kept_appearance, _) = self.keep_appearance(Appearance::new(thing, role));
-            kept_appearance
+        pub fn create_apperance(&self, thing: Arc<Thing>, role: Arc<Role>) -> (Arc<Appearance>, bool) {
+            self.keep_appearance(Appearance::new(thing, role))
         }
         pub fn keep_appearance_set(
             &self,
@@ -1266,10 +1270,8 @@ mod bareclad {
         pub fn create_appearance_set(
             &self,
             appearance_set: Vec<Arc<Appearance>>,
-        ) -> Arc<AppearanceSet> {
-            let (kept_appearance_set, _) =
-                self.keep_appearance_set(AppearanceSet::new(appearance_set).unwrap());
-            kept_appearance_set
+        ) -> (Arc<AppearanceSet>, bool) {
+            self.keep_appearance_set(AppearanceSet::new(appearance_set).unwrap())
         }
         pub fn keep_posit<V: 'static + DataType, T: 'static + DataType + Ord>(
             &self,
@@ -1320,9 +1322,9 @@ mod bareclad {
                 .unwrap()
                 .get(&"ascertains".to_owned());
             let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
-            let asserter_appearance = self.create_apperance(asserter, asserter_role);
-            let posit_appearance = self.create_apperance(posit_thing, posit_role);
-            let appearance_set =
+            let (asserter_appearance, _) = self.create_apperance(asserter, asserter_role);
+            let (posit_appearance, _) = self.create_apperance(posit_thing, posit_role);
+            let (appearance_set, _) =
                 self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
             self.create_posit(appearance_set, certainty, assertion_time)
         }
@@ -1359,8 +1361,11 @@ mod bareclad {
 mod traqula {
     use regex::Regex;
     use std::sync::Arc;
-    use crate::bareclad::{Database, Role};
+    use crate::bareclad::{Database, Role, Posit, Appearance, AppearanceSet, Thing};
     use logos::{Logos, Lexer};
+    use std::collections::HashMap;
+
+    type Variables = HashMap<String, Arc<Thing>>;
 
     #[derive(Logos, Debug, PartialEq)]
     enum Command {
@@ -1380,20 +1385,20 @@ mod traqula {
         #[token(";")]
         CommandTerminator,
     } 
-    fn parse_command(mut command: Lexer<Command>, database: &Database) {
+    fn parse_command(mut command: Lexer<Command>, database: &Database, variables: &mut Variables) {
         while let Some(token) = command.next() {
             match token {
                 Command::AddRole => {
                     println!("Adding roles...");
                     let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
-                    for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database) {
+                    for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database, variables) {
                         println!("{: >15} -> {}", add_role_result.role.name(), add_role_result.operation);
                     }
                 }, 
                 Command::AddPosit => {
                     println!("Adding posits...");
                     let trimmed_command = command.slice().trim().replacen("add posit ", "", 1);
-                    parse_add_posit(AddPosit::lexer(&trimmed_command), database);
+                    parse_add_posit(AddPosit::lexer(&trimmed_command), database, variables);
                 }, 
                 Command::Search => {
                     println!("Search: {}", command.slice());
@@ -1422,7 +1427,7 @@ mod traqula {
         role: Arc<Role>,
         operation: &'static str
     }
-    fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> Vec<AddRoleResult> {
+    fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database, variables: &mut Variables) -> Vec<AddRoleResult> {
         let mut roles: Vec<AddRoleResult> = Vec::new();
         while let Some(token) = add_role.next() {
             match token {
@@ -1456,13 +1461,14 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
-    fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database) {
+
+    fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables) {
         while let Some(token) = add_posit.next() {
             match token {
                 AddPosit::Posit => {
                     let posit_enclosure = Regex::new(r"\[|\]").unwrap();
                     let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
-                    parse_posit(Posit::lexer(&posit), database);
+                    parse_posit(LexicalPosit::lexer(&posit), database, variables);
                 },
                 AddPosit::ItemSeparator => (), 
                 _ => {
@@ -1473,7 +1479,7 @@ mod traqula {
     }
     
     #[derive(Logos, Debug, PartialEq)]
-    enum Posit {
+    enum LexicalPosit {
         #[error]
         #[regex(r"[\t\n\r\f]+", logos::skip)] 
         Error,
@@ -1493,26 +1499,26 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
-    fn parse_posit(mut posit: Lexer<Posit>, database: &Database) {
+    fn parse_posit(mut posit: Lexer<LexicalPosit>, database: &Database, variables: &mut Variables) {
         while let Some(token) = posit.next() {
             match token {
-                Posit::AppearanceSet => {
+                LexicalPosit::AppearanceSet => {
                     let appearance_set_enclosure = Regex::new(r"\{|\}").unwrap();
                     let appearance_set = appearance_set_enclosure.replace_all(posit.slice().trim(), "");
                     //println!("\tParsing appearance set: {}", appearance_set); 
-                    parse_appearance_set(AppearanceSet::lexer(&appearance_set), database);
+                    parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
                 }
-                Posit::AppearingStringValue => {
+                LexicalPosit::AppearingStringValue => {
                     let string_value = posit.slice().replace("\"", "").replace(Engine::substitute, "\"");
                     println!("\tThe string value is: {}", string_value); 
                 },
-                Posit::AppearingNumericalValue => {
+                LexicalPosit::AppearingNumericalValue => {
                     println!("\tThe numerical value is: {}", posit.slice()); 
                 },
-                Posit::AppearanceTime => {
+                LexicalPosit::AppearanceTime => {
                     println!("\tThe time is: {}", posit.slice()); 
                 },
-                Posit::ItemSeparator => (), 
+                LexicalPosit::ItemSeparator => (), 
                 _ => {
                     println!("Unrecognized posit component: {}", posit.slice());
                 }
@@ -1521,7 +1527,7 @@ mod traqula {
     }
 
     #[derive(Logos, Debug, PartialEq)]
-    enum AppearanceSet {
+    enum LexicalAppearanceSet {
         #[error]
         #[regex(r"[\t\n\r\f]+", logos::skip)] 
         Error,
@@ -1532,67 +1538,62 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
-    fn parse_appearance_set(mut appearance_set: Lexer<AppearanceSet>, database: &Database) {
+    fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, database: &Database, variables: &mut Variables) -> Arc<AppearanceSet> {
+        let mut appearances = Vec::new();
         while let Some(token) = appearance_set.next() {
             match token {
-                AppearanceSet::Appearance => {
+                LexicalAppearanceSet::Appearance => {
                     let appearance_enclosure = Regex::new(r"\(|\)").unwrap();
                     let appearance = appearance_enclosure.replace_all(appearance_set.slice().trim(), "");
-                    //println!("\tParsing appearance: {}", appearance);
-                    parse_appearance(Appearance::lexer(&appearance), database);
+                    // println!("\tParsing appearance: {}", appearance);
+                    let kept_appearance = parse_appearance(&appearance, database, variables);
+                    appearances.push(kept_appearance);
                 },
-                AppearanceSet::ItemSeparator => (),
+                LexicalAppearanceSet::ItemSeparator => (),
                 _ => {
                     println!("Unrecognized appearance: {}", appearance_set.slice());
                 }
             } 
         }
+        let (kept_appearance_set, previously_known) = database.create_appearance_set(appearances);
+        kept_appearance_set
     }
 
-    #[derive(Logos, Debug, PartialEq)]
-    enum Appearance {
-        #[error]
-        #[regex(r"[\t\n\r\f]+", logos::skip, priority = 2)] 
-        Error,
-
-        #[regex(r"([+|$]|([0-9]+))[^,]+")]
-        Thing,
-
-        #[regex(r"[^,]+")]
-        Role,
-
-        #[token(",")]
-        ItemSeparator,
-    }
-    fn parse_appearance(mut appearance: Lexer<Appearance>, database: &Database) {
-        while let Some(token) = appearance.next() {
-            match token {
-                Appearance::Thing => {
-                    let qualified_thing = appearance.slice();
-                    let (qualifier, thing) = if qualified_thing.parse::<usize>().is_ok() {
-                        ('#', qualified_thing)
-                    }
-                    else {
-                        let mut chars = appearance.slice().chars();
-                        (chars.next().unwrap(), chars.as_str())
-                    };
-                    match qualifier {
-                        '#' => { println!("\tNumeric value"); },
-                        '+' => { println!("\tGenerate identity"); },
-                        '$' => { println!("\tFetch identity"); },
-                        _ => ()
-                    }
-                    println!("\tThe thing is: {}", thing);
-                },
-                Appearance::Role => {
-                    println!("\tThe role is: {}", appearance.slice());
-                }, 
-                Appearance::ItemSeparator => (),
-                _ => {
-                    println!("Unrecognized appearance component: {}", appearance.slice());
-                }
-            } 
+    fn parse_appearance(appearance: &str, database: &Database, variables: &mut Variables) -> Arc<Appearance> {
+        let component_regex = Regex::new(r#"([^,]+),(.+)"#).unwrap();
+        let captures = component_regex.captures(appearance).unwrap();
+        let qualified_thing = captures.get(1).unwrap().as_str();
+        let role_name = captures.get(2).unwrap().as_str();
+        let (qualifier, thing_or_variable) = if qualified_thing.parse::<usize>().is_ok() {
+            ('#', qualified_thing)
         }
+        else {
+            let mut chars = qualified_thing.chars();
+            (chars.next().unwrap(), chars.as_str())
+        };
+        let thing = match qualifier {
+            '#' => { 
+                println!("\tNumeric value"); 
+                let t = thing_or_variable.parse::<usize>().unwrap();
+                database.thing_generator().lock().unwrap().retain(t);
+                Some(Arc::new(t))
+            },
+            '+' => { 
+                println!("\tGenerate identity"); 
+                let t = Arc::new(database.thing_generator().lock().unwrap().generate());
+                variables.insert(thing_or_variable.to_string(), t.clone());
+                Some(t)
+            },
+            '$' => { 
+                println!("\tFetch identity"); 
+                let t = variables.get(thing_or_variable).unwrap().clone();
+                Some(t)
+            },
+            _ => None
+        };
+        let role = database.role_keeper().lock().unwrap().get(role_name);
+        let (kept_appearance, previously_known) = database.create_apperance(thing.unwrap(), role);
+        kept_appearance
     }
     pub struct Engine<'db> {
         database: Database<'db>, 
@@ -1643,9 +1644,9 @@ mod traqula {
                     previous_c = c;
                 }
             }
-        
+            let mut variables: Variables = Variables::new();
             println!("Traqula:\n{}", &oneliner.trim());
-            parse_command(Command::lexer(&oneliner.trim()), &self.database);  
+            parse_command(Command::lexer(&oneliner.trim()), &self.database, &mut variables);  
         }  
     }
 }
