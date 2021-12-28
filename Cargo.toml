@@ -17,4 +17,3 @@ logos = "0.12"
 config = "0.11"
 regex = "1.5.4"
 rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
-

@@ -1208,7 +1208,7 @@ mod bareclad {
             let (kept_role, previously_kept) = self.role_keeper.lock().unwrap().keep(role);
             (kept_role, previously_kept)
         }
-        pub fn create_role(&self, role_name: String, reserved: bool) -> Arc<Role> {
+        pub fn create_role(&self, role_name: String, reserved: bool) -> (Arc<Role>, bool) {
             let role_thing = self.thing_generator.lock().unwrap().generate();
             let (kept_role, previously_kept) =
                 self.keep_role(Role::new(role_thing, role_name, reserved));
@@ -1221,7 +1221,7 @@ mod bareclad {
             } else {
                 self.thing_generator.lock().unwrap().release(role_thing);
             }
-            kept_role
+            (kept_role, previously_kept)
         }
         pub fn keep_appearance(&self, appearance: Appearance) -> (Arc<Appearance>, bool) {
             let (kept_appearance, previously_kept) =
@@ -1358,7 +1358,8 @@ mod bareclad {
 
 mod traqula {
     use regex::Regex;
-    use crate::bareclad::{Database};
+    use std::sync::Arc;
+    use crate::bareclad::{Database, Role};
     use logos::{Logos, Lexer};
 
     #[derive(Logos, Debug, PartialEq)]
@@ -1385,7 +1386,9 @@ mod traqula {
                 Command::AddRole => {
                     println!("Adding roles...");
                     let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
-                    parse_add_role(AddRole::lexer(&trimmed_command), database);
+                    for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database) {
+                        println!("{: >15} -> {}", add_role_result.role.name(), add_role_result.operation);
+                    }
                 }, 
                 Command::AddPosit => {
                     println!("Adding posits...");
@@ -1415,13 +1418,22 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
-    fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) {
+    struct AddRoleResult {
+        role: Arc<Role>,
+        operation: &'static str
+    }
+    fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> Vec<AddRoleResult> {
+        let mut roles: Vec<AddRoleResult> = Vec::new();
         while let Some(token) = add_role.next() {
             match token {
                 AddRole::Role => {
                     let role_name = String::from(add_role.slice().trim());
-                    println!("\tAdding the role: {}", &role_name);
-                    database.create_role(role_name, false);
+                    let (role, previously_known) = database.create_role(role_name, false);
+                    if previously_known {
+                        roles.push(AddRoleResult { role: role, operation: "The role was already known."});
+                    } else { 
+                        roles.push(AddRoleResult { role: role, operation: "The role is new and has been added."})
+                    }
                 },
                 AddRole::ItemSeparator => (), 
                 _ => {
@@ -1429,6 +1441,7 @@ mod traqula {
                 }
             } 
         }
+        roles
     }
 
     #[derive(Logos, Debug, PartialEq)]
