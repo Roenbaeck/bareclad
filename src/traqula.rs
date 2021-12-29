@@ -1,7 +1,7 @@
 
 use regex::Regex;
 use std::sync::Arc;
-use crate::bareclad::{Database, Role, Posit, Appearance, AppearanceSet, Thing};
+use crate::bareclad::{Database, Role, Appearance, AppearanceSet, Thing};
 use logos::{Logos, Lexer};
 use std::collections::HashMap;
 use chrono::NaiveDate;
