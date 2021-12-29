@@ -63,7 +63,7 @@ mod bareclad {
     use rusqlite::{params, Connection, Error, Statement};
 
     // used for timestamps in the database
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, Utc, NaiveDate};
     // used when parsing a string to a DateTime<Utc>
     use std::str::FromStr;
 
@@ -532,9 +532,17 @@ mod bareclad {
             DateTime::<Utc>::from_str(value.as_str().unwrap()).unwrap()
         }
     }
+    impl DataType for NaiveDate {
+        type TargetType = NaiveDate;
+        const UID: u8 = 4;
+        const DATA_TYPE: &'static str = "NaiveDate";
+        fn convert(value: &ValueRef) -> Self::TargetType {
+            NaiveDate::from_str(value.as_str().unwrap()).unwrap()
+        }
+    }
     impl DataType for i64 {
         type TargetType = i64;
-        const UID: u8 = 4;
+        const UID: u8 = 5;
         const DATA_TYPE: &'static str = "i64";
         fn convert(value: &ValueRef) -> Self::TargetType {
             value.as_i64().unwrap()
@@ -1364,6 +1372,7 @@ mod traqula {
     use crate::bareclad::{Database, Role, Posit, Appearance, AppearanceSet, Thing};
     use logos::{Logos, Lexer};
     use std::collections::HashMap;
+    use chrono::NaiveDate;
 
     type Variables = HashMap<String, Arc<Thing>>;
 
@@ -1392,7 +1401,7 @@ mod traqula {
                     println!("Adding roles...");
                     let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
                     for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database, variables) {
-                        println!("{: >15} -> {}", add_role_result.role.name(), add_role_result.operation);
+                        println!("{: >15} -> known: {}", add_role_result.role.name(), add_role_result.known);
                     }
                 }, 
                 Command::AddPosit => {
@@ -1425,7 +1434,7 @@ mod traqula {
     }
     struct AddRoleResult {
         role: Arc<Role>,
-        operation: &'static str
+        known: bool
     }
     fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database, variables: &mut Variables) -> Vec<AddRoleResult> {
         let mut roles: Vec<AddRoleResult> = Vec::new();
@@ -1434,11 +1443,7 @@ mod traqula {
                 AddRole::Role => {
                     let role_name = String::from(add_role.slice().trim());
                     let (role, previously_known) = database.create_role(role_name, false);
-                    if previously_known {
-                        roles.push(AddRoleResult { role: role, operation: "The role was already known."});
-                    } else { 
-                        roles.push(AddRoleResult { role: role, operation: "The role is new and has been added."})
-                    }
+                    roles.push(AddRoleResult { role: role, known: previously_known });
                 },
                 AddRole::ItemSeparator => (), 
                 _ => {
@@ -1468,7 +1473,7 @@ mod traqula {
                 AddPosit::Posit => {
                     let posit_enclosure = Regex::new(r"\[|\]").unwrap();
                     let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
-                    parse_posit(LexicalPosit::lexer(&posit), database, variables);
+                    parse_posit(&posit, database, variables);
                 },
                 AddPosit::ItemSeparator => (), 
                 _ => {
@@ -1478,51 +1483,19 @@ mod traqula {
         }
     }
     
-    #[derive(Logos, Debug, PartialEq)]
-    enum LexicalPosit {
-        #[error]
-        #[regex(r"[\t\n\r\f]+", logos::skip)] 
-        Error,
-
-        #[regex(r"\{[^\}]+\}")]
-        AppearanceSet,
-
-        #[regex(r#""[^"]+""#)]
-        AppearingStringValue,
-
-        #[regex(r#"([\d](\.[\d])?)+"#)]
-        AppearingNumericalValue,
-
-        #[regex(r"'[^']+'")]
-        AppearanceTime,
-
-        #[token(",")]
-        ItemSeparator,
-    }
-    fn parse_posit(mut posit: Lexer<LexicalPosit>, database: &Database, variables: &mut Variables) {
-        while let Some(token) = posit.next() {
-            match token {
-                LexicalPosit::AppearanceSet => {
-                    let appearance_set_enclosure = Regex::new(r"\{|\}").unwrap();
-                    let appearance_set = appearance_set_enclosure.replace_all(posit.slice().trim(), "");
-                    //println!("\tParsing appearance set: {}", appearance_set); 
-                    parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
-                }
-                LexicalPosit::AppearingStringValue => {
-                    let string_value = posit.slice().replace("\"", "").replace(Engine::substitute, "\"");
-                    println!("\tThe string value is: {}", string_value); 
-                },
-                LexicalPosit::AppearingNumericalValue => {
-                    println!("\tThe numerical value is: {}", posit.slice()); 
-                },
-                LexicalPosit::AppearanceTime => {
-                    println!("\tThe time is: {}", posit.slice()); 
-                },
-                LexicalPosit::ItemSeparator => (), 
-                _ => {
-                    println!("Unrecognized posit component: {}", posit.slice());
-                }
-            } 
+    fn parse_posit(mut posit: &str, database: &Database, variables: &mut Variables) {
+        // println!("\t[{}]", posit);
+        let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
+        let captures = component_regex.captures(posit).unwrap();
+        let appearance_set = captures.get(1).unwrap().as_str();
+        let appearance_set_result = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
+        let value = captures.get(2).unwrap().as_str();
+        let time = captures.get(3).unwrap().as_str();
+        let naive_date = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+        // determine type of value
+        if value.chars().nth(0).unwrap() == '"' {
+            let string_value = value.replace("\"", "").replace(Engine::substitute, "\"");
+            database.create_posit(appearance_set_result.appearance_set, string_value, naive_date);
         }
     }
 
@@ -1538,16 +1511,23 @@ mod traqula {
         #[token(",")]
         ItemSeparator,
     }
-    fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, database: &Database, variables: &mut Variables) -> Arc<AppearanceSet> {
+    struct AppearanceSetResult {
+        appearance_results: Vec<AppearanceResult>,
+        appearance_set: Arc<AppearanceSet>,
+        known: bool
+    }
+    fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, database: &Database, variables: &mut Variables) -> AppearanceSetResult {
         let mut appearances = Vec::new();
+        let mut appearance_results = Vec::new();
         while let Some(token) = appearance_set.next() {
             match token {
                 LexicalAppearanceSet::Appearance => {
                     let appearance_enclosure = Regex::new(r"\(|\)").unwrap();
                     let appearance = appearance_enclosure.replace_all(appearance_set.slice().trim(), "");
                     // println!("\tParsing appearance: {}", appearance);
-                    let kept_appearance = parse_appearance(&appearance, database, variables);
-                    appearances.push(kept_appearance);
+                    let appearance_result = parse_appearance(&appearance, database, variables);
+                    appearances.push(appearance_result.appearance.clone());
+                    appearance_results.push(appearance_result);
                 },
                 LexicalAppearanceSet::ItemSeparator => (),
                 _ => {
@@ -1556,10 +1536,18 @@ mod traqula {
             } 
         }
         let (kept_appearance_set, previously_known) = database.create_appearance_set(appearances);
-        kept_appearance_set
+        AppearanceSetResult {
+            appearance_results: appearance_results,
+            appearance_set: kept_appearance_set,
+            known: previously_known
+        }
     }
 
-    fn parse_appearance(appearance: &str, database: &Database, variables: &mut Variables) -> Arc<Appearance> {
+    struct AppearanceResult {
+        appearance: Arc<Appearance>,
+        known: bool
+    }
+    fn parse_appearance(appearance: &str, database: &Database, variables: &mut Variables) -> AppearanceResult {
         let component_regex = Regex::new(r#"([^,]+),(.+)"#).unwrap();
         let captures = component_regex.captures(appearance).unwrap();
         let qualified_thing = captures.get(1).unwrap().as_str();
@@ -1573,19 +1561,19 @@ mod traqula {
         };
         let thing = match qualifier {
             '#' => { 
-                println!("\tNumeric value"); 
+                // println!("\tNumeric value"); 
                 let t = thing_or_variable.parse::<usize>().unwrap();
                 database.thing_generator().lock().unwrap().retain(t);
                 Some(Arc::new(t))
             },
             '+' => { 
-                println!("\tGenerate identity"); 
+                // println!("\tGenerate identity"); 
                 let t = Arc::new(database.thing_generator().lock().unwrap().generate());
                 variables.insert(thing_or_variable.to_string(), t.clone());
                 Some(t)
             },
             '$' => { 
-                println!("\tFetch identity"); 
+                // println!("\tFetch identity"); 
                 let t = variables.get(thing_or_variable).unwrap().clone();
                 Some(t)
             },
@@ -1593,7 +1581,10 @@ mod traqula {
         };
         let role = database.role_keeper().lock().unwrap().get(role_name);
         let (kept_appearance, previously_known) = database.create_apperance(thing.unwrap(), role);
-        kept_appearance
+        AppearanceResult {
+            appearance: kept_appearance,
+            known: previously_known
+        } 
     }
     pub struct Engine<'db> {
         database: Database<'db>, 
