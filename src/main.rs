@@ -55,6 +55,9 @@ mod bareclad {
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
 
+    // custom made ordering for appearances
+    use std::cmp::Ordering;
+
     use std::fmt::{self};
     use std::ops;
 
@@ -137,7 +140,7 @@ mod bareclad {
     type ThingHasher = BuildHasherDefault<ThingHash>;
 
     // ------------- Role -------------
-    #[derive(Eq, PartialOrd, Ord, Debug)]
+    #[derive(Eq, Debug)]
     pub struct Role {
         role: Arc<Thing>, // let it be a thing so we can "talk" about roles using posits
         name: String,
@@ -165,9 +168,19 @@ mod bareclad {
             self.reserved
         }
     }
+    impl Ord for Role {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.name.cmp(&other.name)
+        }
+    }
+    impl PartialOrd for Role {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
     impl PartialEq for Role {
         fn eq(&self, other: &Self) -> bool {
-            self.name == other.name && self.reserved == other.reserved
+            self.name == other.name
         }
     }
     impl Hash for Role {
@@ -215,7 +228,7 @@ mod bareclad {
     }
 
     // ------------- Appearance -------------
-    #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+    #[derive(PartialEq, Eq, Hash, Debug)]
     pub struct Appearance {
         thing: Arc<Thing>,
         role: Arc<Role>,
@@ -229,6 +242,16 @@ mod bareclad {
         }
         pub fn role(&self) -> Arc<Role> {
             self.role.clone()
+        }
+    }
+    impl Ord for Appearance {
+        fn cmp(&self, other: &Self) -> Ordering {
+            (&self.role, &self.thing).cmp(&(&other.role, &other.thing))
+        }
+    }
+    impl PartialOrd for Appearance {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -260,6 +283,7 @@ mod bareclad {
     impl AppearanceSet {
         pub fn new(mut set: Vec<Arc<Appearance>>) -> Option<Self> {
             set.sort_unstable();
+            println!("Set: {:?}", set);
             if set.windows(2).any(|x| x[0].role == x[1].role) {
                 return None;
             }
