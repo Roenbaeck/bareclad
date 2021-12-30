@@ -5,15 +5,25 @@ edition = "2021"
 authors = ["Lars Rönnbäck <lars@bareclad.com>"]
 
 [dependencies]
+# chrono provides various data types for time
 chrono = "0.4"
+# bimap is a bidirectional hashmap, so lookups can be done both from left and right
 bimap = "0.6.1"
+# typemap holds one value per type of key, useful for Posit<V,T>
 typemap = "0.3.3"
-text_io = "0.1.9"
+# logos is a lexer used when parsing Traqula
+logos = "0.12"
+# config lets you read a separate config file 
+config = "0.11"
+# the "standard" regular expression package
+regex = "1.5.4"
+# anyhow provides easy custom error handling
+anyhow = "1.0"
+# rusqlite for the persistence layer
+rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
+
+# ---- THESE MAY BE USED LATER -----
 #jql = "3.0.4"
 #serde = "1.0.130"
 #serde_json = "1.0.72"
 #chumsky = "0.7"
-logos = "0.12"
-config = "0.11"
-regex = "1.5.4"
-rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }

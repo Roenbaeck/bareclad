@@ -268,7 +268,7 @@ impl<'db> Engine<'db> {
             }
         }
         let mut variables: Variables = Variables::new();
-        println!("Traqula:\n{}", &oneliner.trim());
+        //println!("Traqula:\n{}", &oneliner.trim());
         parse_command(Command::lexer(&oneliner.trim()), &self.database, &mut variables);  
     }  
 }

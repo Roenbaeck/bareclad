@@ -40,6 +40,7 @@
 //! TODO: Remove internal identities from the relational model and let everything be "Things"
 //! TODO: Extend Role, Appearance and AppearanceSet with an additional field for the thing_identity.
 //! TODO: Check what needs to keep pub scope.
+//! TODO: Implement a log db (for high level log messages, controlled by verbosity in the config)
 
 mod persist;
 mod bareclad;
