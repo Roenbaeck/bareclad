@@ -1,5 +1,5 @@
 
-use regex::Regex;
+use regex::{Regex};
 use std::sync::Arc;
 use crate::bareclad::{Database, Role, Appearance, AppearanceSet, Thing};
 use logos::{Logos, Lexer};
@@ -14,10 +14,10 @@ enum Command {
     #[regex(r"[\t\n\r\f]+", logos::skip)] 
     Error,
 
-    #[regex(r"add role ([a-z A-Z]+[,]?)+")]
+    #[regex(r"add role [^;]+")]
     AddRole,
 
-    #[regex(r"add posit (\[[^\]]*\][,]?)+")]
+    #[regex(r"add posit [^;]+")]
     AddPosit,
 
     #[regex(r"search [^;]+")]
@@ -26,20 +26,20 @@ enum Command {
     #[token(";")]
     CommandTerminator,
 } 
-fn parse_command(mut command: Lexer<Command>, database: &Database, variables: &mut Variables) {
+fn parse_command(mut command: Lexer<Command>, database: &Database, variables: &mut Variables, strips: &Vec<String>) {
     while let Some(token) = command.next() {
         match token {
             Command::AddRole => {
                 println!("Adding roles...");
                 let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
-                for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database, variables) {
+                for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database) {
                     println!("{: >15} -> known: {}", add_role_result.role.name(), add_role_result.known);
                 }
             }, 
             Command::AddPosit => {
                 println!("Adding posits...");
                 let trimmed_command = command.slice().trim().replacen("add posit ", "", 1);
-                parse_add_posit(AddPosit::lexer(&trimmed_command), database, variables);
+                parse_add_posit(AddPosit::lexer(&trimmed_command), database, variables, strips);
             }, 
             Command::Search => {
                 println!("Search: {}", command.slice());
@@ -68,7 +68,7 @@ struct AddRoleResult {
     role: Arc<Role>,
     known: bool
 }
-fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database, variables: &mut Variables) -> Vec<AddRoleResult> {
+fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> Vec<AddRoleResult> {
     let mut roles: Vec<AddRoleResult> = Vec::new();
     while let Some(token) = add_role.next() {
         match token {
@@ -92,22 +92,30 @@ enum AddPosit {
     #[regex(r"[\t\n\r\f]+", logos::skip)] 
     Error,
 
-    #[regex(r"\[[^\]]+\]")]
+    #[regex(r"\{[^\}]+\},[^,]+,'[^']+'")]
     Posit,
+
+    #[token("[")]
+    StartPosit,
+
+    #[token("]")]
+    EndPosit,
 
     #[token(",")]
     ItemSeparator,
 }
 
-fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables) {
+fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) {
     while let Some(token) = add_posit.next() {
         match token {
             AddPosit::Posit => {
                 let posit_enclosure = Regex::new(r"\[|\]").unwrap();
                 let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
-                parse_posit(&posit, database, variables);
+                parse_posit(&posit, database, variables, strips);
             },
             AddPosit::ItemSeparator => (), 
+            AddPosit::StartPosit => (),
+            AddPosit::EndPosit => (),
             _ => {
                 println!("Unrecognized posit: {}", add_posit.slice());
             }
@@ -115,19 +123,20 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
     }
 }
 
-fn parse_posit(posit: &str, database: &Database, variables: &mut Variables) {
-    // println!("\t[{}]", posit);
+fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) {
     let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
     let captures = component_regex.captures(posit).unwrap();
     let appearance_set = captures.get(1).unwrap().as_str();
     let appearance_set_result = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
     let value = captures.get(2).unwrap().as_str();
     let time = captures.get(3).unwrap().as_str();
+    // determine type of time (TODO)
     let naive_date = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
-    // determine type of value
-    if value.chars().nth(0).unwrap() == '"' {
-        let string_value = value.replace("\"", "").replace(Engine::substitute, "\"");
-        database.create_posit(appearance_set_result.appearance_set, string_value, naive_date);
+    // determine type of value (TODO)
+    if value.chars().nth(0).unwrap() == '§' {
+        let string_value = strips[value.replace("§", "").parse::<usize>().unwrap() - 1].clone();
+        let posit = database.create_posit(appearance_set_result.appearance_set, string_value, naive_date);
+        println!("{}", &posit);
     }
 }
 
@@ -222,7 +231,7 @@ pub struct Engine<'db> {
     database: Database<'db>, 
 }
 impl<'db> Engine<'db> {
-    const substitute: char = 26 as char;
+    const SUBSTITUTE: char = 26 as char;
     pub fn new(database: Database<'db>) -> Self {
         Self {
             database
@@ -231,8 +240,10 @@ impl<'db> Engine<'db> {
     pub fn execute(&self, traqula: &str) {
         let mut in_string = false;
         let mut in_comment = false;
-        let mut previous_c = Engine::substitute;
-        let mut oneliner = String::new();
+        let mut previous_c = Engine::SUBSTITUTE;
+        let mut stripped = String::new();
+        let mut strip = String::new();
+        let mut strips: Vec<String> = Vec::new();
         for c in traqula.chars() {
             // first determine mode
             if c == '#' && !in_string {
@@ -248,28 +259,40 @@ impl<'db> Engine<'db> {
                 in_string = false;
             }
             // mode dependent push
-            if c == '"' && previous_c == '"' && in_string {
-                oneliner.pop();
-                oneliner.push(Engine::substitute);
-                previous_c = Engine::substitute;
-            }
-            else if (c == '\n' || c == '\r') && !in_string {
-                if !previous_c.is_whitespace() && previous_c != ',' && previous_c != ';' { 
-                    oneliner.push(' '); 
+            if in_string {
+                if c == '"' && previous_c == '"' {
+                    strip.push('"');
+                    previous_c = Engine::SUBSTITUTE;
                 }
-                previous_c = ' ';
-            }
-            else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',' || previous_c == ';') && !in_string {
-                previous_c = c;
+                else {
+                    if c != '"' { strip.push(c); }
+                    previous_c = c;
+                }
             }
             else if !in_comment {
-                oneliner.push(c);
-                previous_c = c;
+                if c == '\n' || c == '\r' {
+                    if !previous_c.is_whitespace() && previous_c != ',' && previous_c != ';' { 
+                        stripped.push(' '); 
+                    }
+                    previous_c = ' ';
+                }
+                else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',' || previous_c == ';') {
+                    previous_c = c;
+                }     
+                else {
+                    if previous_c == '"' {
+                        strips.push(strip);
+                        strip = String::new();
+                        stripped += &("§".to_string() + &strips.len().to_string());
+                    }
+                    if c != '"' { stripped.push(c); }
+                    previous_c = c;
+                }           
             }
         }
         let mut variables: Variables = Variables::new();
-        //println!("Traqula:\n{}", &oneliner.trim());
-        parse_command(Command::lexer(&oneliner.trim()), &self.database, &mut variables);  
+        println!("Stripped:\n{}\nStrips:\n{:?}", &stripped.trim(), strips);
+        parse_command(Command::lexer(&stripped.trim()), &self.database, &mut variables, &strips);  
     }  
 }
 

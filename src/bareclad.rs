@@ -26,10 +26,12 @@ use rusqlite::{Connection};
 use chrono::{DateTime, Utc, NaiveDate};
 // used when parsing a string to a DateTime<Utc>
 use std::str::FromStr;
+// used to print constructs
+use std::fmt::Display;
 
 use crate::persist::Persistor;
 
-pub trait DataType: ToString + Eq + Hash + Send + Sync + ToSql + FromSql {
+pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
     // static stuff which needs to be implemented downstream
     type TargetType;
     const UID: u8;
@@ -213,6 +215,11 @@ impl PartialOrd for Appearance {
         Some(self.cmp(other))
     }
 }
+impl fmt::Display for Appearance {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.thing, self.role.name())
+    }
+}
 
 #[derive(Debug)]
 pub struct AppearanceKeeper {
@@ -253,6 +260,17 @@ impl AppearanceSet {
         &self.appearances
     }
 }
+impl fmt::Display for AppearanceSet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut s = String::new();
+        for a in self.appearances() {
+            s += &(a.to_string() + ",");
+        }
+        s.pop();
+        write!(f, "{{{}}}", s)
+    }
+}
+
 
 #[derive(Debug)]
 pub struct AppearanceSetKeeper {
@@ -321,6 +339,16 @@ impl<V: DataType, T: DataType + Ord> Hash for Posit<V, T> {
         self.appearance_set.hash(state);
         self.value.hash(state);
         self.time.hash(state);
+    }
+}
+impl<V: DataType, T: DataType + Ord> fmt::Display for Posit<V, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} [{}, {}, {}]", 
+            self.posit,
+            self.appearance_set, 
+            self.value.to_string() + "|" + self.value.data_type(), 
+            self.time.to_string() + "|" + self.time.data_type()
+        )
     }
 }
 
