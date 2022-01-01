@@ -1,10 +1,14 @@
 
 use regex::{Regex};
 use std::sync::Arc;
-use crate::bareclad::{Database, Role, Appearance, AppearanceSet, Thing};
+use crate::bareclad::{Database, DataType, Role, Posit, Appearance, AppearanceSet, Thing};
 use logos::{Logos, Lexer};
 use std::collections::HashMap;
 use chrono::NaiveDate;
+
+// used in the result sets where posits are generically typed: Posit<V,T> and 
+// therefore require a HashSet per type combo
+use typemap::{Key, TypeMap};
 
 type Variables = HashMap<String, Arc<Thing>>;
 
@@ -32,9 +36,8 @@ fn parse_command(mut command: Lexer<Command>, database: &Database, variables: &m
             Command::AddRole => {
                 println!("Adding roles...");
                 let trimmed_command = command.slice().trim().replacen("add role ", "", 1);
-                for add_role_result in parse_add_role(AddRole::lexer(&trimmed_command), database) {
-                    println!("{: >15} -> known: {}", add_role_result.role.name(), add_role_result.known);
-                }
+                let add_role_result_set = parse_add_role(AddRole::lexer(&trimmed_command), database);
+                println!("{:?}", add_role_result_set);
             }, 
             Command::AddPosit => {
                 println!("Adding posits...");
@@ -64,18 +67,27 @@ enum AddRole {
     #[token(",")]
     ItemSeparator,
 }
+#[derive(Debug)]
 struct AddRoleResult {
     role: Arc<Role>,
     known: bool
 }
-fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> Vec<AddRoleResult> {
-    let mut roles: Vec<AddRoleResult> = Vec::new();
+#[derive(Debug)]
+struct AddRoleResultSet {
+    result_set: Vec<AddRoleResult>
+}
+// TODO: impl iterator for the result set
+
+fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> AddRoleResultSet {
+    let mut add_roles_result_set = AddRoleResultSet {
+        result_set: Vec::new()
+    };
     while let Some(token) = add_role.next() {
         match token {
             AddRole::Role => {
                 let role_name = String::from(add_role.slice().trim());
                 let (role, previously_known) = database.create_role(role_name, false);
-                roles.push(AddRoleResult { role: role, known: previously_known });
+                add_roles_result_set.result_set.push(AddRoleResult { role: role, known: previously_known });
             },
             AddRole::ItemSeparator => (), 
             _ => {
@@ -83,7 +95,7 @@ fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> Vec<AddR
             }
         } 
     }
-    roles
+    add_roles_result_set
 }
 
 #[derive(Logos, Debug, PartialEq)]
@@ -104,8 +116,24 @@ enum AddPosit {
     #[token(",")]
     ItemSeparator,
 }
+#[derive(Debug)]
+struct AddPositResult<V: DataType, T: DataType + Ord> {
+    posit: Arc<Posit<V, T>>,
+    known: bool
+}
+// This key needs to be defined in order to store add posit results in a TypeMap.
+impl<V: 'static + DataType, T: 'static + DataType + Ord> Key for AddPositResult<V, T> {
+    type Value = Vec<AddPositResult<V, T>>;
+}
+struct AddPositResultSet {
+    result_set: TypeMap
+}
+// TODO: impl iterator for the result set
 
-fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) {
+fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> AddPositResultSet {
+    let add_posit_result_set = AddPositResultSet {
+        result_set: TypeMap::new()
+    };
     while let Some(token) = add_posit.next() {
         match token {
             AddPosit::Posit => {
@@ -121,6 +149,7 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
             }
         }
     }
+    add_posit_result_set
 }
 
 fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) {

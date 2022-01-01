@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-// used in the keeper of posits, since they are generically typed: Posit<V,T> and therefore require a HashSet per type combo
+// used in the keeper of posits, since they are generically typed: Posit<V,T> and 
+// therefore require a HashSet per type combo
 use typemap::{Key, TypeMap};
 
 // used to keep the one-to-one mapping between posits and their assigned identities
