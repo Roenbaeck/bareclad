@@ -66,6 +66,8 @@ impl ThingGenerator {
             released: Vec::new(),
         }
     }
+    // TODO: REMOVE!
+    // Things may be explicitly referenced, but only implicitly created
     pub fn retain(&mut self, t: Thing) {
         if t > self.lower_bound {
             self.lower_bound = t;
@@ -187,6 +189,9 @@ impl RoleKeeper {
     pub fn lookup(&self, role: &Thing) -> Arc<Role> {
         Arc::clone(self.lookup.get(role).unwrap())
     }
+    pub fn len(&self) -> usize {
+        self.kept.len()
+    }
 }
 
 // ------------- Appearance -------------
@@ -240,6 +245,9 @@ impl AppearanceKeeper {
             previously_kept,
         )
     }
+    pub fn len(&self) -> usize {
+        self.kept.len()
+    }
 }
 
 // ------------- AppearanceSet -------------
@@ -290,6 +298,9 @@ impl AppearanceSetKeeper {
             Arc::clone(self.kept.get(&keepsake).unwrap()),
             previously_kept,
         )
+    }
+    pub fn len(&self) -> usize {
+        self.kept.len()
     }
 }
 
@@ -347,8 +358,8 @@ impl<V: DataType, T: DataType + Ord> fmt::Display for Posit<V, T> {
         write!(f, "{} [{}, {}, {}]", 
             self.posit,
             self.appearance_set, 
-            self.value.to_string() + "|" + self.value.data_type(), 
-            self.time.to_string() + "|" + self.time.data_type()
+            self.value.to_string() + "::<" + self.value.data_type() + ">", 
+            self.time.to_string() + "::<" + self.time.data_type() + ">"
         )
     }
 }
@@ -360,11 +371,13 @@ impl<V: 'static + DataType, T: 'static + DataType + Ord> Key for Posit<V, T> {
 
 pub struct PositKeeper {
     pub kept: TypeMap,
+    pub length: usize
 }
 impl PositKeeper {
     pub fn new() -> Self {
         Self {
             kept: TypeMap::new(),
+            length: 0
         }
     }
     pub fn keep<V: 'static + DataType, T: 'static + DataType + Ord>(
@@ -386,6 +399,7 @@ impl PositKeeper {
             }
             None => {
                 map.insert(Arc::clone(&keepsake), Arc::clone(&keepsake.posit()));
+                self.length += 1;
                 &keepsake_thing
             }
         };
@@ -413,6 +427,9 @@ impl PositKeeper {
             .entry::<Posit<V, T>>()
             .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
         Arc::clone(map.get_by_right(&thing).unwrap())
+    }
+    pub fn len(&self) -> usize {
+        self.length
     }
 }
 

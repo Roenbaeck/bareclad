@@ -6,9 +6,8 @@ use logos::{Logos, Lexer};
 use std::collections::HashMap;
 use chrono::NaiveDate;
 
-// used in the result sets where posits are generically typed: Posit<V,T> and 
-// therefore require a HashSet per type combo
-use typemap::{Key, TypeMap};
+// used for internal result sets
+use fixedbitset::FixedBitSet;
 
 type Variables = HashMap<String, Arc<Thing>>;
 
@@ -67,27 +66,17 @@ enum AddRole {
     #[token(",")]
     ItemSeparator,
 }
-#[derive(Debug)]
-struct AddRoleResult {
-    role: Arc<Role>,
-    known: bool
-}
-#[derive(Debug)]
-struct AddRoleResultSet {
-    result_set: Vec<AddRoleResult>
-}
-// TODO: impl iterator for the result set
 
-fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> AddRoleResultSet {
-    let mut add_roles_result_set = AddRoleResultSet {
-        result_set: Vec::new()
-    };
+fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> FixedBitSet {
+    let mut add_roles_results = Vec::new();
+    let mut max_role_thing: Thing = 0;
     while let Some(token) = add_role.next() {
         match token {
             AddRole::Role => {
                 let role_name = String::from(add_role.slice().trim());
                 let (role, previously_known) = database.create_role(role_name, false);
-                add_roles_result_set.result_set.push(AddRoleResult { role: role, known: previously_known });
+                if *role.role() > max_role_thing { max_role_thing = *role.role() };
+                add_roles_results.push(role);
             },
             AddRole::ItemSeparator => (), 
             _ => {
@@ -95,6 +84,8 @@ fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> AddRoleR
             }
         } 
     }
+    let mut add_roles_result_set = FixedBitSet::with_capacity(max_role_thing);
+    add_roles_results.iter().map(|role| add_roles_result_set.insert(*role.role()));
     add_roles_result_set
 }
 
@@ -116,30 +107,18 @@ enum AddPosit {
     #[token(",")]
     ItemSeparator,
 }
-#[derive(Debug)]
-struct AddPositResult<V: DataType, T: DataType + Ord> {
-    posit: Arc<Posit<V, T>>,
-    known: bool
-}
-// This key needs to be defined in order to store add posit results in a TypeMap.
-impl<V: 'static + DataType, T: 'static + DataType + Ord> Key for AddPositResult<V, T> {
-    type Value = Vec<AddPositResult<V, T>>;
-}
-struct AddPositResultSet {
-    result_set: TypeMap
-}
-// TODO: impl iterator for the result set
 
-fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> AddPositResultSet {
-    let add_posit_result_set = AddPositResultSet {
-        result_set: TypeMap::new()
-    };
+fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> FixedBitSet {
+    let mut add_posit_results = Vec::new();
+    let mut max_posit_thing: Thing = 0;
     while let Some(token) = add_posit.next() {
         match token {
             AddPosit::Posit => {
                 let posit_enclosure = Regex::new(r"\[|\]").unwrap();
                 let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
-                parse_posit(&posit, database, variables, strips);
+                let posit_thing = parse_posit(&posit, database, variables, strips);
+                add_posit_results.push(posit_thing);
+                if posit_thing > max_posit_thing { max_posit_thing = posit_thing; }
             },
             AddPosit::ItemSeparator => (), 
             AddPosit::StartPosit => (),
@@ -149,10 +128,13 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
             }
         }
     }
+    let mut add_posit_result_set = FixedBitSet::with_capacity(max_posit_thing);
+    add_posit_results.iter().map(|thing| add_posit_result_set.insert(*thing));
     add_posit_result_set
+    
 }
 
-fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) {
+fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Thing {
     let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
     let captures = component_regex.captures(posit).unwrap();
     let appearance_set = captures.get(1).unwrap().as_str();
@@ -162,11 +144,12 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     // determine type of time (TODO)
     let naive_date = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
     // determine type of value (TODO)
-    if value.chars().nth(0).unwrap() == '§' {
-        let string_value = strips[value.replace("§", "").parse::<usize>().unwrap() - 1].clone();
+    if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
+        let string_value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
         let posit = database.create_posit(appearance_set_result.appearance_set, string_value, naive_date);
-        println!("{}", &posit);
+        return *posit.posit()
     }
+    0
 }
 
 #[derive(Logos, Debug, PartialEq)]
@@ -256,12 +239,13 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
         known: previously_known
     } 
 }
-pub struct Engine<'db> {
-    database: Database<'db>, 
+pub struct Engine<'db, 'en> {
+    database: &'en Database<'db>, 
 }
-impl<'db> Engine<'db> {
+impl<'db, 'en> Engine<'db, 'en> {
     const SUBSTITUTE: char = 26 as char;
-    pub fn new(database: Database<'db>) -> Self {
+    const STRIPMARK: char = 15 as char;
+    pub fn new(database: &'en Database<'db>) -> Self {
         Self {
             database
         }
@@ -312,7 +296,7 @@ impl<'db> Engine<'db> {
                     if previous_c == '"' {
                         strips.push(strip);
                         strip = String::new();
-                        stripped += &("§".to_string() + &strips.len().to_string());
+                        stripped += &(Engine::STRIPMARK.to_string() + &strips.len().to_string());
                     }
                     if c != '"' { stripped.push(c); }
                     previous_c = c;

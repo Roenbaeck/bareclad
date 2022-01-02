@@ -19,6 +19,9 @@ config = "0.11"
 regex = "1.5.4"
 # anyhow provides easy custom error handling
 anyhow = "1.0"
+# since every posit is a thing in itself we can use bitsets to "join" them
+# https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=975ff56d5d115dc856b84f3598093a0d
+fixedbitset = "0.4.1"
 # rusqlite for the persistence layer
 rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
 
