@@ -338,7 +338,7 @@ impl<'db> Persistor<'db> {
             all_things: connection
                 .prepare(
                     "
-                select coalesce(max(Thing_Identity), 0) as Max_Thing_Identity
+                select Thing_Identity
                     from Thing
             ",
                 )
@@ -487,13 +487,14 @@ impl<'db> Persistor<'db> {
         existing
     }
     pub fn restore_things(&mut self, db: &Database) {
-        match self.all_things.query_row::<usize, _, _>([], |r| r.get(0)) {
-            Ok(max_thing) => {
-                db.thing_generator().lock().unwrap().retain(max_thing);
-            }
-            Err(err) => {
-                panic!("Could not restore things: {}", err);
-            }
+        let thing_iter = self
+        .all_things
+        .query_map([], |row| {
+            Ok(row.get(0).unwrap())
+        })
+        .unwrap();
+        for thing in thing_iter {
+            db.thing_generator().lock().unwrap().retain(thing.unwrap());
         }
     }
     pub fn restore_roles(&mut self, db: &Database) {

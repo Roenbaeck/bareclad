@@ -51,6 +51,7 @@ dependencies = [
  "fixedbitset",
  "logos",
  "regex",
+ "ritehash",
  "rusqlite",
  "typemap",
 ]
@@ -330,6 +331,12 @@ name = "regex-syntax"
 version = "0.6.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
+
+[[package]]
+name = "ritehash"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8549c2ff0b1843ceb344a4826f39f514ecb0659cdbd1b8f0eeb11e82da0c94dc"
 
 [[package]]
 name = "rusqlite"

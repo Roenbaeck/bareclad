@@ -84,6 +84,7 @@ fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> FixedBit
             }
         } 
     }
+    //println!("Added roles {:?}", add_roles_results);
     let mut add_roles_result_set = FixedBitSet::with_capacity(max_role_thing);
     add_roles_results.iter().map(|role| add_roles_result_set.insert(*role.role()));
     add_roles_result_set
@@ -135,6 +136,7 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
 }
 
 fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Thing {
+    println!("Parsing posit: {}", posit);
     let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
     let captures = component_regex.captures(posit).unwrap();
     let appearance_set = captures.get(1).unwrap().as_str();
@@ -216,7 +218,7 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
         '#' => { 
             // println!("\tNumeric value"); 
             let t = thing_or_variable.parse::<usize>().unwrap();
-            database.thing_generator().lock().unwrap().retain(t);
+            database.thing_generator().lock().unwrap().check(t).unwrap(); // error if the thing is unknown
             Some(Arc::new(t))
         },
         '+' => { 

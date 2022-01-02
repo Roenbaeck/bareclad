@@ -31,11 +31,9 @@ WITH RECURSIVE Appearances(Posit_Identity, Appearance, AppearanceSet) AS (
 )
 SELECT 
 	s.Posit_Identity || 
-	' [{' || s.AppearanceSet || '}, "' || 
-	p.AppearingValue || '", ''' || 
-	p.AppearanceTime || ''']' || ' ' || 
-	v.DataType || ', ' ||
-	t.DataType AS Posit
+	' [{' || s.AppearanceSet || '}, ' || 
+	p.AppearingValue || '::<' || v.DataType || '>, ' || 
+	p.AppearanceTime || '::<' || t.DataType || '>]' AS Posit
 FROM ResolvedAppearanceSet s
 JOIN Posit p 
   ON p.Posit_Identity = s.Posit_Identity

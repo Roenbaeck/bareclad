@@ -2,13 +2,17 @@
 # queries will be executed according to the order of the operations
 # as they are specified. It is based on conditional searches, with 
 # variables binding the results together.
- 
-add role wife, husband, name, age;
-add posit [{(+idw, wife), (42, husband)}, "married", '2004-06-19'];
-add posit [{(42, name)}, "Lars # liker of comments, ], and  ""spaces""",       '1972-08-20'], 
-          [{($idw, name)}, "Anneli", '1972-02-13'],
+
+add role wife, husband, name, age, birth date, epithet;
+
+add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'],
+          [{($idh, name)}, "Lars",      '1972-08-20'];
+          
+add posit [{($idw, name)}, "Anneli",    '1972-02-13'],
           [{($idw, age)}, 30, '2002-02-13'], 
-          [{(42, age)}, 30.5, '2003-02-20'];
+          [{($idw, birth date)}, '1972-02-13', '2002-02-13'],
+          [{($idh, age)}, 30.5, '2003-02-20'],
+          [{($idh, epithet)}, "# liker of comments, ], and  ""spaces""", '2022-01-01'];
 
 search 
     [{($idw, wife), (*, husband)}, "married", $t] as of @NOW,

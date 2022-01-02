@@ -16,7 +16,7 @@ use std::hash::Hash;
 // custom made ordering for appearances
 use std::cmp::Ordering;
 
-use std::fmt::{self};
+use std::fmt::{self, Result};
 use std::ops;
 
 // used for persistence
@@ -31,6 +31,12 @@ use std::str::FromStr;
 use std::fmt::Display;
 
 use crate::persist::Persistor;
+
+// use a tailored HashMap when the key is a Thing
+use ritehash::FxHasher;
+pub type FxBuildHasher = BuildHasherDefault<FxHasher>;
+pub type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
+pub type FxHashSet<T> = HashSet<T, FxBuildHasher>;
 
 pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
     // static stuff which needs to be implemented downstream
@@ -55,7 +61,8 @@ const GENESIS: Thing = 0;
 
 #[derive(Debug)]
 pub struct ThingGenerator {
-    pub lower_bound: Thing,
+    lower_bound: Thing,
+    retained: FxHashSet<Thing>,
     released: Vec<Thing>,
 }
 
@@ -63,22 +70,33 @@ impl ThingGenerator {
     pub fn new() -> Self {
         Self {
             lower_bound: GENESIS,
+            retained: FxHashSet::default(),
             released: Vec::new(),
         }
     }
-    // TODO: REMOVE!
-    // Things may be explicitly referenced, but only implicitly created
+    // Things may be explicitly referenced, but only implicitly created.
+    // The following will throw an error if 42 does not already exist.
+    // add posit [{(+idw, wife), (42, husband)}, "married", '2004-06-19'];
+    // The retain function is necessary though, when restoring an existing
+    // persisted database. 
     pub fn retain(&mut self, t: Thing) {
+        self.retained.insert(t);
         if t > self.lower_bound {
             self.lower_bound = t;
         }
     }
+    pub fn check(&self, t: Thing) -> Option<Thing> {
+        self.retained.get(&t).cloned()
+    }
     pub fn release(&mut self, t: Thing) {
-        self.released.push(t);
+        if self.retained.remove(&t) {
+            self.released.push(t);
+        }
     }
     pub fn generate(&mut self) -> Thing {
         self.released.pop().unwrap_or_else(|| {
             self.lower_bound += 1;
+            self.retained.insert(self.lower_bound);
             self.lower_bound
         })
     }
