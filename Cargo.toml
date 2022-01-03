@@ -32,4 +32,5 @@ rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] 
 #serde = "1.0.130"
 #serde_json = "1.0.72"
 #chumsky = "0.7"
+# https://play.rust-lang.org/?version=nightly&mode=debug&edition=2021&gist=e93f05c877b6dda664a60cf8015e3d8d
 #crossbeam = "0.8.1"
