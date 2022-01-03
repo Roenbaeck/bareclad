@@ -523,7 +523,7 @@ impl<'db> Persistor<'db> {
             for appearance_text in appearances.split('|') {
                 let (thing, role) = appearance_text.split_once(',').unwrap();
                 let appearance = Appearance::new(
-                    Arc::new(thing.parse().unwrap()),
+                    thing.parse().unwrap(),
                     db
                         .role_keeper()
                         .lock()

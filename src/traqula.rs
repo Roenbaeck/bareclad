@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 // used for internal result sets
 use roaring::RoaringTreemap;
 
-type Variables = HashMap<String, Arc<Thing>>;
+type Variables = HashMap<String, Thing>;
 
 #[derive(Logos, Debug, PartialEq)]
 enum Command {
@@ -74,7 +74,7 @@ fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> RoaringT
             AddRole::Role => {
                 let role_name = String::from(add_role.slice().trim());
                 let (role, previously_known) = database.create_role(role_name, false);
-                add_roles_result_set.insert(*role.role());
+                add_roles_result_set.insert(role.role());
             },
             AddRole::ItemSeparator => (), 
             _ => {
@@ -132,7 +132,7 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
     let captures = component_regex.captures(posit).unwrap();
     let appearance_set = captures.get(1).unwrap().as_str();
-    let appearance_set_result = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
+    let appearance_set = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
     let value = captures.get(2).unwrap().as_str();
     let time = captures.get(3).unwrap().as_str();
     // determine type of time (TODO)
@@ -140,8 +140,8 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     // determine type of value (TODO)
     if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
         let string_value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
-        let posit = database.create_posit(appearance_set_result.appearance_set, string_value, naive_date);
-        return *posit.posit()
+        let posit = database.create_posit(appearance_set, string_value, naive_date);
+        return posit.posit()
     }
     0
 }
@@ -158,23 +158,17 @@ enum LexicalAppearanceSet {
     #[token(",")]
     ItemSeparator,
 }
-struct AppearanceSetResult {
-    appearance_results: Vec<AppearanceResult>,
-    appearance_set: Arc<AppearanceSet>,
-    known: bool
-}
-fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, database: &Database, variables: &mut Variables) -> AppearanceSetResult {
+
+fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, database: &Database, variables: &mut Variables) -> Arc<AppearanceSet> {
     let mut appearances = Vec::new();
-    let mut appearance_results = Vec::new();
     while let Some(token) = appearance_set.next() {
         match token {
             LexicalAppearanceSet::Appearance => {
                 let appearance_enclosure = Regex::new(r"\(|\)").unwrap();
                 let appearance = appearance_enclosure.replace_all(appearance_set.slice().trim(), "");
                 // println!("\tParsing appearance: {}", appearance);
-                let appearance_result = parse_appearance(&appearance, database, variables);
-                appearances.push(appearance_result.appearance.clone());
-                appearance_results.push(appearance_result);
+                let appearance = parse_appearance(&appearance, database, variables);
+                appearances.push(appearance);
             },
             LexicalAppearanceSet::ItemSeparator => (),
             _ => {
@@ -183,18 +177,10 @@ fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, databas
         } 
     }
     let (kept_appearance_set, previously_known) = database.create_appearance_set(appearances);
-    AppearanceSetResult {
-        appearance_results: appearance_results,
-        appearance_set: kept_appearance_set,
-        known: previously_known
-    }
+    kept_appearance_set
 }
 
-struct AppearanceResult {
-    appearance: Arc<Appearance>,
-    known: bool
-}
-fn parse_appearance(appearance: &str, database: &Database, variables: &mut Variables) -> AppearanceResult {
+fn parse_appearance(appearance: &str, database: &Database, variables: &mut Variables) -> Arc<Appearance> {
     let component_regex = Regex::new(r#"([^,]+),(.+)"#).unwrap();
     let captures = component_regex.captures(appearance).unwrap();
     let qualified_thing = captures.get(1).unwrap().as_str();
@@ -211,27 +197,24 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
             // println!("\tNumeric value"); 
             let t = thing_or_variable.parse::<Thing>().unwrap();
             database.thing_generator().lock().unwrap().check(t).unwrap(); // error if the thing is unknown
-            Some(Arc::new(t))
+            Some(t)
         },
         '+' => { 
             // println!("\tGenerate identity"); 
-            let t = Arc::new(database.thing_generator().lock().unwrap().generate());
-            variables.insert(thing_or_variable.to_string(), t.clone());
+            let t = database.thing_generator().lock().unwrap().generate();
+            variables.insert(thing_or_variable.to_string(), t);
             Some(t)
         },
         '$' => { 
             // println!("\tFetch identity"); 
-            let t = variables.get(thing_or_variable).unwrap().clone();
+            let t = *variables.get(thing_or_variable).unwrap();
             Some(t)
         },
         _ => None
     };
     let role = database.role_keeper().lock().unwrap().get(role_name);
     let (kept_appearance, previously_known) = database.create_apperance(thing.unwrap(), role);
-    AppearanceResult {
-        appearance: kept_appearance,
-        known: previously_known
-    } 
+    kept_appearance
 }
 pub struct Engine<'db, 'en> {
     database: &'en Database<'db>, 

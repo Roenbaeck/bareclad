@@ -48,7 +48,7 @@ pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
 }
 
 // ------------- Thing -------------
-pub type Thing = u64;
+pub type Thing = u64; 
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ThingHash(Thing);
@@ -117,7 +117,7 @@ impl ThingGenerator {
 // ------------- Role -------------
 #[derive(Eq, Debug)]
 pub struct Role {
-    role: Arc<Thing>, // let it be a thing so we can "talk" about roles using posits
+    role: Thing, // let it be a thing so we can "talk" about roles using posits
     name: String,
     reserved: bool,
 }
@@ -125,7 +125,7 @@ pub struct Role {
 impl Role {
     pub fn new(role: Thing, name: String, reserved: bool) -> Self {
         Self {
-            role: Arc::new(role),
+            role,
             name,
             reserved,
         }
@@ -133,8 +133,8 @@ impl Role {
     // It's intentional to encapsulate the name in the struct
     // and only expose it using a "getter", because this yields
     // true immutability for objects after creation.
-    pub fn role(&self) -> Arc<Thing> {
-        self.role.clone()
+    pub fn role(&self) -> Thing {
+        self.role
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -168,7 +168,7 @@ impl Hash for Role {
 #[derive(Debug)]
 pub struct RoleKeeper {
     kept: HashMap<String, Arc<Role>>,
-    lookup: HashMap<Thing, Arc<Role>>,
+    lookup: HashMap<Thing, Arc<Role>>, // double indexing, but roles should be few so it's not a big deal
 }
 impl RoleKeeper {
     pub fn new() -> Self {
@@ -190,7 +190,7 @@ impl RoleKeeper {
         };
         let kept_role = self.kept.get(&keepsake).unwrap();
         if !previously_kept {
-            self.lookup.insert(*thing, Arc::clone(kept_role));
+            self.lookup.insert(thing, Arc::clone(kept_role));
         }
         (Arc::clone(kept_role), previously_kept)
     }
@@ -208,18 +208,18 @@ impl RoleKeeper {
 // ------------- Appearance -------------
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Appearance {
-    thing: Arc<Thing>,
+    thing: Thing,
     role: Arc<Role>,
 }
 impl Appearance {
-    pub fn new(thing: Arc<Thing>, role: Arc<Role>) -> Self {
+    pub fn new(thing: Thing, role: Arc<Role>) -> Self {
         Self { thing, role }
     }
-    pub fn thing(&self) -> Arc<Thing> {
-        self.thing.clone()
+    pub fn thing(&self) -> Thing {
+        self.thing
     }
     pub fn role(&self) -> Arc<Role> {
-        self.role.clone()
+        Arc::clone(&self.role)
     }
 }
 impl Ord for Appearance {
@@ -318,7 +318,7 @@ impl AppearanceSetKeeper {
 // --------------- Posit ----------------
 #[derive(Eq, PartialOrd, Ord, Debug)]
 pub struct Posit<V: DataType, T: DataType + Ord> {
-    posit: Arc<Thing>, // a posit is also a thing we can "talk" about
+    posit: Thing, // a posit is also a thing we can "talk" about
     appearance_set: Arc<AppearanceSet>,
     value: V, // imprecise value
     time: T,  // imprecise time (note that this must be a data type with a natural ordering)
@@ -331,17 +331,17 @@ impl<V: DataType, T: DataType + Ord> Posit<V, T> {
         time: T,
     ) -> Posit<V, T> {
         Self {
-            posit: Arc::new(posit),
+            posit,
             value,
             time,
             appearance_set,
         }
     }
-    pub fn posit(&self) -> Arc<Thing> {
-        self.posit.clone()
+    pub fn posit(&self) -> Thing {
+        self.posit
     }
     pub fn appearance_set(&self) -> Arc<AppearanceSet> {
-        self.appearance_set.clone()
+        Arc::clone(&self.appearance_set)
     }
     pub fn value(&self) -> &V {
         &self.value
@@ -377,7 +377,7 @@ impl<V: DataType, T: DataType + Ord> fmt::Display for Posit<V, T> {
 
 // This key needs to be defined in order to store posits in a TypeMap.
 impl<V: 'static + DataType, T: 'static + DataType + Ord> Key for Posit<V, T> {
-    type Value = BiMap<Arc<Posit<V, T>>, Arc<Thing>>;
+    type Value = BiMap<Arc<Posit<V, T>>, Thing>;
 }
 
 pub struct PositKeeper {
@@ -399,8 +399,8 @@ impl PositKeeper {
         let map = self
             .kept
             .entry::<Posit<V, T>>()
-            .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
-        let keepsake_thing = Arc::clone(&posit.posit());
+            .or_insert(BiMap::<Arc<Posit<V, T>>, Thing>::new());
+        let keepsake_thing = posit.posit();
         let keepsake = Arc::new(posit);
         let mut previously_kept = false;
         let thing = match map.get_by_left(&keepsake) {
@@ -409,7 +409,7 @@ impl PositKeeper {
                 kept_thing
             }
             None => {
-                map.insert(Arc::clone(&keepsake), Arc::clone(&keepsake.posit()));
+                map.insert(Arc::clone(&keepsake), keepsake.posit());
                 self.length += 1;
                 &keepsake_thing
             }
@@ -422,21 +422,21 @@ impl PositKeeper {
     pub fn thing<V: 'static + DataType, T: 'static + DataType + Ord>(
         &mut self,
         posit: Arc<Posit<V, T>>,
-    ) -> Arc<Thing> {
+    ) -> Thing {
         let map = self
             .kept
             .entry::<Posit<V, T>>()
-            .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
-        Arc::clone(map.get_by_left(&posit).unwrap())
+            .or_insert(BiMap::<Arc<Posit<V, T>>, Thing>::new());
+        *map.get_by_left(&posit).unwrap()
     }
     pub fn posit<V: 'static + DataType, T: 'static + DataType + Ord>(
         &mut self,
-        thing: Arc<Thing>,
+        thing: Thing,
     ) -> Arc<Posit<V, T>> {
         let map = self
             .kept
             .entry::<Posit<V, T>>()
-            .or_insert(BiMap::<Arc<Posit<V, T>>, Arc<Thing>>::new());
+            .or_insert(BiMap::<Arc<Posit<V, T>>, Thing>::new());
         Arc::clone(map.get_by_right(&thing).unwrap())
     }
     pub fn len(&self) -> usize {
@@ -591,19 +591,19 @@ impl DataType for i64 {
 // ------------- Lookups -------------
 #[derive(Debug)]
 pub struct Lookup<K, V, H = RandomState> {
-    index: HashMap<Arc<K>, HashSet<Arc<V>>, H>,
+    index: HashMap<K, HashSet<V>, H>,
 }
 impl<K: Eq + Hash, V: Eq + Hash, H: BuildHasher + Default> Lookup<K, V, H> {
     pub fn new() -> Self {
         Self {
-            index: HashMap::<Arc<K>, HashSet<Arc<V>>, H>::default(),
+            index: HashMap::<K, HashSet<V>, H>::default(),
         }
     }
-    pub fn insert(&mut self, key: Arc<K>, value: Arc<V>) {
-        let map = self.index.entry(key).or_insert(HashSet::<Arc<V>>::new());
+    pub fn insert(&mut self, key: K, value: V) {
+        let map = self.index.entry(key).or_insert(HashSet::<V>::new());
         map.insert(value);
     }
-    pub fn lookup(&self, key: &K) -> &HashSet<Arc<V>> {
+    pub fn lookup(&self, key: &K) -> &HashSet<V> {
         self.index.get(key).unwrap()
     }
 }
@@ -619,10 +619,10 @@ pub struct Database<'db> {
     pub appearance_set_keeper: Arc<Mutex<AppearanceSetKeeper>>,
     pub posit_keeper: Arc<Mutex<PositKeeper>>,
     // owns lookups between constructs (similar to database indexes)
-    pub thing_to_appearance_lookup: Arc<Mutex<Lookup<Thing, Appearance, ThingHasher>>>,
-    pub role_to_appearance_lookup: Arc<Mutex<Lookup<Role, Appearance>>>,
-    pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Appearance, AppearanceSet>>>,
-    pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<AppearanceSet, Thing>>>,
+    pub thing_to_appearance_lookup: Arc<Mutex<Lookup<Thing, Arc<Appearance>, ThingHasher>>>,
+    pub role_to_appearance_lookup: Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>>>>,
+    pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>>>>,
+    pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing>>>,
     // responsible for the the persistence layer
     pub persistor: Arc<Mutex<Persistor<'db>>>,
 }
@@ -635,10 +635,10 @@ impl<'db> Database<'db> {
         let appearance_keeper = AppearanceKeeper::new();
         let appearance_set_keeper = AppearanceSetKeeper::new();
         let posit_keeper = PositKeeper::new();
-        let thing_to_appearance_lookup = Lookup::<Thing, Appearance, ThingHasher>::new();
-        let role_to_appearance_lookup = Lookup::<Role, Appearance>::new();
-        let appearance_to_appearance_set_lookup = Lookup::<Appearance, AppearanceSet>::new();
-        let appearance_set_to_posit_thing_lookup = Lookup::<AppearanceSet, Thing>::new();
+        let thing_to_appearance_lookup = Lookup::<Thing, Arc<Appearance>, ThingHasher>::new();
+        let role_to_appearance_lookup = Lookup::<Arc<Role>, Arc<Appearance>>::new();
+        let appearance_to_appearance_set_lookup = Lookup::<Arc<Appearance>, Arc<AppearanceSet>>::new();
+        let appearance_set_to_posit_thing_lookup = Lookup::<Arc<AppearanceSet>, Thing>::new();
         let persistor = Persistor::new(connection);
 
         // Create the database so that we can prime it before returning it
@@ -691,20 +691,20 @@ impl<'db> Database<'db> {
     }
     pub fn thing_to_appearance_lookup(
         &self,
-    ) -> Arc<Mutex<Lookup<Thing, Appearance, ThingHasher>>> {
+    ) -> Arc<Mutex<Lookup<Thing, Arc<Appearance>, ThingHasher>>> {
         Arc::clone(&self.thing_to_appearance_lookup)
     }
-    pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Role, Appearance>>> {
+    pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>>>> {
         Arc::clone(&self.role_to_appearance_lookup)
     }
     pub fn appearance_to_appearance_set_lookup(
         &self,
-    ) -> Arc<Mutex<Lookup<Appearance, AppearanceSet>>> {
+    ) -> Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>>>> {
         Arc::clone(&self.appearance_to_appearance_set_lookup)
     }
     pub fn appearance_set_to_posit_thing_lookup(
         &self,
-    ) -> Arc<Mutex<Lookup<AppearanceSet, Thing>>> {
+    ) -> Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing>>> {
         Arc::clone(&self.appearance_set_to_posit_thing_lookup)
     }
     pub fn create_thing(&self) -> Arc<Thing> {
@@ -749,7 +749,7 @@ impl<'db> Database<'db> {
         }
         (kept_appearance, previously_kept)
     }
-    pub fn create_apperance(&self, thing: Arc<Thing>, role: Arc<Role>) -> (Arc<Appearance>, bool) {
+    pub fn create_apperance(&self, thing: Thing, role: Arc<Role>) -> (Arc<Appearance>, bool) {
         self.keep_appearance(Appearance::new(thing, role))
     }
     pub fn keep_appearance_set(
@@ -813,13 +813,13 @@ impl<'db> Database<'db> {
     // finally, now that the database exists we can start to make assertions
     pub fn assert<V: 'static + DataType, T: 'static + DataType + Ord>(
         &self,
-        asserter: Arc<Thing>,
+        asserter: Thing,
         posit: Arc<Posit<V, T>>,
         certainty: Certainty,
         assertion_time: DateTime<Utc>,
     ) -> Arc<Posit<Certainty, DateTime<Utc>>> {
-        let posit_thing: Arc<Thing> =
-            self.posit_keeper.lock().unwrap().thing(Arc::clone(&posit));
+        let posit_thing: Thing =
+            self.posit_keeper.lock().unwrap().thing(posit);
         let asserter_role = self
             .role_keeper
             .lock()
@@ -833,8 +833,9 @@ impl<'db> Database<'db> {
         self.create_posit(appearance_set, certainty, assertion_time)
     }
     // search functions in order to find posits matching certain circumstances
-    pub fn posits_involving_thing(&self, thing: &Thing) -> Vec<Arc<Thing>> {
-        let mut posits: Vec<Arc<Thing>> = Vec::new();
+    // TODO: this should return a RoaringTreemap
+    pub fn posits_involving_thing(&self, thing: &Thing) -> Vec<Thing> {
+        let mut posits: Vec<Thing> = Vec::new();
         for appearance in self
             .thing_to_appearance_lookup
             .lock()
@@ -853,7 +854,7 @@ impl<'db> Database<'db> {
                     .unwrap()
                     .lookup(appearance_set)
                 {
-                    posits.push(Arc::clone(posit_thing));
+                    posits.push(*posit_thing);
                 }
             }
         }
