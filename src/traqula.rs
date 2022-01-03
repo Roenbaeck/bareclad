@@ -1,7 +1,7 @@
 
 use regex::{Regex};
 use std::sync::Arc;
-use crate::bareclad::{Database, DataType, Role, Posit, Appearance, AppearanceSet, Thing};
+use crate::bareclad::{Database, Appearance, AppearanceSet, Thing};
 use logos::{Logos, Lexer};
 use std::collections::HashMap;
 use chrono::NaiveDate;
@@ -216,6 +216,35 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
     let (kept_appearance, previously_known) = database.create_apperance(thing.unwrap(), role);
     kept_appearance
 }
+
+// search functions in order to find posits matching certain circumstances
+pub fn posits_involving_thing(database: &Database, thing: Thing) -> RoaringTreemap {
+    let mut result_set = RoaringTreemap::new();
+    for appearance in database
+        .thing_to_appearance_lookup
+        .lock()
+        .unwrap()
+        .lookup(&thing)
+    {
+        for appearance_set in database
+            .appearance_to_appearance_set_lookup
+            .lock()
+            .unwrap()
+            .lookup(appearance)
+        {
+            for posit_thing in database
+                .appearance_set_to_posit_thing_lookup
+                .lock()
+                .unwrap()
+                .lookup(appearance_set)
+            {
+                result_set.insert(*posit_thing);
+            }
+        }
+    }
+    result_set
+}
+
 pub struct Engine<'db, 'en> {
     database: &'en Database<'db>, 
 }

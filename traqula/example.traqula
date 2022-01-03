@@ -6,8 +6,8 @@
 add role wife, husband, name, age, birth date, epithet;
 
 add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'],
-          [{($idh, name)}, "Lars",      '1972-08-20'];
-          
+          [{($idh, name)}, "Lars Samuelsson",      '1972-08-20'];
+
 add posit [{($idw, name)}, "Anneli",    '1972-02-13'],
           [{($idw, age)}, 30, '2002-02-13'], 
           [{($idw, birth date)}, '1972-02-13', '2002-02-13'],
@@ -24,3 +24,8 @@ aggregate
 return 
     $w,
     $number_of_named_wives;  
+
+add posit [{($idh, name)}, "Lars Rönnbäck", '2004-07-01'];
+
+add role class;
+add posit [{(1, class)}, "Role", '1901-01-01'];

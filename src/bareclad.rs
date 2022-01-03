@@ -832,33 +832,5 @@ impl<'db> Database<'db> {
             self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
         self.create_posit(appearance_set, certainty, assertion_time)
     }
-    // search functions in order to find posits matching certain circumstances
-    // TODO: this should return a RoaringTreemap
-    pub fn posits_involving_thing(&self, thing: &Thing) -> Vec<Thing> {
-        let mut posits: Vec<Thing> = Vec::new();
-        for appearance in self
-            .thing_to_appearance_lookup
-            .lock()
-            .unwrap()
-            .lookup(thing)
-        {
-            for appearance_set in self
-                .appearance_to_appearance_set_lookup
-                .lock()
-                .unwrap()
-                .lookup(appearance)
-            {
-                for posit_thing in self
-                    .appearance_set_to_posit_thing_lookup
-                    .lock()
-                    .unwrap()
-                    .lookup(appearance_set)
-                {
-                    posits.push(*posit_thing);
-                }
-            }
-        }
-        posits
-    }
 }
 
