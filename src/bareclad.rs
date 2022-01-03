@@ -32,12 +32,6 @@ use std::fmt::Display;
 
 use crate::persist::Persistor;
 
-// use a tailored HashMap when the key is a Thing
-use ritehash::FxHasher;
-pub type FxBuildHasher = BuildHasherDefault<FxHasher>;
-pub type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
-pub type FxHashSet<T> = HashSet<T, FxBuildHasher>;
-
 pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
     // static stuff which needs to be implemented downstream
     type TargetType;
@@ -54,15 +48,33 @@ pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
 }
 
 // ------------- Thing -------------
-// TODO: Investigate using AtomicUsize instead.
-// https://rust-lang.github.io/rust-clippy/master/index.html#mutex_integer
-pub type Thing = usize;
+pub type Thing = u64;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ThingHash(Thing);
+
+impl Hasher for ThingHash {
+    fn finish(&self) -> u64 {
+        self.0 as u64
+    }
+
+    fn write(&mut self, _bytes: &[u8]) {
+        unimplemented!("ThingHasher only supports u64 keys")
+    }
+
+    fn write_u64(&mut self, i: Thing) {
+        self.0 = i;
+    }
+}
+
+type ThingHasher = BuildHasherDefault<ThingHash>;
+
 const GENESIS: Thing = 0;
 
 #[derive(Debug)]
 pub struct ThingGenerator {
     lower_bound: Thing,
-    retained: FxHashSet<Thing>,
+    retained: HashSet<Thing, ThingHasher>,
     released: Vec<Thing>,
 }
 
@@ -70,7 +82,7 @@ impl ThingGenerator {
     pub fn new() -> Self {
         Self {
             lower_bound: GENESIS,
-            retained: FxHashSet::default(),
+            retained: HashSet::<Thing, ThingHasher>::default(),
             released: Vec::new(),
         }
     }
@@ -101,25 +113,6 @@ impl ThingGenerator {
         })
     }
 }
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ThingHash(Thing);
-
-impl Hasher for ThingHash {
-    fn finish(&self) -> u64 {
-        self.0 as u64
-    }
-
-    fn write(&mut self, _bytes: &[u8]) {
-        unimplemented!("ThingHasher only supports usize keys")
-    }
-
-    fn write_usize(&mut self, i: Thing) {
-        self.0 = i;
-    }
-}
-
-type ThingHasher = BuildHasherDefault<ThingHash>;
 
 // ------------- Role -------------
 #[derive(Eq, Debug)]

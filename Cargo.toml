@@ -1,6 +1,6 @@
 [package]
 name = "bareclad"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Lars Rönnbäck <lars@bareclad.com>"]
 
@@ -19,11 +19,11 @@ config = "0.11"
 regex = "1.5.4"
 # anyhow provides easy custom error handling
 anyhow = "1.0"
-# the hashmaps that have Thing keys will use this special hasher
-ritehash = "0.1.0"
 # since every posit is a thing in itself we can use bitsets to "join" them
-# https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=3fc12f4d642cf94dcf6a17f8c213540f
-fixedbitset = "0.4.1"
+# the "roaring bitmaps" seem to have the best ergonomics 
+roaring = "0.8.1"
+# we will use a fast hashing algo for hashmaps and hashsets where keys are not Things
+ritehash = "0.2.0"
 # rusqlite for the persistence layer
 rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
 

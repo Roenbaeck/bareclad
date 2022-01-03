@@ -517,7 +517,7 @@ impl<'db> Persistor<'db> {
         while let Some(row) = rows.next().unwrap() {
             let value_type: String = row.get_unwrap(3);
             let time_type: String = row.get_unwrap(5);
-            let thing: usize = row.get_unwrap(0);
+            let thing: Thing = row.get_unwrap(0);
             let appearances: String = row.get_unwrap(1);
             let mut appearance_set = Vec::new();
             for appearance_text in appearances.split('|') {
@@ -528,7 +528,7 @@ impl<'db> Persistor<'db> {
                         .role_keeper()
                         .lock()
                         .unwrap()
-                        .lookup(&role.parse::<usize>().unwrap()),
+                        .lookup(&role.parse::<Thing>().unwrap()),
                 );
                 let (kept_appearance, _) = db.keep_appearance(appearance);
                 appearance_set.push(kept_appearance);

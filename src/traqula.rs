@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 
 // used for internal result sets
-use fixedbitset::FixedBitSet;
+use roaring::RoaringTreemap;
 
 type Variables = HashMap<String, Arc<Thing>>;
 
@@ -67,16 +67,14 @@ enum AddRole {
     ItemSeparator,
 }
 
-fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> FixedBitSet {
-    let mut add_roles_results = Vec::new();
-    let mut max_role_thing: Thing = 0;
+fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> RoaringTreemap {
+    let mut add_roles_result_set = RoaringTreemap::new();
     while let Some(token) = add_role.next() {
         match token {
             AddRole::Role => {
                 let role_name = String::from(add_role.slice().trim());
                 let (role, previously_known) = database.create_role(role_name, false);
-                if *role.role() > max_role_thing { max_role_thing = *role.role() };
-                add_roles_results.push(role);
+                add_roles_result_set.insert(*role.role());
             },
             AddRole::ItemSeparator => (), 
             _ => {
@@ -85,8 +83,6 @@ fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> FixedBit
         } 
     }
     //println!("Added roles {:?}", add_roles_results);
-    let mut add_roles_result_set = FixedBitSet::with_capacity(max_role_thing);
-    add_roles_results.iter().map(|role| add_roles_result_set.insert(*role.role()));
     add_roles_result_set
 }
 
@@ -109,17 +105,15 @@ enum AddPosit {
     ItemSeparator,
 }
 
-fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> FixedBitSet {
-    let mut add_posit_results = Vec::new();
-    let mut max_posit_thing: Thing = 0;
+fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> RoaringTreemap {
+    let mut add_posit_result_set = RoaringTreemap::new();
     while let Some(token) = add_posit.next() {
         match token {
             AddPosit::Posit => {
                 let posit_enclosure = Regex::new(r"\[|\]").unwrap();
                 let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
                 let posit_thing = parse_posit(&posit, database, variables, strips);
-                add_posit_results.push(posit_thing);
-                if posit_thing > max_posit_thing { max_posit_thing = posit_thing; }
+                add_posit_result_set.insert(posit_thing);          
             },
             AddPosit::ItemSeparator => (), 
             AddPosit::StartPosit => (),
@@ -129,8 +123,6 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
             }
         }
     }
-    let mut add_posit_result_set = FixedBitSet::with_capacity(max_posit_thing);
-    add_posit_results.iter().map(|thing| add_posit_result_set.insert(*thing));
     add_posit_result_set
     
 }
@@ -207,7 +199,7 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
     let captures = component_regex.captures(appearance).unwrap();
     let qualified_thing = captures.get(1).unwrap().as_str();
     let role_name = captures.get(2).unwrap().as_str();
-    let (qualifier, thing_or_variable) = if qualified_thing.parse::<usize>().is_ok() {
+    let (qualifier, thing_or_variable) = if qualified_thing.parse::<Thing>().is_ok() {
         ('#', qualified_thing)
     }
     else {
@@ -217,7 +209,7 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
     let thing = match qualifier {
         '#' => { 
             // println!("\tNumeric value"); 
-            let t = thing_or_variable.parse::<usize>().unwrap();
+            let t = thing_or_variable.parse::<Thing>().unwrap();
             database.thing_generator().lock().unwrap().check(t).unwrap(); // error if the thing is unknown
             Some(Arc::new(t))
         },
