@@ -6,7 +6,7 @@
 add role wife, husband, name, age, birth date, epithet;
 
 add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'],
-          [{($idh, name)}, "Lars Samuelsson",      '1972-08-20'];
+          [{($idh, name)}, "Lars Samuelsson",      '1972-08-20']; # A name I used to go by
 
 add posit [{($idw, name)}, "Anneli",    '1972-02-13'],
           [{($idw, age)}, 30, '2002-02-13'], 
