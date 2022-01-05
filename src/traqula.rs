@@ -3,13 +3,177 @@ use regex::{Regex};
 use std::sync::Arc;
 use crate::bareclad::{Database, Appearance, AppearanceSet, Thing};
 use logos::{Logos, Lexer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
+use arrayvec::ArrayVec; 
 
 type Variables = HashMap<String, Thing>;
+
+#[derive(Debug)]
+pub enum ResultSetMode {
+    Empty,
+    Thing, 
+    Small, 
+    Large
+}
+
+// this is the threshold for switching from Small to Large 
+const THRESHOLD: usize = 16;
+
+#[derive(Debug)]
+struct ResultSet {
+    mode: ResultSetMode,
+    thing: Option<Thing>,
+    small: Option<ArrayVec<Thing, THRESHOLD>>,
+    large: Option<RoaringTreemap>
+}
+impl ResultSet {
+    pub fn new() -> Self {
+        Self {
+            mode: ResultSetMode::Empty,
+            thing: None,
+            small: None,
+            large: None
+        }
+    }
+    fn empty(&mut self) {
+        self.mode = ResultSetMode::Empty;
+        self.thing = None;
+        self.small = None;
+        self.large = None;       
+    }
+    fn thing(&mut self, thing: Thing) {
+        self.mode = ResultSetMode::Thing;
+        self.thing = Some(thing);
+        self.small = None;
+        self.large = None;
+    }
+    pub fn intersect_with(&mut self, other: &ResultSet) {
+        match other.mode {
+            ResultSetMode::Empty => {
+                self.empty();
+            }, 
+            ResultSetMode::Thing => {
+                let other_thing = other.thing.unwrap();
+                match self.mode {
+                    ResultSetMode::Thing => {
+                        if self.thing.unwrap() != other_thing {
+                            self.empty();
+                        }
+                    },
+                    ResultSetMode::Small => {
+                        if self.small.as_ref().unwrap().contains(&other_thing) {
+                            self.thing(other_thing);
+                        }
+                        else {
+                            self.empty();
+                        }
+                    },
+                    ResultSetMode::Large => {
+                        if self.large.as_ref().unwrap().contains(other_thing) {
+                            self.thing(other_thing);
+                        }
+                        else {
+                            self.empty();
+                        }
+                    },
+                    ResultSetMode::Empty => ()
+                }
+            }
+            ResultSetMode::Small => {
+                let other_small = other.small.as_ref().unwrap();
+                match self.mode {
+                    ResultSetMode::Thing => {
+                        if !other_small.contains(&self.thing.unwrap()) {
+                            self.empty();
+                        }
+                    },
+                    ResultSetMode::Small => {
+                        let mut lookup = HashSet::<u64>::new();
+                        for thing in  self.small.as_ref().unwrap() {
+                            lookup.insert(*thing);
+                        }
+                        self.small.as_mut().unwrap().clear();
+                        for thing in other_small {
+                            if lookup.contains(thing) { 
+                                self.small.as_mut().unwrap().push(*thing) 
+                            };
+                        }
+                        match self.small.as_ref().unwrap().len() {
+                            0 => {
+                                self.empty();
+                            },
+                            1 => {
+                                let thing = self.small.as_ref().unwrap()[0];
+                                self.thing(thing);
+                            },
+                            _ => ()
+                        }
+                    },
+                    ResultSetMode::Large => (), // TODO
+                    ResultSetMode::Empty => ()                    
+                }
+            }
+            ResultSetMode::Large => () // TODO
+        }
+    }
+    /* 
+    pub fn union_with(&mut self, other: &ResultSet) {
+        let mut merge = HashSet::<u64>::new();
+        for u in &self.small {
+            merge.insert(*u);
+        }
+        self.small.clear();
+        for u in &other.small {
+            merge.insert(*u);
+        }
+        for u in &merge {
+            self.small.push(*u);
+        }
+    }
+    */
+    pub fn push(&mut self, thing: u64) {
+        match self.mode {
+            ResultSetMode::Empty => {
+                self.mode = ResultSetMode::Thing;
+                self.thing = Some(thing);
+                self.small = None;
+                self.large = None;
+            }, 
+            ResultSetMode::Thing => {
+                let mut small = ArrayVec::<Thing, THRESHOLD>::new();
+                small.push(self.thing.unwrap());
+                small.push(thing);
+                self.mode = ResultSetMode::Small;
+                self.thing = None;
+                self.small = Some(small);
+                self.large = None;
+            },   
+            ResultSetMode::Small => {
+                if self.small.as_ref().unwrap().len() < THRESHOLD {
+                    self.small.as_mut().unwrap().push(thing);
+                }
+                else {
+                    let mut large = RoaringTreemap::new(); 
+                    for t in self.small.as_ref().unwrap() {
+                        large.push(*t);
+                    }
+                    large.push(thing);
+                    self.mode = ResultSetMode::Large;
+                    self.thing = None;
+                    self.small = None;
+                    self.large = Some(large);
+                }
+            }, 
+            ResultSetMode::Large => {
+                self.large.as_mut().unwrap().push(thing);
+            }    
+        }
+    }
+}
 
 #[derive(Logos, Debug, PartialEq)]
 enum Command {

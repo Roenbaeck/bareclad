@@ -14,6 +14,8 @@ add posit [{($idw, name)}, "Anneli",    '1972-02-13'],
           [{($idh, age)}, 30.5, '2003-02-20'],
           [{($idh, epithet)}, "# liker of comments, ], and  ""spaces""", '2022-01-01'];
 
+add posit [{($idh, name)}, "Lars Rönnbäck", '2004-07-01'];
+
 search 
     [{($idw, wife), (*, husband)}, "married", $t] as of @NOW,
     [{($idw, name)}, $w, *] as of $t
@@ -24,8 +26,3 @@ aggregate
 return 
     $w,
     $number_of_named_wives;  
-
-add posit [{($idh, name)}, "Lars Rönnbäck", '2004-07-01'];
-
-add role class;
-add posit [{(1, class)}, "Role", '1901-01-01'];

@@ -69,7 +69,7 @@ impl Hasher for ThingHash {
 
 type ThingHasher = BuildHasherDefault<ThingHash>;
 
-const GENESIS: Thing = 0;
+pub const GENESIS: Thing = 0;
 
 #[derive(Debug)]
 pub struct ThingGenerator {

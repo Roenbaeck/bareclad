@@ -22,6 +22,8 @@ anyhow = "1.0"
 # since every posit is a thing in itself we can use bitsets to "join" them
 # the "roaring bitmaps" seem to have the best ergonomics 
 roaring = "0.8.1"
+# for small sets we will however use arrayvec to be even more efficient
+arrayvec = "0.7.2"
 # we will use a fast hashing algo for hashmaps and hashsets where keys are not Things
 ritehash = "0.2.0"
 # rusqlite for the persistence layer
