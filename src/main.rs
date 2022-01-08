@@ -42,9 +42,6 @@
 //! TODO: Check what needs to keep pub scope.
 //! TODO: Implement a log db (for high level log messages, controlled by verbosity in the config)
 
-mod persist;
-mod bareclad;
-mod traqula;
 
 // =========== TESTING BELOW ===========
 
@@ -52,8 +49,8 @@ use config::*;
 use std::fs::{remove_file, read_to_string};
 use std::collections::{HashMap};
 
-use bareclad::Database;
-use traqula::{Engine, ResultSet};
+use bareclad::construct::Database;
+use bareclad::traqula::{Engine, ResultSet};
 use rusqlite::{Connection};
 
 fn main() {

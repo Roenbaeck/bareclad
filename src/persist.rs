@@ -1,6 +1,6 @@
 // used for persistence
 use rusqlite::{params, Connection, Error, Statement};
-use crate::bareclad::{Database, Role, Posit, Appearance, AppearanceSet, Thing, DataType, Certainty};
+use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing, DataType, Certainty};
 use std::sync::{Arc};
 use chrono::{DateTime, Utc, NaiveDate};
 
