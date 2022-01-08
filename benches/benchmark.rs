@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use bareclad::traqula::ResultSet;
+use std::time::Instant;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut r1 = ResultSet::new();
@@ -34,6 +35,17 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
     println!("{:?}", r1);
     c.bench_function("intersect 10M", |b| b.iter(|| r1.intersect_with(&r2)));
+    let start = Instant::now();
+    for n in 100000000..200000000 {
+        r1.push(n);
+    }
+    for n in 100000000..200000000 {
+        r2.push(n);
+    }
+    println!("{:?}", start.elapsed());
+    println!("{:?}", r1);
+    println!("{:?}", r2);
+    c.bench_function("intersect 100M", |b| b.iter(|| r1.intersect_with(&r2)));
 }
 
 criterion_group!(benches, criterion_benchmark);
