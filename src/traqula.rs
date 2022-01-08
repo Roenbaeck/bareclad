@@ -8,207 +8,92 @@ use chrono::NaiveDate;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
-use arrayvec::ArrayVec; 
 
 type Variables = HashMap<String, Thing>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSetMode {
     Empty,
     Thing, 
-    Small, 
-    Large
+    Multi
 }
 
-// this is the threshold for switching from Small to Large 
-const THRESHOLD: usize = 16;
-const THRESHOLD_U64: u64 = THRESHOLD as u64;
-
 #[derive(Debug)]
-struct ResultSet {
+pub struct ResultSet {
     mode: ResultSetMode,
     thing: Option<Thing>,
-    small: Option<ArrayVec<Thing, THRESHOLD>>,
-    large: Option<RoaringTreemap>
+    multi: Option<RoaringTreemap>
 }
 impl ResultSet {
     pub fn new() -> Self {
         Self {
             mode: ResultSetMode::Empty,
             thing: None,
-            small: None,
-            large: None
+            multi: None,
         }
     }
     fn empty(&mut self) {
         self.mode = ResultSetMode::Empty;
         self.thing = None;
-        self.small = None;
-        self.large = None;       
+        self.multi = None;  
     }
     fn thing(&mut self, thing: Thing) {
         self.mode = ResultSetMode::Thing;
         self.thing = Some(thing);
-        self.small = None;
-        self.large = None;
+        self.multi = None;
     }
-    fn small(&mut self, small: ArrayVec<Thing, THRESHOLD>) {
-        self.mode = ResultSetMode::Small;
+    fn multi(&mut self, multi: RoaringTreemap) {
+        self.mode = ResultSetMode::Multi;
         self.thing = None;
-        self.small = Some(small);
-        self.large = None;
-    }
-    fn large(&mut self, large: RoaringTreemap) {
-        self.mode = ResultSetMode::Large;
-        self.thing = None;
-        self.small = None;
-        self.large = Some(large);
+        self.multi = Some(multi);
     }
     pub fn intersect_with(&mut self, other: &ResultSet) {
-        match other.mode {
-            ResultSetMode::Empty => {
-                self.empty();
-            }, 
-            ResultSetMode::Thing => {
-                let other_thing = other.thing.unwrap();
-                match self.mode {
-                    ResultSetMode::Thing => {
-                        if self.thing.unwrap() != other_thing {
+        if self.mode != ResultSetMode::Empty {
+            match (&self.mode, &other.mode) {
+                (_, ResultSetMode::Empty) => {
+                    self.empty();
+                }, 
+                (ResultSetMode::Thing, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    if self.thing.unwrap() != other_thing {
+                        self.empty();
+                    }
+                },
+                (ResultSetMode::Multi, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    if self.multi.as_ref().unwrap().contains(other_thing) {
+                        self.thing(other_thing);
+                    }
+                    else {
+                        self.empty();
+                    }
+                },
+                (ResultSetMode::Thing, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    if !other_multi.contains(self.thing.unwrap()) {
+                        self.empty();
+                    }
+                },
+                (ResultSetMode::Multi, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    // this is instead of the deprecated intersect_with
+                    *self.multi.as_mut().unwrap() &= other_multi; 
+                    match self.multi.as_ref().unwrap().len() {
+                        0 => {
                             self.empty();
-                        }
-                    },
-                    ResultSetMode::Small => {
-                        if self.small.as_ref().unwrap().contains(&other_thing) {
-                            self.thing(other_thing);
-                        }
-                        else {
-                            self.empty();
-                        }
-                    },
-                    ResultSetMode::Large => {
-                        if self.large.as_ref().unwrap().contains(other_thing) {
-                            self.thing(other_thing);
-                        }
-                        else {
-                            self.empty();
-                        }
-                    },
-                    ResultSetMode::Empty => ()
-                }
-            }
-            ResultSetMode::Small => {
-                let other_small = other.small.as_ref().unwrap();
-                match self.mode {
-                    ResultSetMode::Thing => {
-                        if !other_small.contains(&self.thing.unwrap()) {
-                            self.empty();
-                        }
-                    },
-                    ResultSetMode::Small => {
-                        let mut lookup = HashSet::<u64>::new();
-                        for thing in  self.small.as_ref().unwrap() {
-                            lookup.insert(*thing);
-                        }
-                        self.small.as_mut().unwrap().clear();
-                        for thing in other_small {
-                            if lookup.contains(thing) { 
-                                self.small.as_mut().unwrap().push(*thing) 
-                            };
-                        }
-                        match self.small.as_ref().unwrap().len() {
-                            0 => {
-                                self.empty();
-                            },
-                            1 => {
-                                let thing = self.small.as_ref().unwrap()[0];
-                                self.thing(thing);
-                            },
-                            _ => ()
-                        }
-                    },
-                    ResultSetMode::Large => {
-                        let mut other_small_as_large = RoaringTreemap::new(); 
-                        for t in other_small {
-                            other_small_as_large.push(*t);
-                        }
-                        // this is instead of the deprecated intersect_with
-                        *self.large.as_mut().unwrap() &= &other_small_as_large; 
-                        match self.large.as_ref().unwrap().len() {
-                            0 => {
-                                self.empty();
-                            },
-                            1 => {
-                                let thing = self.small.as_ref().unwrap()[0];
-                                self.thing(thing);
-                            },
-                            2..=THRESHOLD_U64 => {
-                                let mut small = ArrayVec::<Thing, THRESHOLD>::new();
-                                for t in self.large.as_ref().unwrap() {
-                                    small.push(t);
-                                }
-                                self.small(small);
-                            }
-                            _ => ()
-                        }
-                    }, 
-                    ResultSetMode::Empty => ()                    
-                }
-            }
-            ResultSetMode::Large => {
-                let other_large = other.large.as_ref().unwrap();
-                match self.mode {
-                    ResultSetMode::Thing => {
-                        if !other_large.contains(self.thing.unwrap()) {
-                            self.empty();
-                        }
-                    },
-                    ResultSetMode::Small => {
-                        let mut self_small_as_large = RoaringTreemap::new(); 
-                        for t in self.small.as_ref().unwrap() {
-                            self_small_as_large.push(*t);
-                        }
-                        self_small_as_large &= other_large; 
-                        self.small.as_mut().unwrap().clear();
-                        for thing in self_small_as_large {
-                            self.small.as_mut().unwrap().push(thing);
-                        }
-                        match self.small.as_ref().unwrap().len() {
-                            0 => {
-                                self.empty();
-                            },
-                            1 => {
-                                let thing = self.small.as_ref().unwrap()[0];
-                                self.thing(thing);
-                            },
-                            _ => ()
-                        }
-                    },
-                    ResultSetMode::Large => {
-                        // this is instead of the deprecated intersect_with
-                        *self.large.as_mut().unwrap() &= other_large; 
-                        match self.large.as_ref().unwrap().len() {
-                            0 => {
-                                self.empty();
-                            },
-                            1 => {
-                                let thing = self.small.as_ref().unwrap()[0];
-                                self.thing(thing);
-                            },
-                            2..=THRESHOLD_U64 => {
-                                let mut small = ArrayVec::<Thing, THRESHOLD>::new();
-                                for t in self.large.as_ref().unwrap() {
-                                    small.push(t);
-                                }
-                                self.small(small);
-                            }
-                            _ => ()
-                        }
-                    }, 
-                    ResultSetMode::Empty => ()                    
-                }
+                        },
+                        1 => {
+                            let thing = self.multi.as_ref().unwrap().min().unwrap();
+                            self.thing(thing);
+                        },
+                        _ => ()
+                    }
+                },
+                (_, _) => ()
             }
         }
     }
+
     /* 
     pub fn union_with(&mut self, other: &ResultSet) {
         let mut merge = HashSet::<u64>::new();
@@ -230,26 +115,13 @@ impl ResultSet {
                 self.thing(thing);
             }, 
             ResultSetMode::Thing => {
-                let mut small = ArrayVec::<Thing, THRESHOLD>::new();
-                small.push(self.thing.unwrap());
-                small.push(thing);
-                self.small(small);
+                let mut multi = RoaringTreemap::new(); 
+                multi.insert(self.thing.unwrap());
+                multi.insert(thing);
+                self.multi(multi);
             },   
-            ResultSetMode::Small => {
-                if self.small.as_ref().unwrap().len() < THRESHOLD {
-                    self.small.as_mut().unwrap().push(thing);
-                }
-                else {
-                    let mut large = RoaringTreemap::new(); 
-                    for t in self.small.as_ref().unwrap() {
-                        large.push(*t);
-                    }
-                    large.push(thing);
-                    self.large(large);
-                }
-            }, 
-            ResultSetMode::Large => {
-                self.large.as_mut().unwrap().push(thing);
+            ResultSetMode::Multi => {
+                self.multi.as_mut().unwrap().push(thing);
             }    
         }
     }

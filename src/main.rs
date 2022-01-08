@@ -53,7 +53,7 @@ use std::fs::{remove_file, read_to_string};
 use std::collections::{HashMap};
 
 use bareclad::Database;
-use traqula::Engine;
+use traqula::{Engine, ResultSet};
 use rusqlite::{Connection};
 
 fn main() {
