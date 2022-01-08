@@ -11,6 +11,7 @@ use bimap::BiMap;
 use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
 use std::collections::hash_map::{Entry, RandomState};
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_set::Iter;
 use std::hash::Hash;
 
 // custom made ordering for appearances
@@ -111,6 +112,9 @@ impl ThingGenerator {
             self.retained.insert(self.lower_bound);
             self.lower_bound
         })
+    }
+    pub fn iter(&self) -> Iter<Thing> {
+        self.retained.iter()
     }
 }
 

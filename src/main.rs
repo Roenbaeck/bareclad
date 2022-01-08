@@ -83,7 +83,6 @@ fn main() {
     println!("Total number of kept appearances: {}", bareclad.appearance_keeper().lock().unwrap().len());
     println!("Total number of kept appearance sets: {}", bareclad.appearance_set_keeper().lock().unwrap().len());
     println!("Total number of kept posits: {}", bareclad.posit_keeper().lock().unwrap().len());
-
     /* 
     // does it really have to be this elaborate?
     let i1 = bareclad.create_thing();

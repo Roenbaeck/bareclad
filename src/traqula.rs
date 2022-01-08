@@ -251,6 +251,7 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     let appearance_set = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
     let value = captures.get(2).unwrap().as_str();
     let time = captures.get(3).unwrap().as_str();
+    // TODO: introduce a new function that determines the data type (for "look-alike" datatypes)
     // determine type of time (TODO)
     let naive_date = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
     // determine type of value (TODO)
