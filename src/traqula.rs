@@ -1,7 +1,7 @@
 
 use regex::{Regex};
 use std::sync::Arc;
-use crate::construct::{Database, Appearance, AppearanceSet, Thing};
+use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
 use logos::{Logos, Lexer};
 use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 // used for internal result sets
 use roaring::RoaringTreemap;
 
-type Variables = HashMap<String, Thing>;
+type Variables = HashMap<String, Thing, OtherHasher>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSetMode {
@@ -426,7 +426,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                 }           
             }
         }
-        let mut variables: Variables = Variables::new();
+        let mut variables: Variables = Variables::default();
         println!("Stripped:\n{}\nStrips:\n{:?}", &stripped.trim(), strips);
         parse_command(Command::lexer(&stripped.trim()), &self.database, &mut variables, &strips);  
     }  

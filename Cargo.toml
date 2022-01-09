@@ -25,7 +25,7 @@ roaring = "0.8.1"
 # for small sets we will however use arrayvec to be even more efficient
 arrayvec = "0.7.2"
 # we will use a fast hashing algo for hashmaps and hashsets where keys are not Things
-ritehash = "0.2.0"
+seahash = "4.1.0"
 # rusqlite for the persistence layer
 rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
 

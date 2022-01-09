@@ -69,9 +69,9 @@ dependencies = [
  "criterion",
  "logos",
  "regex",
- "ritehash",
  "roaring",
  "rusqlite",
+ "seahash",
  "typemap",
 ]
 
@@ -636,12 +636,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11000e6ba5020e53e7cc26f73b91ae7d5496b4977851479edb66b694c0675c21"
 
 [[package]]
-name = "ritehash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80eb5f11ebcdd09266eb7897503d7451c2fceea3881538c63dd2651e2c5ebe0c"
-
-[[package]]
 name = "roaring"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,6 +698,12 @@ name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
+
+[[package]]
+name = "seahash"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "semver"

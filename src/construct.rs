@@ -13,11 +13,12 @@ use std::collections::hash_map::{Entry, RandomState};
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_set::Iter;
 use std::hash::Hash;
+use seahash::SeaHasher;
 
 // custom made ordering for appearances
 use std::cmp::Ordering;
 
-use std::fmt::{self, Result};
+use std::fmt::{self};
 use std::ops;
 
 // used for persistence
@@ -51,24 +52,8 @@ pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
 // ------------- Thing -------------
 pub type Thing = u64; 
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ThingHash(Thing);
-
-impl Hasher for ThingHash {
-    fn finish(&self) -> u64 {
-        self.0 as u64
-    }
-
-    fn write(&mut self, _bytes: &[u8]) {
-        unimplemented!("ThingHasher only supports u64 keys")
-    }
-
-    fn write_u64(&mut self, i: Thing) {
-        self.0 = i;
-    }
-}
-
-type ThingHasher = BuildHasherDefault<ThingHash>;
+pub type ThingHasher = BuildHasherDefault<SeaHasher>;
+pub type OtherHasher = BuildHasherDefault<SeaHasher>;
 
 pub const GENESIS: Thing = 0;
 
@@ -171,14 +156,14 @@ impl Hash for Role {
 
 #[derive(Debug)]
 pub struct RoleKeeper {
-    kept: HashMap<String, Arc<Role>>,
-    lookup: HashMap<Thing, Arc<Role>>, // double indexing, but roles should be few so it's not a big deal
+    kept: HashMap<String, Arc<Role>, OtherHasher>,
+    lookup: HashMap<Thing, Arc<Role>, ThingHasher>, // double indexing, but roles should be few so it's not a big deal
 }
 impl RoleKeeper {
     pub fn new() -> Self {
         Self {
-            kept: HashMap::new(),
-            lookup: HashMap::new(),
+            kept: HashMap::default(),
+            lookup: HashMap::default(),
         }
     }
     pub fn keep(&mut self, role: Role) -> (Arc<Role>, bool) {
@@ -244,12 +229,12 @@ impl fmt::Display for Appearance {
 
 #[derive(Debug)]
 pub struct AppearanceKeeper {
-    kept: HashSet<Arc<Appearance>>,
+    kept: HashSet<Arc<Appearance>, OtherHasher>,
 }
 impl AppearanceKeeper {
     pub fn new() -> Self {
         Self {
-            kept: HashSet::new(),
+            kept: HashSet::default(),
         }
     }
     pub fn keep(&mut self, appearance: Appearance) -> (Arc<Appearance>, bool) {
@@ -298,12 +283,12 @@ impl fmt::Display for AppearanceSet {
 
 #[derive(Debug)]
 pub struct AppearanceSetKeeper {
-    kept: HashSet<Arc<AppearanceSet>>,
+    kept: HashSet<Arc<AppearanceSet>, OtherHasher>,
 }
 impl AppearanceSetKeeper {
     pub fn new() -> Self {
         Self {
-            kept: HashSet::new(),
+            kept: HashSet::default(),
         }
     }
     pub fn keep(&mut self, appearance_set: AppearanceSet) -> (Arc<AppearanceSet>, bool) {
@@ -624,9 +609,9 @@ pub struct Database<'db> {
     pub posit_keeper: Arc<Mutex<PositKeeper>>,
     // owns lookups between constructs (similar to database indexes)
     pub thing_to_appearance_lookup: Arc<Mutex<Lookup<Thing, Arc<Appearance>, ThingHasher>>>,
-    pub role_to_appearance_lookup: Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>>>>,
-    pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>>>>,
-    pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing>>>,
+    pub role_to_appearance_lookup: Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>>,
+    pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>, OtherHasher>>>,
+    pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing, OtherHasher>>>,
     // responsible for the the persistence layer
     pub persistor: Arc<Mutex<Persistor<'db>>>,
 }
@@ -639,10 +624,10 @@ impl<'db> Database<'db> {
         let appearance_keeper = AppearanceKeeper::new();
         let appearance_set_keeper = AppearanceSetKeeper::new();
         let posit_keeper = PositKeeper::new();
-        let thing_to_appearance_lookup = Lookup::<Thing, Arc<Appearance>, ThingHasher>::new();
-        let role_to_appearance_lookup = Lookup::<Arc<Role>, Arc<Appearance>>::new();
-        let appearance_to_appearance_set_lookup = Lookup::<Arc<Appearance>, Arc<AppearanceSet>>::new();
-        let appearance_set_to_posit_thing_lookup = Lookup::<Arc<AppearanceSet>, Thing>::new();
+        let thing_to_appearance_lookup = Lookup::new();
+        let role_to_appearance_lookup = Lookup::new();
+        let appearance_to_appearance_set_lookup = Lookup::new();
+        let appearance_set_to_posit_thing_lookup = Lookup::new();
         let persistor = Persistor::new(connection);
 
         // Create the database so that we can prime it before returning it
@@ -698,17 +683,17 @@ impl<'db> Database<'db> {
     ) -> Arc<Mutex<Lookup<Thing, Arc<Appearance>, ThingHasher>>> {
         Arc::clone(&self.thing_to_appearance_lookup)
     }
-    pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>>>> {
+    pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>> {
         Arc::clone(&self.role_to_appearance_lookup)
     }
     pub fn appearance_to_appearance_set_lookup(
         &self,
-    ) -> Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>>>> {
+    ) -> Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>, OtherHasher>>> {
         Arc::clone(&self.appearance_to_appearance_set_lookup)
     }
     pub fn appearance_set_to_posit_thing_lookup(
         &self,
-    ) -> Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing>>> {
+    ) -> Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing, OtherHasher>>> {
         Arc::clone(&self.appearance_set_to_posit_thing_lookup)
     }
     pub fn create_thing(&self) -> Arc<Thing> {
