@@ -8,6 +8,7 @@ use chrono::NaiveDate;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
+use std::ops::{BitAndAssign, BitOrAssign, SubAssign, BitXorAssign};
 
 type Variables = HashMap<String, Thing, OtherHasher>;
 
@@ -47,7 +48,7 @@ impl ResultSet {
         self.thing = None;
         self.multi = Some(multi);
     }
-    pub fn intersect_with(&mut self, other: &ResultSet) {
+    fn intersect_with(&mut self, other: &ResultSet) {
         if self.mode != ResultSetMode::Empty {
             match (&self.mode, &other.mode) {
                 (_, ResultSetMode::Empty) => {
@@ -56,6 +57,12 @@ impl ResultSet {
                 (ResultSetMode::Thing, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     if self.thing.unwrap() != other_thing {
+                        self.empty();
+                    }
+                },
+                (ResultSetMode::Thing, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    if !other_multi.contains(self.thing.unwrap()) {
                         self.empty();
                     }
                 },
@@ -68,22 +75,16 @@ impl ResultSet {
                         self.empty();
                     }
                 },
-                (ResultSetMode::Thing, ResultSetMode::Multi) => {
-                    let other_multi = other.multi.as_ref().unwrap();
-                    if !other_multi.contains(self.thing.unwrap()) {
-                        self.empty();
-                    }
-                },
                 (ResultSetMode::Multi, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
-                    // this is instead of the deprecated intersect_with
-                    *self.multi.as_mut().unwrap() &= other_multi; 
-                    match self.multi.as_ref().unwrap().len() {
+                    let multi = self.multi.as_mut().unwrap();
+                    *multi &= other_multi; 
+                    match multi.len() {
                         0 => {
                             self.empty();
                         },
                         1 => {
-                            let thing = self.multi.as_ref().unwrap().min().unwrap();
+                            let thing = multi.min().unwrap();
                             self.thing(thing);
                         },
                         _ => ()
@@ -93,23 +94,173 @@ impl ResultSet {
             }
         }
     }
-
-    /* 
-    pub fn union_with(&mut self, other: &ResultSet) {
-        let mut merge = HashSet::<u64>::new();
-        for u in &self.small {
-            merge.insert(*u);
-        }
-        self.small.clear();
-        for u in &other.small {
-            merge.insert(*u);
-        }
-        for u in &merge {
-            self.small.push(*u);
+    fn union_with(&mut self, other: &ResultSet) {
+        if other.mode != ResultSetMode::Empty {
+            match (&self.mode, &other.mode) {
+                (ResultSetMode::Empty, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    self.thing(other_thing);
+                },
+                (ResultSetMode::Empty, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    let mut multi = RoaringTreemap::new(); 
+                    multi.clone_from(other_multi);
+                    self.multi(multi);
+                },
+                (ResultSetMode::Thing, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    let mut multi = RoaringTreemap::new(); 
+                    multi.insert(other_thing);
+                    multi.insert(self.thing.unwrap());
+                    self.multi(multi);
+                },
+                (ResultSetMode::Thing, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    let mut multi = RoaringTreemap::new(); 
+                    multi.clone_from(other_multi);
+                    multi.insert(self.thing.unwrap());
+                    self.multi(multi);
+                },
+                (ResultSetMode::Multi, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    self.multi.as_mut().unwrap().insert(other_thing);
+                },
+                (ResultSetMode::Multi, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    *self.multi.as_mut().unwrap() |= other_multi;
+                }, 
+                (_, _) => ()
+            }
         }
     }
-    */
-    pub fn push(&mut self, thing: u64) {
+    fn difference_with(&mut self, other: &ResultSet) {
+        if other.mode != ResultSetMode::Empty && self.mode != ResultSetMode::Empty {
+            match (&self.mode, &other.mode) {
+                (ResultSetMode::Thing, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    if self.thing.unwrap() == other_thing {
+                        self.empty();
+                    }
+                },
+                (ResultSetMode::Thing, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    if other_multi.contains(self.thing.unwrap()) {
+                        self.empty();
+                    }
+                },
+                (ResultSetMode::Multi, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    let multi = self.multi.as_mut().unwrap();
+                    multi.remove(other_thing);
+                    match multi.len() {
+                        0 => {
+                            self.empty();
+                        },
+                        1 => {
+                            let thing = multi.min().unwrap();
+                            self.thing(thing);
+                        },
+                        _ => ()
+                    }
+                },
+                (ResultSetMode::Multi, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    let multi = self.multi.as_mut().unwrap();
+                    *multi -= other_multi;
+                    match multi.len() {
+                        0 => {
+                            self.empty();
+                        },
+                        1 => {
+                            let thing = multi.min().unwrap();
+                            self.thing(thing);
+                        },
+                        _ => ()
+                    }
+                }, 
+                (_, _) => ()
+            }
+        }
+    } 
+    fn symmetric_difference_with(&mut self, other: &ResultSet) {
+        if other.mode != ResultSetMode::Empty && self.mode != ResultSetMode::Empty {
+            match (&self.mode, &other.mode) {
+                (ResultSetMode::Thing, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    if self.thing.unwrap() == other_thing {
+                        self.empty();
+                    }
+                    else {
+                        let mut multi = RoaringTreemap::new(); 
+                        multi.insert(other_thing);
+                        multi.insert(self.thing.unwrap());
+                        self.multi(multi);
+                    }
+                },
+                (ResultSetMode::Thing, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    let mut multi = RoaringTreemap::new(); 
+                    multi.clone_from(other_multi);
+                    let thing = self.thing.unwrap();
+                    if other_multi.contains(self.thing.unwrap()) {
+                        multi.remove(thing);
+                    }
+                    else {
+                        multi.insert(thing);
+                    }
+                    match multi.len() {
+                        0 => {
+                            self.empty();
+                        },
+                        1 => {
+                            let thing = multi.min().unwrap();
+                            self.thing(thing);
+                        },
+                        _ => {
+                            self.multi(multi);
+                        }
+                    }
+                },
+                (ResultSetMode::Multi, ResultSetMode::Thing) => {
+                    let other_thing = other.thing.unwrap();
+                    let multi = self.multi.as_mut().unwrap();
+                    if multi.contains(other_thing) {
+                        multi.remove(other_thing);
+                    }
+                    else {
+                        multi.insert(other_thing);
+                    }
+                    match multi.len() {
+                        0 => {
+                            self.empty();
+                        },
+                        1 => {
+                            let thing = multi.min().unwrap();
+                            self.thing(thing);
+                        },
+                        _ => ()
+                    }
+                },
+                (ResultSetMode::Multi, ResultSetMode::Multi) => {
+                    let other_multi = other.multi.as_ref().unwrap();
+                    let multi = self.multi.as_mut().unwrap();
+                    *multi ^= other_multi;
+                    match multi.len() {
+                        0 => {
+                            self.empty();
+                        },
+                        1 => {
+                            let thing = multi.min().unwrap();
+                            self.thing(thing);
+                        },
+                        _ => ()
+                    }
+                }, 
+                (_, _) => ()
+            }
+        }
+    }
+    pub fn insert(&mut self, thing: u64) {
         match self.mode {
             ResultSetMode::Empty => {
                 self.thing(thing);
@@ -121,9 +272,29 @@ impl ResultSet {
                 self.multi(multi);
             },   
             ResultSetMode::Multi => {
-                self.multi.as_mut().unwrap().push(thing);
+                self.multi.as_mut().unwrap().insert(thing);
             }    
         }
+    }
+}
+impl BitAndAssign<&'_ ResultSet> for ResultSet  {
+    fn bitand_assign(&mut self, rhs: &ResultSet) {
+        self.intersect_with(rhs);
+    }
+}
+impl BitOrAssign<&'_ ResultSet> for ResultSet  {
+    fn bitor_assign(&mut self, rhs: &ResultSet) {
+        self.union_with(rhs);
+    }
+}
+impl BitXorAssign<&'_ ResultSet> for ResultSet  {
+    fn bitxor_assign(&mut self, rhs: &ResultSet) {
+        self.symmetric_difference_with(rhs);
+    }
+}
+impl SubAssign<&'_ ResultSet> for ResultSet  {
+    fn sub_assign(&mut self, rhs: &ResultSet) {
+        self.difference_with(rhs);
     }
 }
 
