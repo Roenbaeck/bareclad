@@ -1,16 +1,17 @@
 
 use regex::{Regex};
 use std::sync::Arc;
-use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
+use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher, DataType};
 use logos::{Logos, Lexer};
 use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
+use roaring::treemap::IntoIter;
 use std::ops::{BitAndAssign, BitOrAssign, SubAssign, BitXorAssign};
 
-type Variables = HashMap<String, Thing, OtherHasher>;
+type Variables = HashMap<String, ResultSet, OtherHasher>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSetMode {
@@ -21,9 +22,9 @@ pub enum ResultSetMode {
 
 #[derive(Debug)]
 pub struct ResultSet {
-    mode: ResultSetMode,
-    thing: Option<Thing>,
-    multi: Option<RoaringTreemap>
+    pub mode: ResultSetMode,
+    pub thing: Option<Thing>,
+    pub multi: Option<RoaringTreemap>
 }
 impl ResultSet {
     pub fn new() -> Self {
@@ -260,7 +261,7 @@ impl ResultSet {
             }
         }
     }
-    pub fn insert(&mut self, thing: u64) {
+    pub fn insert(&mut self, thing: Thing) {
         match self.mode {
             ResultSetMode::Empty => {
                 self.thing(thing);
@@ -275,6 +276,13 @@ impl ResultSet {
                 self.multi.as_mut().unwrap().insert(thing);
             }    
         }
+    }
+    pub fn one(&self) -> Option<Thing> {
+        match self.mode {
+            ResultSetMode::Empty => None,
+            ResultSetMode::Thing => self.thing,
+            ResultSetMode::Multi => self.multi.as_ref().unwrap().min()
+        } 
     }
 }
 impl BitAndAssign<&'_ ResultSet> for ResultSet  {
@@ -354,8 +362,8 @@ enum AddRole {
     ItemSeparator,
 }
 
-fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> RoaringTreemap {
-    let mut add_roles_result_set = RoaringTreemap::new();
+fn parse_add_role(mut add_role: Lexer<AddRole>, database: &Database) -> ResultSet {
+    let mut add_roles_result_set = ResultSet::new();
     while let Some(token) = add_role.next() {
         match token {
             AddRole::Role => {
@@ -392,15 +400,17 @@ enum AddPosit {
     ItemSeparator,
 }
 
-fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> RoaringTreemap {
-    let mut add_posit_result_set = RoaringTreemap::new();
+fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> ResultSet {
+    let mut add_posit_result_set = ResultSet::new();
     while let Some(token) = add_posit.next() {
         match token {
             AddPosit::Posit => {
                 let posit_enclosure = Regex::new(r"\[|\]").unwrap();
                 let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
-                let posit_thing = parse_posit(&posit, database, variables, strips);
-                add_posit_result_set.insert(posit_thing);          
+                match parse_posit(&posit, database, variables, strips) {
+                    Some(posit_thing) => add_posit_result_set.insert(posit_thing), 
+                    None => ()
+                }    
             },
             AddPosit::ItemSeparator => (), 
             AddPosit::StartPosit => (),
@@ -414,7 +424,15 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
     
 }
 
-fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Thing {
+// this function will provide "look-alike" data types
+fn parse_data_type(value: &str, time: &str) -> (&'static str, &'static str) {
+    if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
+        return (String::DATA_TYPE, NaiveDate::DATA_TYPE)
+    }
+    ("Unknown", "Unknown")
+}
+
+fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Option<Thing> {
     println!("Parsing posit: {}", posit);
     let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
     let captures = component_regex.captures(posit).unwrap();
@@ -422,16 +440,15 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     let appearance_set = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
     let value = captures.get(2).unwrap().as_str();
     let time = captures.get(3).unwrap().as_str();
-    // TODO: introduce a new function that determines the data type (for "look-alike" datatypes)
-    // determine type of time (TODO)
-    let naive_date = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
-    // determine type of value (TODO)
-    if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
-        let string_value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
-        let posit = database.create_posit(appearance_set, string_value, naive_date);
-        return posit.posit()
+    match parse_data_type(value, time) {
+        (String::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+            let value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
+            let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+            let posit = database.create_posit(appearance_set, value, time);
+            return Some(posit.posit())
+        }
+        (_, _) => None
     }
-    0
 }
 
 #[derive(Logos, Debug, PartialEq)]
@@ -490,12 +507,15 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
         '+' => { 
             // println!("\tGenerate identity"); 
             let t = database.thing_generator().lock().unwrap().generate();
-            variables.insert(thing_or_variable.to_string(), t);
+            let mut result_set = ResultSet::new();
+            result_set.insert(t);
+            variables.insert(thing_or_variable.to_string(), result_set);
             Some(t)
         },
         '$' => { 
             // println!("\tFetch identity"); 
-            let t = *variables.get(thing_or_variable).unwrap();
+            let result_set = variables.get(thing_or_variable).unwrap();
+            let t = result_set.one().unwrap();
             Some(t)
         },
         _ => None
@@ -506,8 +526,8 @@ fn parse_appearance(appearance: &str, database: &Database, variables: &mut Varia
 }
 
 // search functions in order to find posits matching certain circumstances
-pub fn posits_involving_thing(database: &Database, thing: Thing) -> RoaringTreemap {
-    let mut result_set = RoaringTreemap::new();
+pub fn posits_involving_thing(database: &Database, thing: Thing) -> ResultSet {
+    let mut result_set = ResultSet::new();
     for appearance in database
         .thing_to_appearance_lookup
         .lock()
