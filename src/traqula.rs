@@ -1,14 +1,13 @@
 
 use regex::{Regex};
 use std::sync::Arc;
-use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher, DataType};
+use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher, DataType, Decimal};
 use logos::{Logos, Lexer};
 use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
-use roaring::treemap::IntoIter;
 use std::ops::{BitAndAssign, BitOrAssign, SubAssign, BitXorAssign};
 
 type Variables = HashMap<String, ResultSet, OtherHasher>;
@@ -426,10 +425,20 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
 
 // this function will provide "look-alike" data types
 fn parse_data_type(value: &str, time: &str) -> (&'static str, &'static str) {
+    let mut value_type = "Unknown";
+    let mut time_type = "Unknown";
     if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
-        return (String::DATA_TYPE, NaiveDate::DATA_TYPE)
+        value_type = String::DATA_TYPE;
     }
-    ("Unknown", "Unknown")
+    else if value.parse::<i64>().is_ok() {
+        value_type = i64::DATA_TYPE;
+    }
+    else if Decimal::from_str(value).is_some() {
+        value_type = Decimal::DATA_TYPE;
+    }
+    time_type = NaiveDate::DATA_TYPE;
+    println!("data type: {} time type: {}", value_type, time_type);
+    (value_type, time_type)
 }
 
 fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Option<Thing> {
@@ -443,6 +452,18 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     match parse_data_type(value, time) {
         (String::DATA_TYPE, NaiveDate::DATA_TYPE) => {
             let value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
+            let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+            let posit = database.create_posit(appearance_set, value, time);
+            return Some(posit.posit())
+        }, 
+        (i64::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+            let value = value.parse::<i64>().unwrap();
+            let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+            let posit = database.create_posit(appearance_set, value, time);
+            return Some(posit.posit())
+        }, 
+        (Decimal::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+            let value = Decimal::from_str(value).unwrap();
             let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
             let posit = database.create_posit(appearance_set, value, time);
             return Some(posit.posit())

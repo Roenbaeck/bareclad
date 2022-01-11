@@ -27,6 +27,8 @@ use rusqlite::{Connection};
 
 // used for timestamps in the database
 use chrono::{DateTime, Utc, NaiveDate};
+// used for decimal numbers
+use bigdecimal::BigDecimal;
 // used when parsing a string to a DateTime<Utc>
 use std::str::FromStr;
 // used to print constructs
@@ -574,6 +576,46 @@ impl DataType for i64 {
     const DATA_TYPE: &'static str = "i64";
     fn convert(value: &ValueRef) -> Self::TargetType {
         value.as_i64().unwrap()
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, PartialOrd, Ord)]
+pub struct Decimal {
+    decimal: BigDecimal
+}
+impl Decimal {
+    pub fn from_str(s: &str) -> Option<Decimal> {
+        match BigDecimal::from_str(s) {
+            Ok(decimal) => Some(Decimal { decimal }),
+            _ => None
+        }
+    }
+}
+impl DataType for Decimal {
+    type TargetType = Decimal;
+    const UID: u8 = 6;
+    const DATA_TYPE: &'static str = "Decimal";
+    fn convert(value: &ValueRef) -> Self::TargetType {
+        Decimal {
+            decimal: BigDecimal::from_str(value.as_str().unwrap()).unwrap()
+        }
+    }
+}
+impl fmt::Display for Decimal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.decimal)
+    }
+}
+impl FromSql for Decimal {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        rusqlite::Result::Ok(Decimal {
+            decimal: BigDecimal::from_str(value.as_str().unwrap()).unwrap()
+        })
+    }
+}
+impl ToSql for Decimal {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.decimal.to_string()))
     }
 }
 

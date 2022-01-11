@@ -1,6 +1,6 @@
 // used for persistence
 use rusqlite::{params, Connection, Error, Statement};
-use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing, DataType, Certainty};
+use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing, DataType, Certainty, Decimal};
 use std::sync::{Arc};
 use chrono::{DateTime, Utc, NaiveDate};
 
@@ -539,7 +539,7 @@ impl<'db> Persistor<'db> {
             // the magical macro that generates all the boilerplate stuff
             generate_match!(
                 match ((value_type.as_str(), time_type.as_str()))
-                    from (String, i64, Certainty, NaiveDate, DateTime::<Utc>)
+                    from (String, i64, Certainty, NaiveDate, DateTime::<Utc>, Decimal)
                     in row
                     with thing, kept_appearance_set
                     into db
