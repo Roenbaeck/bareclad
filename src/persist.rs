@@ -355,6 +355,7 @@ impl<'db> Persistor<'db> {
                 appearance_set,
             ).unwrap());
 
+            // MAINTENANCE: The section below needs to be extended when new data types are added
             match (value_type.as_str(), time_type.as_str()) {
                 ("String", "NaiveDate") => {
                     db.keep_posit(

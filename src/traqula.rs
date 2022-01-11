@@ -427,6 +427,7 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
 fn parse_data_type(value: &str, time: &str) -> (&'static str, &'static str) {
     let mut value_type = "Unknown";
     let mut time_type = "Unknown";
+    // MAINTENANCE: The section below needs to be extended when new data types are added
     if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
         value_type = String::DATA_TYPE;
     }
@@ -449,6 +450,7 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     let appearance_set = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
     let value = captures.get(2).unwrap().as_str();
     let time = captures.get(3).unwrap().as_str();
+    // MAINTENANCE: The section below needs to be extended when new data types are added
     match parse_data_type(value, time) {
         (String::DATA_TYPE, NaiveDate::DATA_TYPE) => {
             let value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
