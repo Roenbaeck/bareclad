@@ -22,13 +22,14 @@ use std::fmt::{self};
 use std::ops;
 
 // used for persistence
-use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
+use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef};
 use rusqlite::{Connection};
 
 // used for timestamps in the database
 use chrono::{DateTime, Utc, NaiveDate};
 // used for decimal numbers
 use bigdecimal::BigDecimal;
+
 // used when parsing a string to a DateTime<Utc>
 use std::str::FromStr;
 // used to print constructs
@@ -615,7 +616,9 @@ impl FromSql for Decimal {
 }
 impl ToSql for Decimal {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        Ok(ToSqlOutput::from(self.decimal.to_string()))
+        let v = Value::Text(self.decimal.to_string());
+        let output = ToSqlOutput::Owned(v);
+        Ok(output)
     }
 }
 

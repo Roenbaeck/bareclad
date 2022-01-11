@@ -4,188 +4,6 @@ use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing, 
 use std::sync::{Arc};
 use chrono::{DateTime, Utc, NaiveDate};
 
-// Macro courtsey of Chayim Friedman
-// https://stackoverflow.com/q/70390836/1407530
-macro_rules! generate_match {
-    // First, we generate a table of permutations.
-    // Suppose we have the tuple (String, usize, ()).
-    // The table we generate will be the following:
-    // [
-    //     [ String, usize,  ()     ]
-    //     [ usize,  (),     String ]
-    //     [ (),     String, usize  ]
-    // ]
-
-    // Empty case
-    { @generate_permutations_table
-        $row:ident
-        $thing:ident
-        $appearance_set:ident
-        $keeper:ident
-        match ($e:expr)
-        table = [ $($table:tt)* ]
-        rest = [ ]
-        transformed = [ $($transformed:ty,)* ]
-    } => {
-        generate_match! { @permutate_entry
-            $row
-            $thing
-            $appearance_set
-            $keeper
-            match ($e) { }
-            table = [ $($table)* ]
-        }
-    };
-    { @generate_permutations_table
-        $row:ident
-        $thing:ident
-        $appearance_set:ident
-        $keeper:ident
-        match ($e:expr)
-        table = [ $($table:tt)* ]
-        rest = [ $current:ty, $($rest:ty,)* ]
-        transformed = [ $($transformed:ty,)* ]
-    } => {
-        generate_match! { @generate_permutations_table
-            $row
-            $thing
-            $appearance_set
-            $keeper
-            match ($e)
-            table = [
-                $($table)*
-                [ $current, $($rest,)* $($transformed,)* ]
-            ]
-            rest = [ $($rest,)* ]
-            transformed = [ $($transformed,)* $current, ]
-        }
-    };
-
-    // For each entry in the table, we generate all combinations of the first type with the others.
-    // For example, for the entry [ String, usize, () ] we'll generate the following permutations:
-    // [
-    //     (String, usize)
-    //     (String, ())
-    // ]
-
-    // Empty case
-    { @permutate_entry
-        $row:ident
-        $thing:ident
-        $appearance_set:ident
-        $keeper:ident
-        match ($e:expr) { $($match_tt:tt)* }
-        table = [ ]
-    } => {
-        match $e {
-            $($match_tt)*
-            _ => {}
-        }
-    };
-    { @permutate_entry
-        $row:ident
-        $thing:ident
-        $appearance_set:ident
-        $keeper:ident
-        match ($e:expr) { $($match_tt:tt)* }
-        table = [
-            [ $current:ty, $($others:ty,)* ]
-            $($table:tt)*
-        ]
-    } => {
-        generate_match! { @generate_arm
-            $row
-            $thing
-            $appearance_set
-            $keeper
-            match ($e) { $($match_tt)* }
-            table = [ $($table)* ]
-            current = [ $current ]
-            others = [ $($others,)* ]
-        }
-    };
-
-    // Finally, We generate `match` arms from each pair.
-    // For example, for the pair (String, usize):
-    //     ("String", "usize") => {
-    //         let value = GenericStruct {
-    //             value: <String as DataType>::convert(&row.get_ref_unwrap(0)),
-    //             time: <usize as DataType>::convert(&row.get_ref_unwrap(2)),
-    //         };
-    //         // Process `value...`
-    //     }
-
-    // Empty case: permutate the next table entry.
-    { @generate_arm
-        $row:ident
-        $thing:ident
-        $appearance_set:ident
-        $keeper:ident
-        match ($e:expr) { $($match_tt:tt)* }
-        table = [ $($table:tt)* ]
-        current = [ $current:ty ]
-        others = [ ]
-    } => {
-        generate_match! { @permutate_entry
-            $row
-            $thing
-            $appearance_set
-            $keeper
-            match ($e) { $($match_tt)* }
-            table = [ $($table)* ]
-        }
-    };
-    { @generate_arm
-        $row:ident
-        $thing:ident
-        $appearance_set:ident
-        $keeper:ident
-        match ($e:expr) { $($match_tt:tt)* }
-        table = [ $($table:tt)* ]
-        current = [ $current:ty ]
-        others = [ $first_other:ty, $($others:ty,)* ]
-    } => {
-        generate_match! { @generate_arm
-            $row
-            $thing
-            $appearance_set
-            $keeper
-            match ($e) {
-                $($match_tt)*
-                (stringify!($current), stringify!($first_other)) => {
-                    $keeper.keep_posit(
-                        Posit::new(
-                            $thing,
-                            $appearance_set,
-                            <$current as DataType>::convert(&$row.get_ref_unwrap(2)),
-                            <$first_other as DataType>::convert(&$row.get_ref_unwrap(4))
-                        )
-                    );
-                }
-            }
-            table = [ $($table)* ]
-            current = [ $current ]
-            others = [ $($others,)* ]
-        }
-    };
-
-    // Entry
-    (
-        match ($e:expr) from ($($ty:ty),+) in $row:ident with $thing:ident, $appearance_set:ident into $keeper:ident
-    ) => {
-        generate_match! { @generate_permutations_table
-            $row
-            $thing
-            $appearance_set
-            $keeper
-            match ($e)
-            table = [ ]
-            rest = [ $($ty,)+ ]
-            transformed = [ ]
-        }
-    };
-}
-
 // ------------- Persistence -------------
 pub struct Persistor<'db> {
     pub db: &'db Connection,
@@ -217,7 +35,7 @@ impl<'db> Persistor<'db> {
                 constraint unique_and_referenceable_Thing_Identity primary key (
                     Thing_Identity
                 )
-            );-- STRICT;
+            ) STRICT;
             create table if not exists Role (
                 Role_Identity integer not null,
                 Role text not null,
@@ -231,7 +49,7 @@ impl<'db> Persistor<'db> {
                 constraint unique_Role unique (
                     Role
                 )
-            );-- STRICT;
+            ) STRICT;
             create table if not exists DataType (
                 DataType_Identity integer not null,
                 DataType text not null,
@@ -241,7 +59,7 @@ impl<'db> Persistor<'db> {
                 constraint unique_DataType unique (
                     DataType
                 )
-            );-- STRICT;
+            ) STRICT;
             create table if not exists Posit (
                 Posit_Identity integer not null,
                 AppearanceSet text not null,
@@ -266,7 +84,7 @@ impl<'db> Persistor<'db> {
                     AppearingValue,
                     AppearanceTime
                 )
-            );-- STRICT;
+            ) STRICT;
             ",
             )
             .unwrap();
@@ -536,14 +354,40 @@ impl<'db> Persistor<'db> {
             let (kept_appearance_set, _) = db.keep_appearance_set(AppearanceSet::new(
                 appearance_set,
             ).unwrap());
-            // the magical macro that generates all the boilerplate stuff
-            generate_match!(
-                match ((value_type.as_str(), time_type.as_str()))
-                    from (String, i64, Certainty, NaiveDate, DateTime::<Utc>, Decimal)
-                    in row
-                    with thing, kept_appearance_set
-                    into db
-            );
+
+            match (value_type.as_str(), time_type.as_str()) {
+                ("String", "NaiveDate") => {
+                    db.keep_posit(
+                        Posit::new(
+                            thing,
+                            kept_appearance_set,
+                            <String as DataType>::convert(&row.get_ref_unwrap(2)),
+                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(4))
+                        )
+                    );
+                }, 
+                ("i64", "NaiveDate") => {
+                    db.keep_posit(
+                        Posit::new(
+                            thing,
+                            kept_appearance_set,
+                            <i64 as DataType>::convert(&row.get_ref_unwrap(2)),
+                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(4))
+                        )
+                    );
+                }, 
+                ("Decimal", "NaiveDate") => {
+                    db.keep_posit(
+                        Posit::new(
+                            thing,
+                            kept_appearance_set,
+                            <Decimal as DataType>::convert(&row.get_ref_unwrap(2)),
+                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(4))
+                        )
+                    );
+                }, 
+                (_, _) => ()
+            }
         }
     }
 }
