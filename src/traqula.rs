@@ -1,5 +1,6 @@
 
 use regex::{Regex};
+use lazy_static::lazy_static;
 use std::sync::Arc;
 use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
 use crate::datatype::{DataType, Decimal, JSON};
@@ -405,8 +406,10 @@ fn parse_add_posit(mut add_posit: Lexer<AddPosit>, database: &Database, variable
     while let Some(token) = add_posit.next() {
         match token {
             AddPosit::Posit => {
-                let posit_enclosure = Regex::new(r"\[|\]").unwrap();
-                let posit = posit_enclosure.replace_all(add_posit.slice().trim(), "");
+                lazy_static! {
+                    static ref RE_POSIT_ENCLOSURE: Regex = Regex::new(r"\[|\]").unwrap();
+                }
+                let posit = RE_POSIT_ENCLOSURE.replace_all(add_posit.slice().trim(), "");
                 match parse_posit(&posit, database, variables, strips) {
                     Some(posit_thing) => add_posit_result_set.insert(posit_thing), 
                     None => ()
@@ -446,8 +449,10 @@ fn parse_value_type(value: &str) -> &'static str {
 }
 fn parse_time_type(time: &str) -> &'static str {
     // MAINTENANCE: The section below needs to be extended when new data types are added
-    let r = Regex::new(r#"[0-9]{4}-[0-2][0-9]-[0-3][0-9]"#).unwrap();
-    if r.is_match(time) {
+    lazy_static! {
+        static ref RE_NAIVE_DATE: Regex = Regex::new(r#"'[0-9]{4}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
+    }
+    if RE_NAIVE_DATE.is_match(time) {
         return NaiveDate::DATA_TYPE;
     }
     "Unknown"
@@ -465,12 +470,16 @@ fn parse_decimal(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
 }
 fn parse_json(value: &str, strips: &Vec<String>) -> JSON {
-    let mut pattern = "".to_owned();
-    pattern.push(Engine::STRIPMARK);
-    pattern.push_str(r"\d+");
-    let regex = Regex::new(&pattern).unwrap();
+    lazy_static! {
+        static ref RE_STRIPMARKED: Regex = {
+            let mut pattern = "".to_owned();
+            pattern.push(Engine::STRIPMARK);
+            pattern.push_str(r"\d+");
+            Regex::new(&pattern).unwrap()
+        };
+    }
     let mut v = String::from(value);
-    for m in regex.find_iter(value) {
+    for m in RE_STRIPMARKED.find_iter(value) {
         let strip = m.as_str().replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1;
         v = v.replace(m.as_str(), &("\"".to_owned() + &strips[strip] + "\""));
     }
@@ -484,8 +493,10 @@ fn parse_naive_date(time: &str) -> NaiveDate {
 
 fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Option<Thing> {
     println!("Parsing posit: {}", posit);
-    let component_regex = Regex::new(r#"\{([^\}]+)\},(.*),'(.*)'"#).unwrap();
-    let captures = component_regex.captures(posit).unwrap();
+    lazy_static! {
+        static ref RE_POSIT_COMPONENTS: Regex = Regex::new(r#"\{([^\}]+)\},(.*),('.*')"#).unwrap();
+    }
+    let captures = RE_POSIT_COMPONENTS.captures(posit).unwrap();
     let appearance_set = captures.get(1).unwrap().as_str();
     let appearance_set = parse_appearance_set(LexicalAppearanceSet::lexer(&appearance_set), database, variables);
     let value = captures.get(2).unwrap().as_str();
@@ -523,7 +534,7 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
             Some(posit.posit())
         },
         (v, t) => {
-            println!(">>> Unhandled combination for value type: {}, time type: {}", v, t);
+            println!(">>> Unhandled combination for value type: {} ({}), time type: {} ({})", v, value, t, time);
             None
         }
     }
@@ -547,8 +558,10 @@ fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, databas
     while let Some(token) = appearance_set.next() {
         match token {
             LexicalAppearanceSet::Appearance => {
-                let appearance_enclosure = Regex::new(r"\(|\)").unwrap();
-                let appearance = appearance_enclosure.replace_all(appearance_set.slice().trim(), "");
+                lazy_static! {
+                    static ref RE_APPEARANCE_ENCLOSURE: Regex = Regex::new(r"\(|\)").unwrap();
+                }
+                let appearance = RE_APPEARANCE_ENCLOSURE.replace_all(appearance_set.slice().trim(), "");
                 // println!("\tParsing appearance: {}", appearance);
                 let appearance = parse_appearance(&appearance, database, variables);
                 appearances.push(appearance);
@@ -564,8 +577,10 @@ fn parse_appearance_set(mut appearance_set: Lexer<LexicalAppearanceSet>, databas
 }
 
 fn parse_appearance(appearance: &str, database: &Database, variables: &mut Variables) -> Arc<Appearance> {
-    let component_regex = Regex::new(r#"([^,]+),(.+)"#).unwrap();
-    let captures = component_regex.captures(appearance).unwrap();
+    lazy_static! {
+        static ref RE_APPEARANCE_COMPONENTS: Regex = Regex::new(r#"([^,]+),(.+)"#).unwrap();
+    }
+    let captures = RE_APPEARANCE_COMPONENTS.captures(appearance).unwrap();
     let qualified_thing = captures.get(1).unwrap().as_str();
     let role_name = captures.get(2).unwrap().as_str();
     let (qualifier, thing_or_variable) = if qualified_thing.parse::<Thing>().is_ok() {

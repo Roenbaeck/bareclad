@@ -30,6 +30,8 @@ rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] 
 bigdecimal = "0.3.0"
 # for JSON data type
 jsondata = "0.8.0"
+# so regular expressions don't have to be recompiled 
+lazy_static = "1.4.0"
 
 # ---- THESE MAY BE USED LATER -----
 #jql = "3.0.4"
