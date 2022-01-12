@@ -1,9 +1,8 @@
 // used for persistence
 use rusqlite::{params, Connection, Error, Statement};
 use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing};
-use crate::datatype::{DataType, Certainty, Decimal};
-use std::sync::{Arc};
-use chrono::{DateTime, Utc, NaiveDate};
+use crate::datatype::{DataType, Decimal, JSON};
+use chrono::{NaiveDate};
 
 // ------------- Persistence -------------
 pub struct Persistor<'db> {
@@ -358,7 +357,7 @@ impl<'db> Persistor<'db> {
 
             // MAINTENANCE: The section below needs to be extended when new data types are added
             match (value_type.as_str(), time_type.as_str()) {
-                ("String", "NaiveDate") => {
+                (String::DATA_TYPE, NaiveDate::DATA_TYPE) => {
                     db.keep_posit(
                         Posit::new(
                             thing,
@@ -368,7 +367,7 @@ impl<'db> Persistor<'db> {
                         )
                     );
                 }, 
-                ("i64", "NaiveDate") => {
+                (i64::DATA_TYPE, NaiveDate::DATA_TYPE) => {
                     db.keep_posit(
                         Posit::new(
                             thing,
@@ -378,12 +377,32 @@ impl<'db> Persistor<'db> {
                         )
                     );
                 }, 
-                ("Decimal", "NaiveDate") => {
+                (Decimal::DATA_TYPE, NaiveDate::DATA_TYPE) => {
                     db.keep_posit(
                         Posit::new(
                             thing,
                             kept_appearance_set,
                             <Decimal as DataType>::convert(&row.get_ref_unwrap(2)),
+                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(4))
+                        )
+                    );
+                }, 
+                (NaiveDate::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+                    db.keep_posit(
+                        Posit::new(
+                            thing,
+                            kept_appearance_set,
+                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(2)),
+                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(4))
+                        )
+                    );
+                }, 
+                (JSON::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+                    db.keep_posit(
+                        Posit::new(
+                            thing,
+                            kept_appearance_set,
+                            <JSON as DataType>::convert(&row.get_ref_unwrap(2)),
                             <NaiveDate as DataType>::convert(&row.get_ref_unwrap(4))
                         )
                     );

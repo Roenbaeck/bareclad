@@ -133,6 +133,7 @@ impl ops::Deref for JSON {
     }
 }
 /* 
+// all our values are immutable
 impl ops::DerefMut for JSON {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0

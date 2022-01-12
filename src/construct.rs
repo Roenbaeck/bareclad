@@ -19,10 +19,7 @@ use seahash::SeaHasher;
 use std::cmp::Ordering;
 
 // used to print out readable forms of a construct
-use std::fmt::{self};
-
-// the database holds a connection to the persistor
-use rusqlite::{Connection};
+use std::fmt;
 
 // our own stuff that we need
 use crate::persist::Persistor;
