@@ -50,7 +50,8 @@ use std::fs::{remove_file, read_to_string};
 use std::collections::{HashMap};
 
 use bareclad::construct::Database;
-use bareclad::traqula::{Engine, ResultSet};
+use bareclad::traqula::Engine;
+use bareclad::persist::Persistor;
 use rusqlite::{Connection};
 
 fn main() {
@@ -73,12 +74,13 @@ fn main() {
         "The path to the database file is '{}'.",
         sqlite.path().unwrap().display()
     );
-    let bareclad = Database::new(&sqlite);
-    let traqula = Engine::new(&bareclad);
+    let persistor = Persistor::new(&sqlite);
+    let bareclad = Database::new(persistor);
+    let engine = Engine::new(&bareclad);
     let traqula_file_to_run_on_startup = settings_lookup.get("traqula_file_to_run_on_startup").unwrap();
     println!("Traqula file to run on startup: {}", traqula_file_to_run_on_startup);
     let traqula_content = read_to_string(traqula_file_to_run_on_startup).unwrap();
-    traqula.execute(&traqula_content);
+    engine.execute(&traqula_content);
     println!("Total number of kept roles: {}", bareclad.role_keeper().lock().unwrap().len());
     println!("Total number of kept appearances: {}", bareclad.appearance_keeper().lock().unwrap().len());
     println!("Total number of kept appearance sets: {}", bareclad.appearance_set_keeper().lock().unwrap().len());

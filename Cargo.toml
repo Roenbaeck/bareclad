@@ -28,6 +28,8 @@ seahash = "4.1.0"
 rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
 # for decimal numbers of arbitrary size
 bigdecimal = "0.3.0"
+# for JSON data type
+jsondata = "0.8.0"
 
 # ---- THESE MAY BE USED LATER -----
 #jql = "3.0.4"

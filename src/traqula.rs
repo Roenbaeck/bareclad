@@ -1,7 +1,8 @@
 
 use regex::{Regex};
 use std::sync::Arc;
-use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher, DataType, Decimal};
+use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
+use crate::datatype::{DataType, Certainty, Decimal};
 use logos::{Logos, Lexer};
 use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
@@ -386,7 +387,7 @@ enum AddPosit {
     #[regex(r"[\t\n\r\f]+", logos::skip)] 
     Error,
 
-    #[regex(r"\{[^\}]+\},[^,]+,'[^']+'")]
+    #[regex(r"\{[^\}]+\},([^,]+|\{[^\}]*\}),'[^']+'")]
     Posit,
 
     #[token("[")]
@@ -430,6 +431,9 @@ fn parse_data_type(value: &str, time: &str) -> (&'static str, &'static str) {
     // MAINTENANCE: The section below needs to be extended when new data types are added
     if value.chars().nth(0).unwrap() == Engine::STRIPMARK {
         value_type = String::DATA_TYPE;
+    }
+    if value.chars().nth(0).unwrap() == '{' {
+        value_type = "JSON"; // TODO
     }
     else if value.parse::<i64>().is_ok() {
         value_type = i64::DATA_TYPE;
