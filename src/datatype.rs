@@ -10,18 +10,14 @@ use jsondata::Json;
 
 // used when parsing a string to a DateTime<Utc>
 use std::str::FromStr;
-
 // used to print out readable forms of a data type
-use std::fmt::Display;
-use std::fmt::{self};
-
+use std::fmt;
 // used to indicate that data types need to be hashable
-use std::hash::Hash;
-
+use std::hash::{Hash, Hasher};
 // used to overload common operations for datatypes
 use std::ops;
 
-pub trait DataType: Display + Eq + Hash + Send + Sync + ToSql + FromSql {
+pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql + FromSql {
     // static stuff which needs to be implemented downstream
     type TargetType;
     const UID: u8;
@@ -79,12 +75,71 @@ impl DataType for i64 {
         value.as_i64().unwrap()
     }
 }
+impl DataType for Decimal {
+    type TargetType = Decimal;
+    const UID: u8 = 6;
+    const DATA_TYPE: &'static str = "Decimal";
+    fn convert(value: &ValueRef) -> Self::TargetType {
+        Decimal (BigDecimal::from_str(value.as_str().unwrap()).unwrap())
+    }
+}
+impl DataType for JSON {
+    type TargetType = JSON;
+    const UID: u8 = 7;
+    const DATA_TYPE: &'static str = "JSON";
+    fn convert(value: &ValueRef) -> Self::TargetType {
+        JSON (Json::from_str(value.as_str().unwrap()).unwrap())
+    }
+}
 
+// Special types below
+#[derive(Eq, PartialEq, PartialOrd, Ord)]
+pub struct JSON (Json);
+
+impl JSON {
+    pub fn from_str(s: &str) -> Option<JSON> {
+        match Json::from_str(s) {
+            Ok(json) => Some(JSON (json)),
+            _ => None
+        }
+    }
+}
+impl ToSql for JSON {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        let v = Value::Text(self.0.to_string());
+        let output = ToSqlOutput::Owned(v);
+        Ok(output)
+    }
+}
+impl FromSql for JSON {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        rusqlite::Result::Ok(JSON (Json::from_str(value.as_str().unwrap()).unwrap()))
+    }
+}
+impl Hash for JSON {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.to_string().hash(state);
+    }
+}
+impl fmt::Display for JSON {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl ops::Deref for JSON {
+    type Target = Json;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 /* 
-impl DataType for Json {
-
+impl ops::DerefMut for JSON {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 */
+
 
 /*
 Certainty is a subjective measure that can be held against a posit.
@@ -187,44 +242,41 @@ impl FromSql for Certainty {
 }
 
 #[derive(Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct Decimal {
-    decimal: BigDecimal
-}
+pub struct Decimal (BigDecimal);
+
 impl Decimal {
     pub fn from_str(s: &str) -> Option<Decimal> {
         match BigDecimal::from_str(s) {
-            Ok(decimal) => Some(Decimal { decimal }),
+            Ok(decimal) => Some(Decimal (decimal)),
             _ => None
-        }
-    }
-}
-impl DataType for Decimal {
-    type TargetType = Decimal;
-    const UID: u8 = 6;
-    const DATA_TYPE: &'static str = "Decimal";
-    fn convert(value: &ValueRef) -> Self::TargetType {
-        Decimal {
-            decimal: BigDecimal::from_str(value.as_str().unwrap()).unwrap()
         }
     }
 }
 impl fmt::Display for Decimal {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.decimal)
+        write!(f, "{}", self.0)
     }
 }
 impl FromSql for Decimal {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        rusqlite::Result::Ok(Decimal {
-            decimal: BigDecimal::from_str(value.as_str().unwrap()).unwrap()
-        })
+        rusqlite::Result::Ok(Decimal (BigDecimal::from_str(value.as_str().unwrap()).unwrap()))
     }
 }
 impl ToSql for Decimal {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let v = Value::Text(self.decimal.to_string());
+        let v = Value::Text(self.0.to_string());
         let output = ToSqlOutput::Owned(v);
         Ok(output)
     }
 }
-
+impl ops::Deref for Decimal {
+    type Target = BigDecimal;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl ops::DerefMut for Decimal {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}

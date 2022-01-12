@@ -2,7 +2,7 @@
 use regex::{Regex};
 use std::sync::Arc;
 use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
-use crate::datatype::{DataType, Certainty, Decimal};
+use crate::datatype::{DataType, Certainty, Decimal, JSON};
 use logos::{Logos, Lexer};
 use std::collections::{HashMap, HashSet};
 use chrono::NaiveDate;
@@ -433,7 +433,7 @@ fn parse_data_type(value: &str, time: &str) -> (&'static str, &'static str) {
         value_type = String::DATA_TYPE;
     }
     if value.chars().nth(0).unwrap() == '{' {
-        value_type = "JSON"; // TODO
+        value_type = JSON::DATA_TYPE; 
     }
     else if value.parse::<i64>().is_ok() {
         value_type = i64::DATA_TYPE;
@@ -444,6 +444,36 @@ fn parse_data_type(value: &str, time: &str) -> (&'static str, &'static str) {
     time_type = NaiveDate::DATA_TYPE;
     println!("data type: {} time type: {}", value_type, time_type);
     (value_type, time_type)
+}
+
+// value parsers
+fn parse_string(value: &str, strips: &Vec<String>) -> String {
+    let strip = value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1;
+    strips[strip].clone()
+}
+fn parse_i64(value: &str) -> i64 {
+    value.parse::<i64>().unwrap()
+}
+fn parse_decimal(value: &str) -> Decimal {
+    Decimal::from_str(value).unwrap()
+}
+fn parse_json(value: &str, strips: &Vec<String>) -> JSON {
+    let mut pattern = "".to_owned();
+    pattern.push(Engine::STRIPMARK);
+    pattern.push_str(r"\d+");
+    let regex = Regex::new(&pattern).unwrap();
+    let mut v = String::from(value);
+    for m in regex.find_iter(value) {
+        let strip = m.as_str().replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1;
+        v = v.replace(m.as_str(), &("\"".to_owned() + &strips[strip] + "\""));
+        println!("match: {}, value: {}, strip: {}", m.as_str(), v, strip);
+    }
+    JSON::from_str(&v).unwrap()
+}
+
+// time parsers
+fn parse_naive_date(time: &str) -> NaiveDate {
+    NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap()
 }
 
 fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Option<Thing> {
@@ -457,23 +487,29 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     // MAINTENANCE: The section below needs to be extended when new data types are added
     match parse_data_type(value, time) {
         (String::DATA_TYPE, NaiveDate::DATA_TYPE) => {
-            let value = strips[value.replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1].clone();
-            let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+            let value = parse_string(value, strips);
+            let time = parse_naive_date(time);
             let posit = database.create_posit(appearance_set, value, time);
-            return Some(posit.posit())
+            Some(posit.posit())
         }, 
         (i64::DATA_TYPE, NaiveDate::DATA_TYPE) => {
-            let value = value.parse::<i64>().unwrap();
-            let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+            let value = parse_i64(value);
+            let time = parse_naive_date(time);
             let posit = database.create_posit(appearance_set, value, time);
-            return Some(posit.posit())
+            Some(posit.posit())
         }, 
         (Decimal::DATA_TYPE, NaiveDate::DATA_TYPE) => {
-            let value = Decimal::from_str(value).unwrap();
-            let time = NaiveDate::parse_from_str(time, "%Y-%m-%d").unwrap();
+            let value = parse_decimal(value);
+            let time = parse_naive_date(time);
             let posit = database.create_posit(appearance_set, value, time);
-            return Some(posit.posit())
-        }
+            Some(posit.posit())
+        }, 
+        (JSON::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+            let value = parse_json(value, strips);
+            let time = parse_naive_date(time);
+            let posit = database.create_posit(appearance_set, value, time);
+            Some(posit.posit())
+        },
         (_, _) => None
     }
 }
