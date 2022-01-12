@@ -11,5 +11,11 @@ Modeling is bottom-up and respects the uncertain and subjecive nature of reality
 
 The database also features the new transitional query language, Traqula, structured as:
 
-SEARCH -> (WHERE) -> (AGGREGATE) -> RETURN.
+`SEARCH -> (WHERE) -> (AGGREGATE) -> RETURN`
 
+## License
+
+This work is dual-licensed under Apache 2.0 and MIT.
+You can choose between one of them if you use this work.
+
+`SPDX-License-Identifier: Apache-2.0 OR MIT`
