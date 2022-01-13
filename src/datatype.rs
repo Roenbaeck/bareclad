@@ -2,7 +2,7 @@
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef};
 
 // used for timestamps in the database
-use chrono::{DateTime, Utc, NaiveDate};
+use chrono::{NaiveDateTime, NaiveDate, Utc};
 // used for decimal numbers
 use bigdecimal::BigDecimal;
 // used for JSON
@@ -48,11 +48,11 @@ impl DataType for String {
         String::from(value.as_str().unwrap())
     }
 }
-impl DataType for DateTime<Utc> {
+impl DataType for NaiveDateTime {
     const UID: u8 = 3;
-    const DATA_TYPE: &'static str = "DateTime::<Utc>";
-    fn convert(value: &ValueRef) -> DateTime<Utc> {
-        DateTime::<Utc>::from_str(value.as_str().unwrap()).unwrap()
+    const DATA_TYPE: &'static str = "NaiveDateTime";
+    fn convert(value: &ValueRef) -> NaiveDateTime {
+        NaiveDateTime::from_str(value.as_str().unwrap()).unwrap()
     }
 }
 impl DataType for NaiveDate {
@@ -271,5 +271,49 @@ impl ops::Deref for Decimal {
 impl ops::DerefMut for Decimal {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+// TODO: We will use a specialized time type instead of the 
+// trait constrained generic
+pub enum TimeType {
+    // Year(u16)
+    // YearMonth(u16,u8)
+    Date(NaiveDate), 
+    DateTime(NaiveDateTime)
+}
+pub struct Time {
+    moment: TimeType
+}
+impl Time {
+    fn new(date: &str) -> Time {
+        // TODO: Add regex to check which type to create
+        let d = NaiveDate::from_str(date);
+        if d.is_ok() {
+            return Time::new_date(d.unwrap())
+        }
+        let d = NaiveDateTime::from_str(date);
+        if d.is_ok() {
+            return Time::new_datetime(d.unwrap())
+        }
+        Time::new_datetime(Utc::now().naive_utc())
+    }
+    fn new_date(d: NaiveDate) -> Time {
+        Time { moment: TimeType::Date(d) }
+    }
+    fn new_datetime(d: NaiveDateTime) -> Time {
+        Time { moment: TimeType::DateTime(d) }
+    }
+}
+impl fmt::Display for Time {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.moment {
+            TimeType::Date(d) => {
+                write!(f, "{}", d)
+            }
+            TimeType::DateTime(d) => {
+                write!(f, "{}", d)
+            }
+        }
     }
 }
