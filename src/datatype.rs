@@ -19,10 +19,9 @@ use std::ops;
 
 pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql + FromSql {
     // static stuff which needs to be implemented downstream
-    type TargetType;
     const UID: u8;
     const DATA_TYPE: &'static str;
-    fn convert(value: &ValueRef) -> Self::TargetType;
+    fn convert(value: &ValueRef) -> Self;
     // instance callable with pre-made implementation
     fn data_type(&self) -> &'static str {
         Self::DATA_TYPE
@@ -34,60 +33,53 @@ pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql + FromSql {
 
 // ------------- Data Types --------------
 impl DataType for Certainty {
-    type TargetType = Certainty;
-    const UID: u8 = 1; // needs to be unique
+    const UID: u8 = 1; 
     const DATA_TYPE: &'static str = "Certainty";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> Certainty {
         Certainty {
             alpha: i8::try_from(value.as_i64().unwrap()).unwrap(),
         }
     }
 }
 impl DataType for String {
-    type TargetType = String;
     const UID: u8 = 2;
     const DATA_TYPE: &'static str = "String";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> String {
         String::from(value.as_str().unwrap())
     }
 }
 impl DataType for DateTime<Utc> {
-    type TargetType = DateTime<Utc>;
     const UID: u8 = 3;
     const DATA_TYPE: &'static str = "DateTime::<Utc>";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> DateTime<Utc> {
         DateTime::<Utc>::from_str(value.as_str().unwrap()).unwrap()
     }
 }
 impl DataType for NaiveDate {
-    type TargetType = NaiveDate;
     const UID: u8 = 4;
     const DATA_TYPE: &'static str = "NaiveDate";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> NaiveDate {
         NaiveDate::from_str(value.as_str().unwrap()).unwrap()
     }
 }
 impl DataType for i64 {
-    type TargetType = i64;
     const UID: u8 = 5;
     const DATA_TYPE: &'static str = "i64";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> i64 {
         value.as_i64().unwrap()
     }
 }
 impl DataType for Decimal {
-    type TargetType = Decimal;
     const UID: u8 = 6;
     const DATA_TYPE: &'static str = "Decimal";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> Decimal {
         Decimal (BigDecimal::from_str(value.as_str().unwrap()).unwrap())
     }
 }
 impl DataType for JSON {
-    type TargetType = JSON;
     const UID: u8 = 7;
     const DATA_TYPE: &'static str = "JSON";
-    fn convert(value: &ValueRef) -> Self::TargetType {
+    fn convert(value: &ValueRef) -> JSON {
         JSON (Json::from_str(value.as_str().unwrap()).unwrap())
     }
 }
