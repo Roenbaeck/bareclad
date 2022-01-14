@@ -23,7 +23,7 @@ use std::fmt;
 
 // our own stuff that we need
 use crate::persist::Persistor;
-use crate::datatype::DataType;
+use crate::datatype::{DataType, Time};
 
 // ------------- Thing -------------
 pub type Thing = u64; 
@@ -282,24 +282,24 @@ impl AppearanceSetKeeper {
 
 // --------------- Posit ----------------
 #[derive(Eq, PartialOrd, Ord, Debug)]
-pub struct Posit<V: DataType, T: DataType + Ord> {
-    posit: Thing, // a posit is also a thing we can "talk" about
+pub struct Posit<V: DataType> {
+    posit: Thing,   // a posit is also a thing we can "talk" about
     appearance_set: Arc<AppearanceSet>,
-    value: V, // imprecise value
-    time: T,  // imprecise time (note that this must be a data type with a natural ordering)
+    value: V,       // in theory any imprecise value
+    time: Time,     // in thoery any imprecise time (note that this must be a data type with a natural ordering)
 }
-impl<V: DataType, T: DataType + Ord> Posit<V, T> {
+impl<V: DataType> Posit<V> {
     pub fn new(
         posit: Thing,
         appearance_set: Arc<AppearanceSet>,
         value: V,
-        time: T,
-    ) -> Posit<V, T> {
+        time: Time,
+    ) -> Posit<V> {
         Self {
             posit,
+            appearance_set,
             value,
             time,
-            appearance_set,
         }
     }
     pub fn posit(&self) -> Thing {
@@ -311,25 +311,25 @@ impl<V: DataType, T: DataType + Ord> Posit<V, T> {
     pub fn value(&self) -> &V {
         &self.value
     }
-    pub fn time(&self) -> &T {
+    pub fn time(&self) -> &Time {
         &self.time
     }
 }
-impl<V: DataType, T: DataType + Ord> PartialEq for Posit<V, T> {
+impl<V: DataType> PartialEq for Posit<V> {
     fn eq(&self, other: &Self) -> bool {
         self.appearance_set == other.appearance_set
             && self.value == other.value
             && self.time == other.time
     }
 }
-impl<V: DataType, T: DataType + Ord> Hash for Posit<V, T> {
+impl<V: DataType> Hash for Posit<V> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.appearance_set.hash(state);
         self.value.hash(state);
         self.time.hash(state);
     }
 }
-impl<V: DataType, T: DataType + Ord> fmt::Display for Posit<V, T> {
+impl<V: DataType> fmt::Display for Posit<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{} [{}, {}, {}]", 
             self.posit,
@@ -341,8 +341,8 @@ impl<V: DataType, T: DataType + Ord> fmt::Display for Posit<V, T> {
 }
 
 // This key needs to be defined in order to store posits in a TypeMap.
-impl<V: 'static + DataType, T: 'static + DataType + Ord> Key for Posit<V, T> {
-    type Value = BiMap<Arc<Posit<V, T>>, Thing>;
+impl<V: 'static + DataType> Key for Posit<V> {
+    type Value = BiMap<Arc<Posit<V>>, Thing>;
 }
 
 pub struct PositKeeper {
@@ -356,15 +356,15 @@ impl PositKeeper {
             length: 0
         }
     }
-    pub fn keep<V: 'static + DataType, T: 'static + DataType + Ord>(
+    pub fn keep<V: 'static + DataType>(
         &mut self,
-        posit: Posit<V, T>,
-    ) -> (Arc<Posit<V, T>>, bool) {
+        posit: Posit<V>,
+    ) -> (Arc<Posit<V>>, bool) {
         // ensure the map can work with this particular type combo
         let map = self
             .kept
-            .entry::<Posit<V, T>>()
-            .or_insert(BiMap::<Arc<Posit<V, T>>, Thing>::new());
+            .entry::<Posit<V>>()
+            .or_insert(BiMap::<Arc<Posit<V>>, Thing>::new());
         let keepsake_thing = posit.posit();
         let keepsake = Arc::new(posit);
         let mut previously_kept = false;
@@ -384,24 +384,24 @@ impl PositKeeper {
             previously_kept,
         )
     }
-    pub fn thing<V: 'static + DataType, T: 'static + DataType + Ord>(
+    pub fn thing<V: 'static + DataType>(
         &mut self,
-        posit: Arc<Posit<V, T>>,
+        posit: Arc<Posit<V>>,
     ) -> Thing {
         let map = self
             .kept
-            .entry::<Posit<V, T>>()
-            .or_insert(BiMap::<Arc<Posit<V, T>>, Thing>::new());
+            .entry::<Posit<V>>()
+            .or_insert(BiMap::<Arc<Posit<V>>, Thing>::new());
         *map.get_by_left(&posit).unwrap()
     }
-    pub fn posit<V: 'static + DataType, T: 'static + DataType + Ord>(
+    pub fn posit<V: 'static + DataType>(
         &mut self,
         thing: Thing,
-    ) -> Arc<Posit<V, T>> {
+    ) -> Arc<Posit<V>> {
         let map = self
             .kept
-            .entry::<Posit<V, T>>()
-            .or_insert(BiMap::<Arc<Posit<V, T>>, Thing>::new());
+            .entry::<Posit<V>>()
+            .or_insert(BiMap::<Arc<Posit<V>>, Thing>::new());
         Arc::clone(map.get_by_right(&thing).unwrap())
     }
     pub fn len(&self) -> usize {
@@ -598,10 +598,10 @@ impl<'db> Database<'db> {
     ) -> (Arc<AppearanceSet>, bool) {
         self.keep_appearance_set(AppearanceSet::new(appearance_set).unwrap())
     }
-    pub fn keep_posit<V: 'static + DataType, T: 'static + DataType + Ord>(
+    pub fn keep_posit<V: 'static + DataType>(
         &self,
-        posit: Posit<V, T>,
-    ) -> (Arc<Posit<V, T>>, bool) {
+        posit: Posit<V>,
+    ) -> (Arc<Posit<V>>, bool) {
         let (kept_posit, previously_kept) = self.posit_keeper.lock().unwrap().keep(posit);
         if !previously_kept {
             self.appearance_set_to_posit_thing_lookup
@@ -611,12 +611,12 @@ impl<'db> Database<'db> {
         }
         (kept_posit, previously_kept)
     }
-    pub fn create_posit<V: 'static + DataType, T: 'static + DataType + Ord>(
+    pub fn create_posit<V: 'static + DataType>(
         &self,
         appearance_set: Arc<AppearanceSet>,
         value: V,
-        time: T,
-    ) -> Arc<Posit<V, T>> {
+        time: Time,
+    ) -> Arc<Posit<V>> {
         let posit_thing = self.thing_generator.lock().unwrap().generate();
         let (kept_posit, previously_kept) =
             self.keep_posit(Posit::new(posit_thing, appearance_set, value, time));
@@ -631,29 +631,5 @@ impl<'db> Database<'db> {
         }
         kept_posit
     }
-    // finally, now that the database exists we can start to make assertions
-    /* 
-    pub fn assert<V: 'static + DataType, T: 'static + DataType + Ord>(
-        &self,
-        asserter: Thing,
-        posit: Arc<Posit<V, T>>,
-        certainty: Certainty,
-        assertion_time: DateTime<Utc>,
-    ) -> Arc<Posit<Certainty, DateTime<Utc>>> {
-        let posit_thing: Thing =
-            self.posit_keeper.lock().unwrap().thing(posit);
-        let asserter_role = self
-            .role_keeper
-            .lock()
-            .unwrap()
-            .get(&"ascertains".to_owned());
-        let posit_role = self.role_keeper.lock().unwrap().get(&"posit".to_owned());
-        let (asserter_appearance, _) = self.create_apperance(asserter, asserter_role);
-        let (posit_appearance, _) = self.create_apperance(posit_thing, posit_role);
-        let (appearance_set, _) =
-            self.create_appearance_set([asserter_appearance, posit_appearance].to_vec());
-        self.create_posit(appearance_set, certainty, assertion_time)
-    }
-    */
 }
 

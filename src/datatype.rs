@@ -1,5 +1,5 @@
 // used for persistence
-use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, Value, ValueRef};
+use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 // used for timestamps in the database
 use chrono::{NaiveDateTime, NaiveDate, Utc};
@@ -17,7 +17,9 @@ use std::hash::{Hash, Hasher};
 // used to overload common operations for datatypes
 use std::ops;
 
-pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql + FromSql {
+use crate::traqula::parse_time;
+
+pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql  {
     // static stuff which needs to be implemented downstream
     const UID: u8;
     const DATA_TYPE: &'static str;
@@ -83,6 +85,13 @@ impl DataType for JSON {
         JSON (Json::from_str(value.as_str().unwrap()).unwrap())
     }
 }
+impl DataType for Time {
+    const UID: u8 = 8;
+    const DATA_TYPE: &'static str = "Time";
+    fn convert(value: &ValueRef) -> Time {
+        parse_time(value.as_str().unwrap())
+    }   
+}
 
 // Special types below
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
@@ -98,9 +107,7 @@ impl JSON {
 }
 impl ToSql for JSON {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let v = Value::Text(self.0.to_string());
-        let output = ToSqlOutput::Owned(v);
-        Ok(output)
+        Ok(ToSqlOutput::from(self.0.to_string()))
     }
 }
 impl FromSql for JSON {
@@ -257,9 +264,7 @@ impl FromSql for Decimal {
 }
 impl ToSql for Decimal {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let v = Value::Text(self.0.to_string());
-        let output = ToSqlOutput::Owned(v);
-        Ok(output)
+        Ok(ToSqlOutput::from(self.0.to_string()))
     }
 }
 impl ops::Deref for Decimal {
@@ -276,38 +281,56 @@ impl ops::DerefMut for Decimal {
 
 // TODO: We will use a specialized time type instead of the 
 // trait constrained generic
+#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
 pub enum TimeType {
-    // Year(u16)
-    // YearMonth(u16,u8)
+    Year(u16),
+    YearMonth(u16,u8),
     Date(NaiveDate), 
     DateTime(NaiveDateTime)
 }
+#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
 pub struct Time {
     moment: TimeType
 }
 impl Time {
-    fn new(date: &str) -> Time {
-        // TODO: Add regex to check which type to create
-        let d = NaiveDate::from_str(date);
-        if d.is_ok() {
-            return Time::new_date(d.unwrap())
-        }
-        let d = NaiveDateTime::from_str(date);
-        if d.is_ok() {
-            return Time::new_datetime(d.unwrap())
-        }
-        Time::new_datetime(Utc::now().naive_utc())
+    pub fn new() -> Time {
+        Time { moment: TimeType::DateTime(Utc::now().naive_utc()) }
     }
-    fn new_date(d: NaiveDate) -> Time {
-        Time { moment: TimeType::Date(d) }
+    // TODO: may panic
+    pub fn new_year_from(d: &str) -> Time {
+        Time { moment: TimeType::Year(d.parse::<u16>().unwrap()) }
     }
-    fn new_datetime(d: NaiveDateTime) -> Time {
-        Time { moment: TimeType::DateTime(d) }
+    pub fn new_year_month_from(d: &str) -> Time {
+        let mut year = String::new();
+        let mut month = String::new();
+        for c in d.chars() {
+            if c != '-' {
+                if year.len() < 4 {
+                    year.push(c);
+                }
+                else {
+                    month.push(c);
+                }
+            }
+        }
+        Time { moment: TimeType::YearMonth(year.parse::<u16>().unwrap(), month.parse::<u8>().unwrap()) }
+    }
+    pub fn new_date_from(d: &str) -> Time {
+        Time { moment: TimeType::Date(NaiveDate::from_str(d).unwrap()) } 
+    }
+    pub fn new_datetime_from(d: &str) -> Time {
+        Time { moment: TimeType::DateTime(NaiveDateTime::from_str(d).unwrap()) } 
     }
 }
 impl fmt::Display for Time {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.moment {
+            TimeType::Year(y) => {
+                write!(f, "{}", y)
+            }
+            TimeType::YearMonth(y, m) => {
+                write!(f, "{}-{}", y, m)
+            }
             TimeType::Date(d) => {
                 write!(f, "{}", d)
             }
@@ -315,5 +338,10 @@ impl fmt::Display for Time {
                 write!(f, "{}", d)
             }
         }
+    }
+}
+impl ToSql for Time {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.to_string()))
     }
 }

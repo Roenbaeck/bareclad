@@ -3,10 +3,10 @@ use regex::{Regex};
 use lazy_static::lazy_static;
 use std::sync::Arc;
 use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
-use crate::datatype::{DataType, Decimal, JSON};
+use crate::datatype::{DataType, Decimal, JSON, Time};
 use logos::{Logos, Lexer};
 use std::collections::{HashMap};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime};
 
 // used for internal result sets
 use roaring::RoaringTreemap;
@@ -437,23 +437,13 @@ fn parse_value_type(value: &str) -> &'static str {
         return JSON::DATA_TYPE; 
     }
     if value.chars().nth(0).unwrap() == '\'' {
-        return parse_time_type(value);
+        return Time::DATA_TYPE;
     }
     if value.parse::<i64>().is_ok() {
         return i64::DATA_TYPE;
     }
     if Decimal::from_str(value).is_some() {
         return Decimal::DATA_TYPE;
-    }
-    "Unknown"
-}
-fn parse_time_type(time: &str) -> &'static str {
-    // MAINTENANCE: The section below needs to be extended when new data types are added
-    lazy_static! {
-        static ref RE_NAIVE_DATE: Regex = Regex::new(r#"'[0-9]{4}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
-    }
-    if RE_NAIVE_DATE.is_match(time) {
-        return NaiveDate::DATA_TYPE;
     }
     "Unknown"
 }
@@ -485,10 +475,17 @@ fn parse_json(value: &str, strips: &Vec<String>) -> JSON {
     }
     JSON::from_str(&v).unwrap()
 }
-
-// time parsers
-fn parse_naive_date(time: &str) -> NaiveDate {
-    NaiveDate::parse_from_str(&time.replace("'", ""), "%Y-%m-%d").unwrap()
+pub fn parse_time(value: &str) -> Time {
+    let stripped = value.replace("'", "");
+    let time = "'".to_owned() + &stripped + "'";
+    // MAINTENANCE: The section below needs to be extended when new data types are added
+    lazy_static! {
+        static ref RE_NAIVE_DATE: Regex = Regex::new(r#"'[0-9]{4}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
+    }
+    if RE_NAIVE_DATE.is_match(&time) {
+        return Time::new_date_from(&stripped)
+    }
+    Time::new()
 }
 
 fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, strips: &Vec<String>) -> Option<Thing> {
@@ -503,39 +500,39 @@ fn parse_posit(posit: &str, database: &Database, variables: &mut Variables, stri
     let time = captures.get(3).unwrap().as_str();
 
     // MAINTENANCE: The section below needs to be extended when new data types are added
-    match (parse_value_type(value), parse_time_type(time)) {
-        (String::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+    match parse_value_type(value) {
+        String::DATA_TYPE => {
             let value = parse_string(value, strips);
-            let time = parse_naive_date(time);
+            let time = parse_time(time);
             let posit = database.create_posit(appearance_set, value, time);
             Some(posit.posit())
         }, 
-        (i64::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+        i64::DATA_TYPE => {
             let value = parse_i64(value);
-            let time = parse_naive_date(time);
+            let time = parse_time(time);
             let posit = database.create_posit(appearance_set, value, time);
             Some(posit.posit())
         }, 
-        (Decimal::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+        Decimal::DATA_TYPE => {
             let value = parse_decimal(value);
-            let time = parse_naive_date(time);
+            let time = parse_time(time);
             let posit = database.create_posit(appearance_set, value, time);
             Some(posit.posit())
         }, 
-        (NaiveDate::DATA_TYPE, NaiveDate::DATA_TYPE) => {
-            let value = parse_naive_date(value);
-            let time = parse_naive_date(time);
+        Time::DATA_TYPE => {
+            let value = parse_time(value);
+            let time = parse_time(time);
             let posit = database.create_posit(appearance_set, value, time);
             Some(posit.posit())
         }, 
-        (JSON::DATA_TYPE, NaiveDate::DATA_TYPE) => {
+        JSON::DATA_TYPE => {
             let value = parse_json(value, strips);
-            let time = parse_naive_date(time);
+            let time = parse_time(time);
             let posit = database.create_posit(appearance_set, value, time);
             Some(posit.posit())
         },
-        (v, t) => {
-            println!(">>> Unhandled combination for value type: {} ({}), time type: {} ({})", v, value, t, time);
+        v => {
+            println!(">>> Unhandled value type: {} ({})", v, value);
             None
         }
     }
