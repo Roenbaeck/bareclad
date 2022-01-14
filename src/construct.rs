@@ -244,6 +244,13 @@ impl AppearanceSet {
     pub fn appearances(&self) -> &Vec<Arc<Appearance>> {
         &self.appearances
     }
+    pub fn roles(&self) -> Vec<String> {
+        let mut roles = Vec::new();
+        for appearance in self.appearances.iter() {
+            roles.push(String::from(appearance.role.name()));
+        }
+        roles
+    }
 }
 impl fmt::Display for AppearanceSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -444,6 +451,7 @@ pub struct Database<'db> {
     pub role_to_appearance_lookup: Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>>,
     pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>, OtherHasher>>>,
     pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing, OtherHasher>>>,
+    pub role_name_to_data_type_lookup: Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>>,
     // responsible for the the persistence layer
     pub persistor: Arc<Mutex<Persistor<'db>>>,
 }
@@ -460,6 +468,7 @@ impl<'db> Database<'db> {
         let role_to_appearance_lookup = Lookup::new();
         let appearance_to_appearance_set_lookup = Lookup::new();
         let appearance_set_to_posit_thing_lookup = Lookup::new();
+        let role_name_to_data_type_lookup = Lookup::new();
         let persistor = persistor;
 
         // Create the database so that we can prime it before returning it
@@ -477,6 +486,7 @@ impl<'db> Database<'db> {
             appearance_set_to_posit_thing_lookup: Arc::new(Mutex::new(
                 appearance_set_to_posit_thing_lookup,
             )),
+            role_name_to_data_type_lookup: Arc::new(Mutex::new(role_name_to_data_type_lookup)),
             persistor: Arc::new(Mutex::new(persistor)),
         };
 
@@ -517,6 +527,9 @@ impl<'db> Database<'db> {
     }
     pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>> {
         Arc::clone(&self.role_to_appearance_lookup)
+    }
+    pub fn role_name_to_data_type_lookup(&self) -> Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>> {
+        Arc::clone(&self.role_name_to_data_type_lookup)
     }
     pub fn appearance_to_appearance_set_lookup(
         &self,
@@ -604,6 +617,7 @@ impl<'db> Database<'db> {
     ) -> (Arc<Posit<V>>, bool) {
         let (kept_posit, previously_kept) = self.posit_keeper.lock().unwrap().keep(posit);
         if !previously_kept {
+            self.role_name_to_data_type_lookup.lock().unwrap().insert(kept_posit.appearance_set().roles(), V::DATA_TYPE.to_string());
             self.appearance_set_to_posit_thing_lookup
                 .lock()
                 .unwrap()
