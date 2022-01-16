@@ -10,7 +10,7 @@ add role address;
 
 add posit [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'],
           [{($idh, name)}, "Lars Samuelsson",      '1972-08-20'], /* A name I used to go by */
-          [{($idh, address)}, { "street": "Karlbergsvägen", "postal code": 11335 }, '1972-08-20'];
+          [{($idh, address)}, { "street": "Karlbergsvägen", "postal code": 11335, "care_of": { "name": "Lars Rönnbäck", "apartment": 1501 } }, '1972-08-20'];
 
 add posit [{($idw, name)}, "Anneli",    '1972-02-13'],
           [{($idw, age)}, 30, '2002-02-13'], 
