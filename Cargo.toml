@@ -1,6 +1,6 @@
 [package]
 name = "bareclad"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Lars Rönnbäck <lars@bareclad.com>"]
 
@@ -11,8 +11,9 @@ chrono = "0.4"
 bimap = "0.6.1"
 # typemap holds one value per type of key, useful for Posit<V,T>
 typemap = "0.3.3"
-# logos is a lexer used when parsing Traqula
-logos = "0.12"
+# pest is a parser used when parsing Traqula
+pest = "2.1.3"
+pest_derive = "2.1.0"
 # config lets you read a separate config file 
 config = "0.11"
 # the "standard" regular expression package
@@ -40,6 +41,9 @@ lazy_static = "1.4.0"
 #chumsky = "0.7"
 # https://play.rust-lang.org/?version=nightly&mode=debug&edition=2021&gist=e93f05c877b6dda664a60cf8015e3d8d
 #crossbeam = "0.8.1"
+
+# logos is a lexer used when parsing Traqula
+#logos = "0.12"
 
 [dev-dependencies]
 criterion = "0.3"

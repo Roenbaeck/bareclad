@@ -1,8 +1,9 @@
 // used for persistence
 use rusqlite::{params, Connection, Error, Statement};
+
+// our own stuff
 use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing};
 use crate::datatype::{DataType, Decimal, JSON, Time};
-use chrono::{NaiveDate, NaiveDateTime};
 
 // ------------- Persistence -------------
 pub struct Persistor<'db> {
@@ -377,22 +378,12 @@ impl<'db> Persistor<'db> {
                         )
                     );
                 }, 
-                NaiveDate::DATA_TYPE => {
+                Time::DATA_TYPE => {
                     db.keep_posit(
                         Posit::new(
                             thing,
                             kept_appearance_set,
-                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(2)),
-                            Time::convert(&row.get_ref_unwrap(4))
-                        )
-                    );
-                }, 
-                NaiveDateTime::DATA_TYPE => {
-                    db.keep_posit(
-                        Posit::new(
-                            thing,
-                            kept_appearance_set,
-                            <NaiveDate as DataType>::convert(&row.get_ref_unwrap(2)),
+                            <Time as DataType>::convert(&row.get_ref_unwrap(2)),
                             Time::convert(&row.get_ref_unwrap(4))
                         )
                     );
