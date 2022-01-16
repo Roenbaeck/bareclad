@@ -5,14 +5,14 @@ traqula = _{
 }
 
 // common tokens
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
-stripmark = _{ "\u{000F}" }
 digit = _{ '0'..'9' }
 int = { digit+ }
 decimal = { digit+ ~ "." ~ digit+ }
 time = { "'" ~ (digit | "-" | ":")+ ~ "'" }
-// json = { "{" ~ ANY* ~ "}" }
-string = { stripmark ~ int }
+json = @{ "{" ~ (json | !"}" ~ ANY)* ~ "}" }
+string = { "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
 variable = { CASED_LETTER ~ (CASED_LETTER | digit | "_" )+ }
 
 // add role command
@@ -24,10 +24,7 @@ generate = { "+" ~ variable }
 recollect = { "$" ~ variable }
 appearance = { "(" ~ (generate | recollect) ~ "," ~ role ~ ")" } 
 appearance_set = { "{" ~ (appearance ~ ","?)+ ~ "}" }
-appearing_value = { string | time | decimal | int }
+appearing_value = { json | string | time | decimal | int }
 appearance_time = { time }
 posit = { "[" ~ appearance_set ~ "," ~ appearing_value ~ "," ~ appearance_time ~ "]" }
 add_posit = { ^"add posit " ~ (recollect? ~ posit ~ ","?)+ ~ ";" } 
-
-
-

@@ -1,12 +1,10 @@
 
 use regex::{Regex};
 use lazy_static::lazy_static;
-use std::sync::Arc;
-use crate::construct::{Database, Appearance, AppearanceSet, Thing, OtherHasher};
-use crate::datatype::{DataType, Decimal, JSON, Time};
+use crate::construct::{Database, Thing, OtherHasher};
+use crate::datatype::{Decimal, JSON, Time};
 //use logos::{Logos, Lexer};
 use std::collections::{HashMap};
-use chrono::{NaiveDate, NaiveDateTime};
 
 // used for internal result sets
 use roaring::RoaringTreemap;
@@ -337,9 +335,11 @@ pub fn posits_involving_thing(database: &Database, thing: Thing) -> ResultSet {
 }
 
 // value parsers
-fn parse_string(value: &str, strips: &Vec<String>) -> String {
-    let strip = value.parse::<usize>().unwrap() - 1;
-    strips[strip].clone()
+fn parse_string(value: &str) -> String {
+    let mut c = value.chars();
+    c.next();
+    c.next_back();
+    c.collect::<String>().replace("\"\"", "\"")
 }
 fn parse_i64(value: &str) -> i64 {
     value.parse::<i64>().unwrap()
@@ -347,21 +347,8 @@ fn parse_i64(value: &str) -> i64 {
 fn parse_decimal(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
 }
-fn parse_json(value: &str, strips: &Vec<String>) -> JSON {
-    lazy_static! {
-        static ref RE_STRIPMARKED: Regex = {
-            let mut pattern = "".to_owned();
-            pattern.push(Engine::STRIPMARK);
-            pattern.push_str(r"\d+");
-            Regex::new(&pattern).unwrap()
-        };
-    }
-    let mut v = String::from(value);
-    for m in RE_STRIPMARKED.find_iter(value) {
-        let strip = m.as_str().replace(Engine::STRIPMARK, "").parse::<usize>().unwrap() - 1;
-        v = v.replace(m.as_str(), &("\"".to_owned() + &strips[strip] + "\""));
-    }
-    JSON::from_str(&v).unwrap()
+fn parse_json(value: &str) -> JSON {
+    JSON::from_str(value).unwrap()
 }
 pub fn parse_time(value: &str) -> Time {
     let stripped = value.replace("'", "");
@@ -387,70 +374,14 @@ pub struct Engine<'db, 'en> {
     database: &'en Database<'db>, 
 }
 impl<'db, 'en> Engine<'db, 'en> {
-    const SUBSTITUTE: char = 26 as char;
-    const STRIPMARK: char = 15 as char;
     pub fn new(database: &'en Database<'db>) -> Self {
         Self {
             database
         }
     }
     pub fn execute(&self, traqula: &str) {
-        let mut in_string = false;
-        let mut in_comment = false;
-        let mut previous_c = Engine::SUBSTITUTE;
-        let mut stripped = String::new();
-        let mut strip = String::new();
-        let mut strips: Vec<String> = Vec::new();
-        for c in traqula.chars() {
-            // first determine mode
-            if c == '#' && !in_string {
-                in_comment = true;
-            }
-            else if c == '\n' && !in_string {
-                in_comment = false;
-            }
-            else if c == '"' && !in_string {
-                in_string = true;
-            }
-            else if c == '"' && previous_c != '"' && in_string {
-                in_string = false;
-            }
-            // mode dependent push
-            if in_string {
-                if c == '"' && previous_c == '"' {
-                    strip.push('"');
-                    previous_c = Engine::SUBSTITUTE;
-                }
-                else {
-                    if c != '"' { strip.push(c); }
-                    previous_c = c;
-                }
-            }
-            else if !in_comment {
-                if c == '\n' || c == '\r' {
-                    if !previous_c.is_whitespace() && previous_c != ',' && previous_c != ';' { 
-                        stripped.push(' '); 
-                    }
-                    previous_c = ' ';
-                }
-                else if c.is_whitespace() && (previous_c.is_whitespace() || previous_c == ',' || previous_c == ';') {
-                    previous_c = c;
-                }     
-                else {
-                    if previous_c == '"' {
-                        strips.push(strip);
-                        strip = String::new();
-                        stripped += &(Engine::STRIPMARK.to_string() + &strips.len().to_string());
-                    }
-                    if c != '"' { stripped.push(c); }
-                    previous_c = c;
-                }           
-            }
-        }
         let mut variables: Variables = Variables::default();
-        //println!("Stripped:\n{}\nStrips:\n{:?}", &stripped.trim(), strips); 
-
-        let traqula = TraqulaParser::parse(Rule::traqula, &stripped.trim()).expect("Parsing error");
+        let traqula = TraqulaParser::parse(Rule::traqula, traqula.trim()).expect("Parsing error");
         for command in traqula {
             match command.as_rule() {
                 Rule::add_role => { 
@@ -461,6 +392,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                 Rule::add_posit => { 
                     for optional_recollection in command.into_inner() {
                         let mut variable: Option<String> = None;
+                        let mut value_as_json: Option<JSON> = None;
                         let mut value_as_string: Option<String> = None;
                         let mut value_as_time: Option<Time> = None;
                         let mut value_as_decimal: Option<Decimal> = None;
@@ -504,16 +436,24 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         Rule::appearing_value => {
                                             for value_type in component.into_inner() {
                                                 match value_type.as_rule() {
+                                                    Rule::json => {
+                                                        //println!("JSON: {}", value_type.as_str());
+                                                        value_as_json = Some(parse_json(value_type.as_str()))
+                                                    }
                                                     Rule::string => {
-                                                        value_as_string = Some(parse_string(value_type.into_inner().next().unwrap().as_str(), &strips));  
+                                                        //println!("String: {}", value_type.as_str());
+                                                        value_as_string = Some(parse_string(value_type.as_str()));  
                                                     }
                                                     Rule::time => {
+                                                        //println!("Time: {}", value_type.as_str());
                                                         value_as_time = Some(parse_time(value_type.as_str()));
                                                     }
                                                     Rule::decimal => {
+                                                        //println!("Decimal: {}", value_type.as_str());
                                                         value_as_decimal = Some(parse_decimal(value_type.as_str()));
                                                     }
                                                     Rule::int => {
+                                                        //println!("i64: {}", value_type.as_str());
                                                         value_as_i64 = Some(parse_i64(value_type.as_str()));
                                                     }, 
                                                     _ => ()
@@ -531,11 +471,15 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
                                     let (kept_appearance, previously_known) = self.database.create_apperance(things[i], role);
                                     appearances.push(kept_appearance);
-                                    // println!("({}, {})", things[i], roles[i]);
+                                    //println!("({}, {})", things[i], roles[i]);
                                 }
                                 let (kept_appearance_set, previously_known) = self.database.create_appearance_set(appearances);
 
-                                if value_as_string.is_some() {
+                                if value_as_json.is_some() {
+                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_json.unwrap(), appearance_time.unwrap());
+                                    println!("Posit: {}", kept_posit);
+                                }
+                                else if value_as_string.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_string.unwrap(), appearance_time.unwrap());
                                     println!("Posit: {}", kept_posit);
                                 }
