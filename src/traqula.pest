@@ -27,4 +27,4 @@ appearance_set = { "{" ~ (appearance ~ ","?)+ ~ "}" }
 appearing_value = { json | string | time | decimal | int }
 appearance_time = { time }
 posit = { "[" ~ appearance_set ~ "," ~ appearing_value ~ "," ~ appearance_time ~ "]" }
-add_posit = { ^"add posit " ~ (recollect? ~ posit ~ ","?)+ ~ ";" } 
+add_posit = { ^"add posit " ~ (generate? ~ posit ~ ","?)+ ~ ";" } 

@@ -390,8 +390,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                     }
                 }
                 Rule::add_posit => { 
-                    for optional_recollection in command.into_inner() {
-                        let mut variable: Option<String> = None;
+                    let mut variable: Option<String> = None;
+                    let mut posit: Option<Thing> = None;
+                    for optional_generation in command.into_inner() {
                         let mut value_as_json: Option<JSON> = None;
                         let mut value_as_string: Option<String> = None;
                         let mut value_as_time: Option<Time> = None;
@@ -400,13 +401,13 @@ impl<'db, 'en> Engine<'db, 'en> {
                         let mut appearance_time: Option<Time> = None;
                         let mut things = Vec::new();
                         let mut roles = Vec::new();
-                        match optional_recollection.as_rule() {
-                            Rule::recollect => {
-                                variable = Some(optional_recollection.into_inner().next().unwrap().as_str().to_string()); 
-                                println!("Recollect: {}", &variable.unwrap());
+                        match optional_generation.as_rule() {
+                            Rule::generate => {
+                                variable = Some(optional_generation.into_inner().next().unwrap().as_str().trim().to_string()); 
+                                println!("Generate: {:?}", &variable);
                             }
                             Rule::posit => {
-                                for component in optional_recollection.into_inner() {
+                                for component in optional_generation.into_inner() {
                                     match component.as_rule() {
                                         Rule::appearance_set => {
                                             for member in component.into_inner() {
@@ -414,10 +415,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     match appearance.as_rule() {
                                                         Rule::generate => {
                                                             let t = self.database.thing_generator().lock().unwrap().generate();
+                                                            // TODO: use entry and add to existing result set if there is one
                                                             let mut result_set = ResultSet::new();
                                                             result_set.insert(t);
                                                             variables.insert(appearance.into_inner().next().unwrap().as_str().to_string(), result_set);
-                                                            // println!("Variables: {:?}", variables);
                                                             things.push(t);
                                                         }
                                                         Rule::recollect => {
@@ -474,35 +475,47 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     //println!("({}, {})", things[i], roles[i]);
                                 }
                                 let (kept_appearance_set, previously_known) = self.database.create_appearance_set(appearances);
-
+                                // create the posit of the found type
                                 if value_as_json.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_json.unwrap(), appearance_time.unwrap());
+                                    posit = Some(kept_posit.posit());
                                     println!("Posit: {}", kept_posit);
                                 }
                                 else if value_as_string.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_string.unwrap(), appearance_time.unwrap());
+                                    posit = Some(kept_posit.posit());
                                     println!("Posit: {}", kept_posit);
                                 }
                                 else if value_as_time.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_time.unwrap(), appearance_time.unwrap());
+                                    posit = Some(kept_posit.posit());
                                     println!("Posit: {}", kept_posit);
                                 }
                                 else if value_as_decimal.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_decimal.unwrap(), appearance_time.unwrap());
+                                    posit = Some(kept_posit.posit());
                                     println!("Posit: {}", kept_posit);
                                 }
                                 else if value_as_i64.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_i64.unwrap(), appearance_time.unwrap());
+                                    posit = Some(kept_posit.posit());
                                     println!("Posit: {}", kept_posit);
                                 }
                             }
                             _ => ()
                         }
                     }
+                    if variable.is_some() && posit.is_some() {
+                        // TODO: use entry and add to existing result set if there is one
+                        let mut result_set = ResultSet::new();
+                        result_set.insert(posit.unwrap());
+                        variables.insert(variable.unwrap(), result_set);
+                    }
                 }
                 _ => ()
             }
         }
+        println!("Variables: {:?}", &variables);
     }  
 }
 
