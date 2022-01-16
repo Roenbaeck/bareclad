@@ -19,4 +19,4 @@ add posit [{($idw, name)}, "Anneli",    '1972-02-13'],
           [{($idh, epithet)}, "/* liker of comments */, ], and  ""spaces""", '2022-01-01'];
 
 add posit +p1 [{($idh, name)}, "Lars Rönnbäck", '2004-07-01'];  
-
+add posit [{($p1, posit), ($idh, ascertains)}, 100%, '2004-07-01'];

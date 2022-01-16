@@ -2,7 +2,7 @@
 use regex::{Regex};
 use lazy_static::lazy_static;
 use crate::construct::{Database, Thing, OtherHasher};
-use crate::datatype::{Decimal, JSON, Time};
+use crate::datatype::{Decimal, JSON, Time, Certainty};
 //use logos::{Logos, Lexer};
 use std::collections::{HashMap};
 
@@ -344,6 +344,10 @@ fn parse_string(value: &str) -> String {
 fn parse_i64(value: &str) -> i64 {
     value.parse::<i64>().unwrap()
 }
+fn parse_cerainty(value: &str) -> Certainty {
+    let value = value.replace("%", "");
+    Certainty::new(value.parse::<u8>().unwrap())
+}
 fn parse_decimal(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
 }
@@ -398,6 +402,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                         let mut value_as_time: Option<Time> = None;
                         let mut value_as_decimal: Option<Decimal> = None;
                         let mut value_as_i64: Option<i64> = None;
+                        let mut value_as_certainty: Option<Certainty> = None;
                         let mut appearance_time: Option<Time> = None;
                         let mut things = Vec::new();
                         let mut roles = Vec::new();
@@ -449,6 +454,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         //println!("Time: {}", value_type.as_str());
                                                         value_as_time = Some(parse_time(value_type.as_str()));
                                                     }
+                                                    Rule::certainty => {
+                                                        //println!("Certainty: {}", value_type.as_str());
+                                                        value_as_certainty = Some(parse_cerainty(value_type.as_str()));
+                                                    }
                                                     Rule::decimal => {
                                                         //println!("Decimal: {}", value_type.as_str());
                                                         value_as_decimal = Some(parse_decimal(value_type.as_str()));
@@ -488,6 +497,11 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 }
                                 else if value_as_time.is_some() {
                                     let kept_posit = self.database.create_posit(kept_appearance_set, value_as_time.unwrap(), appearance_time.unwrap());
+                                    posit = Some(kept_posit.posit());
+                                    println!("Posit: {}", kept_posit);
+                                }
+                                else if value_as_certainty.is_some() {
+                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_certainty.unwrap(), appearance_time.unwrap());
                                     posit = Some(kept_posit.posit());
                                     println!("Posit: {}", kept_posit);
                                 }
