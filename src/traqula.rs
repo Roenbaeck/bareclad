@@ -3,8 +3,9 @@ use regex::{Regex};
 use lazy_static::lazy_static;
 use crate::construct::{Database, Thing, OtherHasher};
 use crate::datatype::{Decimal, JSON, Time, Certainty};
-//use logos::{Logos, Lexer};
 use std::collections::{HashMap};
+use std::collections::hash_map::Entry;
+use std::sync::Arc;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
@@ -276,13 +277,6 @@ impl ResultSet {
             }    
         }
     }
-    pub fn one(&self) -> Option<Thing> {
-        match self.mode {
-            ResultSetMode::Empty => None,
-            ResultSetMode::Thing => self.thing,
-            ResultSetMode::Multi => self.multi.as_ref().unwrap().min()
-        } 
-    }
 }
 impl BitAndAssign<&'_ ResultSet> for ResultSet  {
     fn bitand_assign(&mut self, rhs: &ResultSet) {
@@ -395,7 +389,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                 }
                 Rule::add_posit => { 
                     let mut variable: Option<String> = None;
-                    let mut posit: Option<Thing> = None;
+                    let mut posits: Vec<Thing> = Vec::new();
                     for optional_generation in command.into_inner() {
                         let mut value_as_json: Option<JSON> = None;
                         let mut value_as_string: Option<String> = None;
@@ -404,12 +398,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                         let mut value_as_i64: Option<i64> = None;
                         let mut value_as_certainty: Option<Certainty> = None;
                         let mut appearance_time: Option<Time> = None;
-                        let mut things = Vec::new();
+                        let mut local_variables = Vec::new();
                         let mut roles = Vec::new();
                         match optional_generation.as_rule() {
                             Rule::generate => {
                                 variable = Some(optional_generation.into_inner().next().unwrap().as_str().trim().to_string()); 
-                                println!("Generate: {:?}", &variable);
+                                // println!("Generate: {:?}", &variable);
                             }
                             Rule::posit => {
                                 for component in optional_generation.into_inner() {
@@ -419,17 +413,22 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 for appearance in member.into_inner() {
                                                     match appearance.as_rule() {
                                                         Rule::generate => {
-                                                            let t = self.database.thing_generator().lock().unwrap().generate();
-                                                            // TODO: use entry and add to existing result set if there is one
-                                                            let mut result_set = ResultSet::new();
-                                                            result_set.insert(t);
-                                                            variables.insert(appearance.into_inner().next().unwrap().as_str().to_string(), result_set);
-                                                            things.push(t);
+                                                            let local_variable = appearance.into_inner().next().unwrap().as_str();
+                                                            local_variables.push(local_variable);
+                                                            let thing = self.database.thing_generator().lock().unwrap().generate();
+                                                            match variables.entry(local_variable.to_string()) {
+                                                                Entry::Vacant(entry) => {
+                                                                    let mut result_set = ResultSet::new();
+                                                                    result_set.insert(thing);
+                                                                    entry.insert(result_set);
+                                                                }
+                                                                Entry::Occupied(mut entry) => {
+                                                                    entry.get_mut().insert(thing);
+                                                                }
+                                                            }
                                                         }
                                                         Rule::recollect => {
-                                                            let result_set = variables.get(appearance.into_inner().next().unwrap().as_str()).unwrap();
-                                                            let t = result_set.one().unwrap();
-                                                            things.push(t);
+                                                            local_variables.push(appearance.into_inner().next().unwrap().as_str());
                                                         }
                                                         Rule::role => {
                                                             roles.push(appearance.as_str());
@@ -476,54 +475,105 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         _ => ()
                                     }
                                 }
-                                let mut appearances = Vec::new();
-                                for i in 0..things.len() {
-                                    let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
-                                    let (kept_appearance, previously_known) = self.database.create_apperance(things[i], role);
-                                    appearances.push(kept_appearance);
-                                    //println!("({}, {})", things[i], roles[i]);
+                                let mut variable_to_things = HashMap::new();
+                                for local_variable in &local_variables {
+                                    variable_to_things.insert(*local_variable, Vec::new());
                                 }
-                                let (kept_appearance_set, previously_known) = self.database.create_appearance_set(appearances);
-                                // create the posit of the found type
-                                if value_as_json.is_some() {
-                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_json.unwrap(), appearance_time.unwrap());
-                                    posit = Some(kept_posit.posit());
-                                    println!("Posit: {}", kept_posit);
+                                for i in 0..local_variables.len() {
+                                    let things = variable_to_things.get_mut(local_variables[i]).unwrap();
+                                    let result_set = variables.get(local_variables[i]).unwrap();
+                                    match result_set.mode {
+                                        ResultSetMode::Empty => (), 
+                                        ResultSetMode::Thing => {
+                                            things.push(result_set.thing.unwrap());
+                                        }, 
+                                        ResultSetMode::Multi => {
+                                            let multi = result_set.multi.as_ref().unwrap();
+                                            for thing in multi {
+                                                things.push(thing);
+                                            }
+                                        }
+                                    }
                                 }
-                                else if value_as_string.is_some() {
-                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_string.unwrap(), appearance_time.unwrap());
-                                    posit = Some(kept_posit.posit());
-                                    println!("Posit: {}", kept_posit);
+                                let mut things_for_roles = Vec::new();
+                                for i in 0..local_variables.len() {
+                                    let things_for_role = variable_to_things.get(local_variables[i]).unwrap();
+                                    things_for_roles.push(things_for_role.as_slice());
                                 }
-                                else if value_as_time.is_some() {
-                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_time.unwrap(), appearance_time.unwrap());
-                                    posit = Some(kept_posit.posit());
-                                    println!("Posit: {}", kept_posit);
+                                
+                                let cartesian = cartesian_product(things_for_roles.as_slice());
+                                
+                                //println!("variable_to_things {:?}", variable_to_things);
+                                //println!("things_for_roles {:?}", things_for_roles.as_slice());
+                                
+                                let mut appearance_sets = Vec::new();
+                                for things_in_appearance_set in cartesian {
+                                    let mut appearances = Vec::new();
+                                    for i in 0..things_in_appearance_set.len() {
+                                        let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
+                                        let (appearance, _) = self.database.create_apperance(things_in_appearance_set[i], Arc::clone(&role));
+                                        appearances.push(appearance);
+                                    }
+                                    let (appearance_set, _) = self.database.create_appearance_set(appearances);
+                                    appearance_sets.push(appearance_set);
                                 }
-                                else if value_as_certainty.is_some() {
-                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_certainty.unwrap(), appearance_time.unwrap());
-                                    posit = Some(kept_posit.posit());
-                                    println!("Posit: {}", kept_posit);
+
+                                // println!("Appearance sets {:?}", appearance_sets);     
+
+                                for appearance_set in appearance_sets {
+                                    // create the posit of the found type
+                                    if value_as_json.is_some() {
+                                        let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), appearance_time.clone().unwrap());
+                                        posits.push(kept_posit.posit());
+                                        println!("Posit: {}", kept_posit);
+                                    }
+                                    else if value_as_string.is_some() {
+                                        let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), appearance_time.clone().unwrap());
+                                        posits.push(kept_posit.posit());
+                                        println!("Posit: {}", kept_posit);
+                                    }
+                                    else if value_as_time.is_some() {
+                                        let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), appearance_time.clone().unwrap());
+                                        posits.push(kept_posit.posit());
+                                        println!("Posit: {}", kept_posit);
+                                    }
+                                    else if value_as_certainty.is_some() {
+                                        let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), appearance_time.clone().unwrap());
+                                        posits.push(kept_posit.posit());
+                                        println!("Posit: {}", kept_posit);
+                                    }
+                                    else if value_as_decimal.is_some() {
+                                        let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), appearance_time.clone().unwrap());
+                                        posits.push(kept_posit.posit());
+                                        println!("Posit: {}", kept_posit);
+                                    }
+                                    else if value_as_i64.is_some() {
+                                        let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), appearance_time.clone().unwrap());
+                                        posits.push(kept_posit.posit());
+                                        println!("Posit: {}", kept_posit);
+                                    }
                                 }
-                                else if value_as_decimal.is_some() {
-                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_decimal.unwrap(), appearance_time.unwrap());
-                                    posit = Some(kept_posit.posit());
-                                    println!("Posit: {}", kept_posit);
-                                }
-                                else if value_as_i64.is_some() {
-                                    let kept_posit = self.database.create_posit(kept_appearance_set, value_as_i64.unwrap(), appearance_time.unwrap());
-                                    posit = Some(kept_posit.posit());
-                                    println!("Posit: {}", kept_posit);
-                                }
+                                
                             }
                             _ => ()
                         }
                     }
-                    if variable.is_some() && posit.is_some() {
-                        // TODO: use entry and add to existing result set if there is one
-                        let mut result_set = ResultSet::new();
-                        result_set.insert(posit.unwrap());
-                        variables.insert(variable.unwrap(), result_set);
+                    if variable.is_some() {
+                        match variables.entry(variable.unwrap()) {
+                            Entry::Vacant(entry) => {
+                                let mut result_set = ResultSet::new();
+                                for posit in posits {
+                                    result_set.insert(posit);
+                                }
+                                entry.insert(result_set);
+                            }
+                            Entry::Occupied(mut entry) => {
+                                let result_set = entry.get_mut();
+                                for posit in posits {
+                                    result_set.insert(posit);
+                                }
+                            }
+                        }
                     }
                 }
                 _ => ()
@@ -533,3 +583,49 @@ impl<'db, 'en> Engine<'db, 'en> {
     }  
 }
 
+/* 
+The following code for cartesian products has been made by Kyle Lacy, 
+and was originally found here: 
+
+https://gist.github.com/kylewlacy/115965b40e02a3325558 
+
+Copyright © 2016-2021 Kyle Lacy, Some Rights Reserved.
+
+Additionally, all code snippets and fragments are also licensed under both the terms of the
+MIT license and the Unlicense (at the licensee's choice), unless otherwise noted.
+*/
+
+pub fn partial_cartesian<T: Clone>(a: Vec<Vec<T>>, b: &[T]) -> Vec<Vec<T>> {
+    a.into_iter().flat_map(|xs| {
+        b.iter().cloned().map(|y| {
+            let mut vec = xs.clone();
+            vec.push(y);
+            vec
+        }).collect::<Vec<_>>()
+    }).collect()
+}
+
+pub fn cartesian_product<T: Clone>(lists: &[&[T]]) -> Vec<Vec<T>> {
+    match lists.split_first() {
+        Some((first, rest)) => {
+            let init: Vec<Vec<T>> = first.iter().cloned().map(|n| vec![n]).collect();
+
+            rest.iter().cloned().fold(init, |vec, list| {
+                partial_cartesian(vec, list)
+            })
+        },
+        None => {
+            vec![]
+        }
+    }
+}
+
+pub fn print_cartesian_product(lists: &[&[u64]]) {
+    let products = cartesian_product(lists);
+
+    for product in products.iter() {
+        let product_str: Vec<_> = product.iter().map(|n| format!("{}", n)).collect();
+        let line = product_str.join(" ");
+        println!("{}", line);
+    }
+}

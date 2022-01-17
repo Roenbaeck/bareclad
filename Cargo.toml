@@ -26,7 +26,7 @@ roaring = "0.8.1"
 # we will use a fast hashing algo for hashmaps and hashsets where keys are not Things
 seahash = "4.1.0"
 # rusqlite for the persistence layer
-rusqlite = { version = "0.26.3", features = ["chrono", "serde_json", "bundled"] }
+rusqlite = { version = "0.26.3", features = ["chrono", "bundled"] }
 # for decimal numbers of arbitrary size
 bigdecimal = "0.3.0"
 # for JSON data type

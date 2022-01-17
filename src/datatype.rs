@@ -94,7 +94,7 @@ impl DataType for Time {
 }
 
 // Special types below
-#[derive(Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub struct JSON (Json);
 
 impl JSON {
@@ -241,7 +241,7 @@ impl FromSql for Certainty {
     }
 }
 
-#[derive(Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Eq, PartialEq, Hash, PartialOrd, Ord, Clone)]
 pub struct Decimal (BigDecimal);
 
 impl Decimal {
@@ -281,14 +281,14 @@ impl ops::DerefMut for Decimal {
 
 // TODO: We will use a specialized time type instead of the 
 // trait constrained generic
-#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
+#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Clone)]
 pub enum TimeType {
     Year(u16),
     YearMonth(u16,u8),
     Date(NaiveDate), 
     DateTime(NaiveDateTime)
 }
-#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash)]
+#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Clone)]
 pub struct Time {
     moment: TimeType
 }
