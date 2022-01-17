@@ -125,7 +125,7 @@ impl PartialEq for Role {
 }
 impl Hash for Role {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
+        self.name.to_uppercase().hash(state);
         self.reserved.hash(state);
     }
 }
