@@ -2,7 +2,7 @@
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 // used for timestamps in the database
-use chrono::{NaiveDateTime, NaiveDate, Utc};
+use chrono::{NaiveDateTime, NaiveDate, Utc, Datelike};
 // used for decimal numbers
 use bigdecimal::BigDecimal;
 // used for JSON
@@ -16,6 +16,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 // used to overload common operations for datatypes
 use std::ops;
+// used when implementing PartialOrd for Time
+use std::cmp::Ordering;
 
 use crate::traqula::parse_time;
 
@@ -281,13 +283,92 @@ impl ops::DerefMut for Decimal {
 
 // TODO: We will use a specialized time type instead of the 
 // trait constrained generic
-#[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Clone)]
+#[derive(Eq, PartialEq, Ord, Debug, Hash, Clone)]
 pub enum TimeType {
-    Year(u16),
-    YearMonth(u16,u8),
+    // abstract time points
+    BeginningOfTime,
+    EndOfTime,
+    // concrete time points
+    Year(i32),
+    YearMonth(i32,u8),
     Date(NaiveDate), 
     DateTime(NaiveDateTime)
 }
+
+impl PartialOrd for TimeType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            // abstact type combinations
+            (TimeType::BeginningOfTime, TimeType::BeginningOfTime) | (TimeType::EndOfTime, TimeType::EndOfTime) => Some(Ordering::Equal),
+            (TimeType::BeginningOfTime, _) | (_, TimeType::EndOfTime) => Some(Ordering::Less),
+            (_, TimeType::BeginningOfTime) | (TimeType::EndOfTime, _) => Some(Ordering::Greater),
+            // concrete type combinations
+            (TimeType::Year(y_self), type_other) => {
+                match type_other {
+                    TimeType::Year(y) => y_self.partial_cmp(y),
+                    TimeType::YearMonth(y, _) => y_self.partial_cmp(y),
+                    TimeType::Date(d) => y_self.partial_cmp(&d.year()),
+                    TimeType::DateTime(d) => y_self.partial_cmp(&d.year()),
+                    _ => None
+                }
+            },
+            (TimeType::YearMonth(y_self, m_self), type_other) => {
+                match type_other {
+                    TimeType::Year(y) => y_self.partial_cmp(y),
+                    TimeType::YearMonth(y, m) => {
+                        match y_self.partial_cmp(y) {
+                            Some(Ordering::Equal) => m_self.partial_cmp(m),
+                            _ => y_self.partial_cmp(y)
+                        }
+                    },
+                    TimeType::Date(d) => {
+                        match y_self.partial_cmp(&d.year()) {
+                            Some(Ordering::Equal) => m_self.partial_cmp(&(d.month() as u8)),
+                            _ => y_self.partial_cmp(&d.year())
+                        }
+                    },
+                    TimeType::DateTime(d) => {
+                        match y_self.partial_cmp(&d.year()) {
+                            Some(Ordering::Equal) => m_self.partial_cmp(&(d.month() as u8)),
+                            _ => y_self.partial_cmp(&d.year())
+                        }
+                    },
+                    _ => None
+                }
+            }, 
+            (TimeType::Date(d_self), type_other) => {
+                match type_other {
+                    TimeType::Year(y) => d_self.year().partial_cmp(y),
+                    TimeType::YearMonth(y, m) => {
+                        match d_self.year().partial_cmp(y) {
+                            Some(Ordering::Equal) => (d_self.month() as u8).partial_cmp(m),
+                            _ => d_self.year().partial_cmp(y)
+                        }
+                    },
+                    TimeType::Date(d) => d_self.partial_cmp(d),
+                    TimeType::DateTime(d) => d_self.partial_cmp(&d.date()),
+                    _ => None
+                }
+            },
+            (TimeType::DateTime(d_self), type_other) => {
+                match type_other {
+                    TimeType::Year(y) => d_self.year().partial_cmp(y),
+                    TimeType::YearMonth(y, m) => {
+                        match d_self.year().partial_cmp(y) {
+                            Some(Ordering::Equal) => (d_self.month() as u8).partial_cmp(m),
+                            _ => d_self.year().partial_cmp(y)
+                        }
+                    },
+                    TimeType::Date(d) => d_self.date().partial_cmp(d),
+                    TimeType::DateTime(d) => d_self.partial_cmp(d),
+                    _ => None
+                }
+            },
+        } 
+    }
+}
+
+
 #[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Clone)]
 pub struct Time {
     moment: TimeType
@@ -296,9 +377,15 @@ impl Time {
     pub fn new() -> Time {
         Time { moment: TimeType::DateTime(Utc::now().naive_utc()) }
     }
+    pub fn new_beginning_of_time() -> Time {
+        Time { moment: TimeType::BeginningOfTime }
+    }
+    pub fn new_end_of_time() -> Time {
+        Time { moment: TimeType::EndOfTime }
+    }
     // TODO: may panic
     pub fn new_year_from(d: &str) -> Time {
-        Time { moment: TimeType::Year(d.parse::<u16>().unwrap()) }
+        Time { moment: TimeType::Year(d.parse::<i32>().unwrap()) }
     }
     pub fn new_year_month_from(d: &str) -> Time {
         let mut year = String::new();
@@ -313,7 +400,7 @@ impl Time {
                 }
             }
         }
-        Time { moment: TimeType::YearMonth(year.parse::<u16>().unwrap(), month.parse::<u8>().unwrap()) }
+        Time { moment: TimeType::YearMonth(year.parse::<i32>().unwrap(), month.parse::<u8>().unwrap()) }
     }
     pub fn new_date_from(d: &str) -> Time {
         Time { moment: TimeType::Date(NaiveDate::from_str(d).unwrap()) } 
@@ -325,6 +412,12 @@ impl Time {
 impl fmt::Display for Time {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.moment {
+            TimeType::BeginningOfTime => {
+                write!(f, "BOT")
+            }
+            TimeType::EndOfTime => {
+                write!(f, "EOT")
+            }
             TimeType::Year(y) => {
                 write!(f, "{}", y)
             }

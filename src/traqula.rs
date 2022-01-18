@@ -374,16 +374,30 @@ pub fn parse_time(value: &str) -> Option<Time> {
     let time = "'".to_owned() + &stripped + "'";
     // MAINTENANCE: The section below needs to be extended when new data types are added
     lazy_static! {
-        static ref RE_NAIVE_DATE: Regex = Regex::new(r#"'[0-9]{4}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
+        static ref RE_DATETIME: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9].+'"#).unwrap();
+        static ref RE_DATE: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
+        static ref RE_YEAR_MONTH: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]'"#).unwrap();
+        static ref RE_YEAR: Regex = Regex::new(r#"'\-?[0-9]{4,8}'"#).unwrap();
     }
-    if RE_NAIVE_DATE.is_match(&time) {
+    if RE_DATETIME.is_match(&time) {
+        return Some(Time::new_datetime_from(&stripped))
+    }
+    if RE_DATE.is_match(&time) {
         return Some(Time::new_date_from(&stripped))
     }
-    None
+    if RE_YEAR_MONTH.is_match(&time) {
+        return Some(Time::new_year_month_from(&stripped))
+    }
+    if RE_YEAR.is_match(&time) {
+        return Some(Time::new_year_from(&stripped))
+    }
+    parse_time_constant(value)
 }
 fn parse_time_constant(value: &str) -> Option<Time> {
-    match value {
-        "@NOW" => Some(Time::new()),
+    match value.replace("@", "").as_str() {
+        "NOW" => Some(Time::new()),
+        "BOT" => Some(Time::new_beginning_of_time()), 
+        "EOT" => Some(Time::new_end_of_time()),
         _ => None
     }
 }
