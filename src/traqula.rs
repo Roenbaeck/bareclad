@@ -349,7 +349,7 @@ fn parse_i64_constant(value: &str) -> Option<i64> {
 }
 fn parse_certainty(value: &str) -> Option<Certainty> {
     let value = value.replace("%", "");
-    match value.parse::<u8>() {
+    match value.parse::<i8>() {
         Ok(v) => Some(Certainty::new(v)), 
         Err(_) => None
     }
@@ -404,6 +404,7 @@ fn parse_time_constant(value: &str) -> Option<Time> {
 
 use pest::Parser;
 use pest_derive::Parser;
+use pest::iterators::Pair;
 
 #[derive(Parser)]
 #[grammar = "traqula.pest"] // relative to src
@@ -418,225 +419,230 @@ impl<'db, 'en> Engine<'db, 'en> {
             database
         }
     }
+    fn add_role(&self, command: Pair<Rule>) {
+        for role in command.into_inner() {
+            self.database.create_role(role.as_str().to_string(), false);
+        }
+    }
+    fn add_posit(&self, command: Pair<Rule>, variables: &mut Variables) {
+        for structure in command.into_inner() {
+            let mut variable: Option<String> = None;
+            let mut posits: Vec<Thing> = Vec::new();
+            let mut value_as_json: Option<JSON> = None;
+            let mut value_as_string: Option<String> = None;
+            let mut value_as_time: Option<Time> = None;
+            let mut value_as_decimal: Option<Decimal> = None;
+            let mut value_as_i64: Option<i64> = None;
+            let mut value_as_certainty: Option<Certainty> = None;
+            let mut appearance_time: Option<Time> = None;
+            let mut local_variables = Vec::new();
+            let mut roles = Vec::new();
+            match structure.as_rule() {
+                Rule::posit => {
+                    for component in structure.into_inner() {
+                        match component.as_rule() {
+                            Rule::insert => {
+                                variable = Some(component.into_inner().next().unwrap().as_str().to_string()); 
+                                //println!("Insert: {:?}", &variable);
+                            }
+                            Rule::appearance_set => {
+                                for member in component.into_inner() {
+                                    for appearance in member.into_inner() {
+                                        match appearance.as_rule() {
+                                            Rule::insert => {
+                                                let local_variable = appearance.into_inner().next().unwrap().as_str();
+                                                local_variables.push(local_variable);
+                                                let thing = self.database.thing_generator().lock().unwrap().generate();
+                                                match variables.entry(local_variable.to_string()) {
+                                                    Entry::Vacant(entry) => {
+                                                        let mut result_set = ResultSet::new();
+                                                        result_set.insert(thing);
+                                                        entry.insert(result_set);
+                                                    }
+                                                    Entry::Occupied(mut entry) => {
+                                                        entry.get_mut().insert(thing);
+                                                    }
+                                                }
+                                            }
+                                            Rule::recall => {
+                                                local_variables.push(appearance.into_inner().next().unwrap().as_str());
+                                            }
+                                            Rule::role => {
+                                                roles.push(appearance.as_str());
+                                            },
+                                            _ => ()
+                                        }
+                                    }
+                                }
+                            }
+                            Rule::appearing_value => {
+                                for value_type in component.into_inner() {
+                                    match value_type.as_rule() {
+                                        Rule::constant => {
+                                            println!("Constant: {}", value_type.as_str());
+                                            value_as_json = parse_json_constant(value_type.as_str());
+                                            value_as_string = parse_string_constant(value_type.as_str());
+                                            value_as_time = parse_time_constant(value_type.as_str());
+                                            value_as_certainty = parse_certainty_constant(value_type.as_str());
+                                            value_as_decimal = parse_decimal_constant(value_type.as_str());
+                                            value_as_i64 = parse_i64_constant(value_type.as_str());
+                                        }
+                                        Rule::json => {
+                                            //println!("JSON: {}", value_type.as_str());
+                                            value_as_json = parse_json(value_type.as_str());
+                                        }
+                                        Rule::string => {
+                                            //println!("String: {}", value_type.as_str());
+                                            value_as_string = parse_string(value_type.as_str());  
+                                        }
+                                        Rule::time => {
+                                            //println!("Time: {}", value_type.as_str());
+                                            value_as_time = parse_time(value_type.as_str());
+                                        }
+                                        Rule::certainty => {
+                                            //println!("Certainty: {}", value_type.as_str());
+                                            value_as_certainty = parse_certainty(value_type.as_str());
+                                        }
+                                        Rule::decimal => {
+                                            //println!("Decimal: {}", value_type.as_str());
+                                            value_as_decimal = parse_decimal(value_type.as_str());
+                                        }
+                                        Rule::int => {
+                                            //println!("i64: {}", value_type.as_str());
+                                            value_as_i64 = parse_i64(value_type.as_str());
+                                        }, 
+                                        _ => ()
+                                    }
+                                }
+                            }
+                            Rule::appearance_time => {
+                                for time_type in component.into_inner() {
+                                    match time_type.as_rule() {
+                                        Rule::constant => {
+                                            appearance_time = parse_time_constant(time_type.as_str());
+                                        }
+                                        Rule::time => {
+                                            //println!("Time: {}", value_type.as_str());
+                                            appearance_time = parse_time(time_type.as_str());
+                                        }
+                                        _ => ()
+                                    }
+                                }
+                            }
+                            _ => ()
+                        }
+                    }
+                    let mut variable_to_things = HashMap::new();
+                    for local_variable in &local_variables {
+                        variable_to_things.insert(*local_variable, Vec::new());
+                    }
+                    for i in 0..local_variables.len() {
+                        let things = variable_to_things.get_mut(local_variables[i]).unwrap();
+                        let result_set = variables.get(local_variables[i]).unwrap();
+                        match result_set.mode {
+                            ResultSetMode::Empty => (), 
+                            ResultSetMode::Thing => {
+                                things.push(result_set.thing.unwrap());
+                            }, 
+                            ResultSetMode::Multi => {
+                                let multi = result_set.multi.as_ref().unwrap();
+                                for thing in multi {
+                                    things.push(thing);
+                                }
+                            }
+                        }
+                    }
+                    let mut things_for_roles = Vec::new();
+                    for i in 0..local_variables.len() {
+                        let things_for_role = variable_to_things.get(local_variables[i]).unwrap();
+                        things_for_roles.push(things_for_role.as_slice());
+                    }
+                    
+                    let cartesian = cartesian_product(things_for_roles.as_slice());
+                    
+                    //println!("variable_to_things {:?}", variable_to_things);
+                    //println!("things_for_roles {:?}", things_for_roles.as_slice());
+                    
+                    let mut appearance_sets = Vec::new();
+                    for things_in_appearance_set in cartesian {
+                        let mut appearances = Vec::new();
+                        for i in 0..things_in_appearance_set.len() {
+                            let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
+                            let (appearance, _) = self.database.create_apperance(things_in_appearance_set[i], Arc::clone(&role));
+                            appearances.push(appearance);
+                        }
+                        let (appearance_set, _) = self.database.create_appearance_set(appearances);
+                        appearance_sets.push(appearance_set);
+                    }
+
+                    // println!("Appearance sets {:?}", appearance_sets);     
+
+                    for appearance_set in appearance_sets {
+                        // create the posit of the found type
+                        if value_as_json.is_some() {
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), appearance_time.clone().unwrap());
+                            posits.push(kept_posit.posit());
+                            println!("Posit: {}", kept_posit);
+                        }
+                        else if value_as_string.is_some() {
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), appearance_time.clone().unwrap());
+                            posits.push(kept_posit.posit());
+                            println!("Posit: {}", kept_posit);
+                        }
+                        else if value_as_time.is_some() {
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), appearance_time.clone().unwrap());
+                            posits.push(kept_posit.posit());
+                            println!("Posit: {}", kept_posit);
+                        }
+                        else if value_as_certainty.is_some() {
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), appearance_time.clone().unwrap());
+                            posits.push(kept_posit.posit());
+                            println!("Posit: {}", kept_posit);
+                        }
+                        else if value_as_decimal.is_some() {
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), appearance_time.clone().unwrap());
+                            posits.push(kept_posit.posit());
+                            println!("Posit: {}", kept_posit);
+                        }
+                        else if value_as_i64.is_some() {
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), appearance_time.clone().unwrap());
+                            posits.push(kept_posit.posit());
+                            println!("Posit: {}", kept_posit);
+                        }
+                    }
+                }
+                _ => ()
+            }
+            if variable.is_some() {
+                match variables.entry(variable.unwrap()) {
+                    Entry::Vacant(entry) => {
+                        let mut result_set = ResultSet::new();
+                        for posit in posits {
+                            result_set.insert(posit);
+                        }
+                        entry.insert(result_set);
+                    }
+                    Entry::Occupied(mut entry) => {
+                        let result_set = entry.get_mut();
+                        for posit in posits {
+                            result_set.insert(posit);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
+        println!("Search: {}", command.as_str());  
+    }
     pub fn execute(&self, traqula: &str) {
         let mut variables: Variables = Variables::default();
         let traqula = TraqulaParser::parse(Rule::traqula, traqula.trim()).expect("Parsing error");
         for command in traqula {
             match command.as_rule() {
-                Rule::add_role => { 
-                    for role in command.into_inner() {
-                        self.database.create_role(role.as_str().to_string(), false);
-                    }
-                }
-                Rule::add_posit => { 
-                    let mut variable: Option<String> = None;
-                    let mut posits: Vec<Thing> = Vec::new();
-                    for optional_generation in command.into_inner() {
-                        let mut value_as_json: Option<JSON> = None;
-                        let mut value_as_string: Option<String> = None;
-                        let mut value_as_time: Option<Time> = None;
-                        let mut value_as_decimal: Option<Decimal> = None;
-                        let mut value_as_i64: Option<i64> = None;
-                        let mut value_as_certainty: Option<Certainty> = None;
-                        let mut appearance_time: Option<Time> = None;
-                        let mut local_variables = Vec::new();
-                        let mut roles = Vec::new();
-                        match optional_generation.as_rule() {
-                            Rule::generate => {
-                                variable = Some(optional_generation.into_inner().next().unwrap().as_str().trim().to_string()); 
-                                // println!("Generate: {:?}", &variable);
-                            }
-                            Rule::posit => {
-                                for component in optional_generation.into_inner() {
-                                    match component.as_rule() {
-                                        Rule::appearance_set => {
-                                            for member in component.into_inner() {
-                                                for appearance in member.into_inner() {
-                                                    match appearance.as_rule() {
-                                                        Rule::generate => {
-                                                            let local_variable = appearance.into_inner().next().unwrap().as_str();
-                                                            local_variables.push(local_variable);
-                                                            let thing = self.database.thing_generator().lock().unwrap().generate();
-                                                            match variables.entry(local_variable.to_string()) {
-                                                                Entry::Vacant(entry) => {
-                                                                    let mut result_set = ResultSet::new();
-                                                                    result_set.insert(thing);
-                                                                    entry.insert(result_set);
-                                                                }
-                                                                Entry::Occupied(mut entry) => {
-                                                                    entry.get_mut().insert(thing);
-                                                                }
-                                                            }
-                                                        }
-                                                        Rule::recollect => {
-                                                            local_variables.push(appearance.into_inner().next().unwrap().as_str());
-                                                        }
-                                                        Rule::role => {
-                                                            roles.push(appearance.as_str());
-                                                        },
-                                                        _ => ()
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Rule::appearing_value => {
-                                            for value_type in component.into_inner() {
-                                                match value_type.as_rule() {
-                                                    Rule::constant => {
-                                                        println!("Constant: {}", value_type.as_str());
-                                                        value_as_json = parse_json_constant(value_type.as_str());
-                                                        value_as_string = parse_string_constant(value_type.as_str());
-                                                        value_as_time = parse_time_constant(value_type.as_str());
-                                                        value_as_certainty = parse_certainty_constant(value_type.as_str());
-                                                        value_as_decimal = parse_decimal_constant(value_type.as_str());
-                                                        value_as_i64 = parse_i64_constant(value_type.as_str());
-                                                    }
-                                                    Rule::json => {
-                                                        //println!("JSON: {}", value_type.as_str());
-                                                        value_as_json = parse_json(value_type.as_str());
-                                                    }
-                                                    Rule::string => {
-                                                        //println!("String: {}", value_type.as_str());
-                                                        value_as_string = parse_string(value_type.as_str());  
-                                                    }
-                                                    Rule::time => {
-                                                        //println!("Time: {}", value_type.as_str());
-                                                        value_as_time = parse_time(value_type.as_str());
-                                                    }
-                                                    Rule::certainty => {
-                                                        //println!("Certainty: {}", value_type.as_str());
-                                                        value_as_certainty = parse_certainty(value_type.as_str());
-                                                    }
-                                                    Rule::decimal => {
-                                                        //println!("Decimal: {}", value_type.as_str());
-                                                        value_as_decimal = parse_decimal(value_type.as_str());
-                                                    }
-                                                    Rule::int => {
-                                                        //println!("i64: {}", value_type.as_str());
-                                                        value_as_i64 = parse_i64(value_type.as_str());
-                                                    }, 
-                                                    _ => ()
-                                                }
-                                            }
-                                        }
-                                        Rule::appearance_time => {
-                                            for time_type in component.into_inner() {
-                                                match time_type.as_rule() {
-                                                    Rule::constant => {
-                                                        appearance_time = parse_time_constant(time_type.as_str());
-                                                    }
-                                                    Rule::time => {
-                                                        //println!("Time: {}", value_type.as_str());
-                                                        appearance_time = parse_time(time_type.as_str());
-                                                    }
-                                                    _ => ()
-                                                }
-                                            }
-                                        }
-                                        _ => ()
-                                    }
-                                }
-                                let mut variable_to_things = HashMap::new();
-                                for local_variable in &local_variables {
-                                    variable_to_things.insert(*local_variable, Vec::new());
-                                }
-                                for i in 0..local_variables.len() {
-                                    let things = variable_to_things.get_mut(local_variables[i]).unwrap();
-                                    let result_set = variables.get(local_variables[i]).unwrap();
-                                    match result_set.mode {
-                                        ResultSetMode::Empty => (), 
-                                        ResultSetMode::Thing => {
-                                            things.push(result_set.thing.unwrap());
-                                        }, 
-                                        ResultSetMode::Multi => {
-                                            let multi = result_set.multi.as_ref().unwrap();
-                                            for thing in multi {
-                                                things.push(thing);
-                                            }
-                                        }
-                                    }
-                                }
-                                let mut things_for_roles = Vec::new();
-                                for i in 0..local_variables.len() {
-                                    let things_for_role = variable_to_things.get(local_variables[i]).unwrap();
-                                    things_for_roles.push(things_for_role.as_slice());
-                                }
-                                
-                                let cartesian = cartesian_product(things_for_roles.as_slice());
-                                
-                                //println!("variable_to_things {:?}", variable_to_things);
-                                //println!("things_for_roles {:?}", things_for_roles.as_slice());
-                                
-                                let mut appearance_sets = Vec::new();
-                                for things_in_appearance_set in cartesian {
-                                    let mut appearances = Vec::new();
-                                    for i in 0..things_in_appearance_set.len() {
-                                        let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
-                                        let (appearance, _) = self.database.create_apperance(things_in_appearance_set[i], Arc::clone(&role));
-                                        appearances.push(appearance);
-                                    }
-                                    let (appearance_set, _) = self.database.create_appearance_set(appearances);
-                                    appearance_sets.push(appearance_set);
-                                }
-
-                                // println!("Appearance sets {:?}", appearance_sets);     
-
-                                for appearance_set in appearance_sets {
-                                    // create the posit of the found type
-                                    if value_as_json.is_some() {
-                                        let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), appearance_time.clone().unwrap());
-                                        posits.push(kept_posit.posit());
-                                        println!("Posit: {}", kept_posit);
-                                    }
-                                    else if value_as_string.is_some() {
-                                        let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), appearance_time.clone().unwrap());
-                                        posits.push(kept_posit.posit());
-                                        println!("Posit: {}", kept_posit);
-                                    }
-                                    else if value_as_time.is_some() {
-                                        let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), appearance_time.clone().unwrap());
-                                        posits.push(kept_posit.posit());
-                                        println!("Posit: {}", kept_posit);
-                                    }
-                                    else if value_as_certainty.is_some() {
-                                        let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), appearance_time.clone().unwrap());
-                                        posits.push(kept_posit.posit());
-                                        println!("Posit: {}", kept_posit);
-                                    }
-                                    else if value_as_decimal.is_some() {
-                                        let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), appearance_time.clone().unwrap());
-                                        posits.push(kept_posit.posit());
-                                        println!("Posit: {}", kept_posit);
-                                    }
-                                    else if value_as_i64.is_some() {
-                                        let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), appearance_time.clone().unwrap());
-                                        posits.push(kept_posit.posit());
-                                        println!("Posit: {}", kept_posit);
-                                    }
-                                }
-                                
-                            }
-                            _ => ()
-                        }
-                    }
-                    if variable.is_some() {
-                        match variables.entry(variable.unwrap()) {
-                            Entry::Vacant(entry) => {
-                                let mut result_set = ResultSet::new();
-                                for posit in posits {
-                                    result_set.insert(posit);
-                                }
-                                entry.insert(result_set);
-                            }
-                            Entry::Occupied(mut entry) => {
-                                let result_set = entry.get_mut();
-                                for posit in posits {
-                                    result_set.insert(posit);
-                                }
-                            }
-                        }
-                    }
-                }
+                Rule::add_role => self.add_role(command),
+                Rule::add_posit => self.add_posit(command, &mut variables),
+                Rule::search => self.search(command, &mut variables),
                 _ => ()
             }
         }
