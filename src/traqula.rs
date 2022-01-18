@@ -329,26 +329,47 @@ pub fn posits_involving_thing(database: &Database, thing: Thing) -> ResultSet {
 }
 
 // value parsers
-fn parse_string(value: &str) -> String {
+fn parse_string(value: &str) -> Option<String> {
     let mut c = value.chars();
     c.next();
     c.next_back();
-    c.collect::<String>().replace("\"\"", "\"")
+    Some(c.collect::<String>().replace("\"\"", "\""))
 }
-fn parse_i64(value: &str) -> i64 {
-    value.parse::<i64>().unwrap()
+fn parse_string_constant(value: &str) -> Option<String> {
+    None
 }
-fn parse_cerainty(value: &str) -> Certainty {
+fn parse_i64(value: &str) -> Option<i64> {
+    match value.parse::<i64>() {
+        Ok(v) => Some(v), 
+        Err(_) => None
+    }
+}
+fn parse_i64_constant(value: &str) -> Option<i64> {
+    None
+}
+fn parse_certainty(value: &str) -> Option<Certainty> {
     let value = value.replace("%", "");
-    Certainty::new(value.parse::<u8>().unwrap())
+    match value.parse::<u8>() {
+        Ok(v) => Some(Certainty::new(v)), 
+        Err(_) => None
+    }
 }
-fn parse_decimal(value: &str) -> Decimal {
-    Decimal::from_str(value).unwrap()
+fn parse_certainty_constant(value: &str) -> Option<Certainty> {
+    None
 }
-fn parse_json(value: &str) -> JSON {
-    JSON::from_str(value).unwrap()
+fn parse_decimal(value: &str) -> Option<Decimal> {
+    Decimal::from_str(value)
 }
-pub fn parse_time(value: &str) -> Time {
+fn parse_decimal_constant(value: &str) -> Option<Decimal> {
+    None
+}
+fn parse_json(value: &str) -> Option<JSON> {
+    JSON::from_str(value)
+}
+fn parse_json_constant(value: &str) -> Option<JSON> {
+    None
+}
+pub fn parse_time(value: &str) -> Option<Time> {
     let stripped = value.replace("'", "");
     let time = "'".to_owned() + &stripped + "'";
     // MAINTENANCE: The section below needs to be extended when new data types are added
@@ -356,9 +377,15 @@ pub fn parse_time(value: &str) -> Time {
         static ref RE_NAIVE_DATE: Regex = Regex::new(r#"'[0-9]{4}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
     }
     if RE_NAIVE_DATE.is_match(&time) {
-        return Time::new_date_from(&stripped)
+        return Some(Time::new_date_from(&stripped))
     }
-    Time::new()
+    None
+}
+fn parse_time_constant(value: &str) -> Option<Time> {
+    match value {
+        "@NOW" => Some(Time::new()),
+        _ => None
+    }
 }
 
 use pest::Parser;
@@ -441,36 +468,56 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         Rule::appearing_value => {
                                             for value_type in component.into_inner() {
                                                 match value_type.as_rule() {
+                                                    Rule::constant => {
+                                                        println!("Constant: {}", value_type.as_str());
+                                                        value_as_json = parse_json_constant(value_type.as_str());
+                                                        value_as_string = parse_string_constant(value_type.as_str());
+                                                        value_as_time = parse_time_constant(value_type.as_str());
+                                                        value_as_certainty = parse_certainty_constant(value_type.as_str());
+                                                        value_as_decimal = parse_decimal_constant(value_type.as_str());
+                                                        value_as_i64 = parse_i64_constant(value_type.as_str());
+                                                    }
                                                     Rule::json => {
                                                         //println!("JSON: {}", value_type.as_str());
-                                                        value_as_json = Some(parse_json(value_type.as_str()))
+                                                        value_as_json = parse_json(value_type.as_str());
                                                     }
                                                     Rule::string => {
                                                         //println!("String: {}", value_type.as_str());
-                                                        value_as_string = Some(parse_string(value_type.as_str()));  
+                                                        value_as_string = parse_string(value_type.as_str());  
                                                     }
                                                     Rule::time => {
                                                         //println!("Time: {}", value_type.as_str());
-                                                        value_as_time = Some(parse_time(value_type.as_str()));
+                                                        value_as_time = parse_time(value_type.as_str());
                                                     }
                                                     Rule::certainty => {
                                                         //println!("Certainty: {}", value_type.as_str());
-                                                        value_as_certainty = Some(parse_cerainty(value_type.as_str()));
+                                                        value_as_certainty = parse_certainty(value_type.as_str());
                                                     }
                                                     Rule::decimal => {
                                                         //println!("Decimal: {}", value_type.as_str());
-                                                        value_as_decimal = Some(parse_decimal(value_type.as_str()));
+                                                        value_as_decimal = parse_decimal(value_type.as_str());
                                                     }
                                                     Rule::int => {
                                                         //println!("i64: {}", value_type.as_str());
-                                                        value_as_i64 = Some(parse_i64(value_type.as_str()));
+                                                        value_as_i64 = parse_i64(value_type.as_str());
                                                     }, 
                                                     _ => ()
                                                 }
                                             }
                                         }
                                         Rule::appearance_time => {
-                                            appearance_time = Some(parse_time(component.as_str()));
+                                            for time_type in component.into_inner() {
+                                                match time_type.as_rule() {
+                                                    Rule::constant => {
+                                                        appearance_time = parse_time_constant(time_type.as_str());
+                                                    }
+                                                    Rule::time => {
+                                                        //println!("Time: {}", value_type.as_str());
+                                                        appearance_time = parse_time(time_type.as_str());
+                                                    }
+                                                    _ => ()
+                                                }
+                                            }
                                         }
                                         _ => ()
                                     }
@@ -620,12 +667,3 @@ pub fn cartesian_product<T: Clone>(lists: &[&[T]]) -> Vec<Vec<T>> {
     }
 }
 
-pub fn print_cartesian_product(lists: &[&[u64]]) {
-    let products = cartesian_product(lists);
-
-    for product in products.iter() {
-        let product_str: Vec<_> = product.iter().map(|n| format!("{}", n)).collect();
-        let line = product_str.join(" ");
-        println!("{}", line);
-    }
-}

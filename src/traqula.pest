@@ -15,6 +15,7 @@ time = { "'" ~ (digit | "-" | ":")+ ~ "'" }
 json = @{ "{" ~ (json | !"}" ~ ANY)* ~ "}" }
 string = { "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
 variable = { CASED_LETTER ~ (CASED_LETTER | digit | "_" )+ }
+constant = { "@" ~ UPPERCASE_LETTER+ }
 
 // add role command
 role = { (CASED_LETTER | SPACE_SEPARATOR)+ }
@@ -25,7 +26,7 @@ generate = { "+" ~ variable }
 recollect = { "$" ~ variable }
 appearance = { "(" ~ (generate | recollect) ~ "," ~ role ~ ")" } 
 appearance_set = { "{" ~ (appearance ~ ","?)+ ~ "}" }
-appearing_value = { json | string | time | certainty | decimal | int }
-appearance_time = { time }
+appearing_value = { constant | json | string | time | certainty | decimal | int }
+appearance_time = { constant | time }
 posit = { "[" ~ appearance_set ~ "," ~ appearing_value ~ "," ~ appearance_time ~ "]" }
 add_posit = { ^"add posit " ~ (generate? ~ posit ~ ","?)+ ~ ";" } 

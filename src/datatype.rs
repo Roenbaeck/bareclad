@@ -89,7 +89,7 @@ impl DataType for Time {
     const UID: u8 = 8;
     const DATA_TYPE: &'static str = "Time";
     fn convert(value: &ValueRef) -> Time {
-        parse_time(value.as_str().unwrap())
+        parse_time(value.as_str().unwrap()).unwrap()
     }   
 }
 
