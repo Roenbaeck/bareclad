@@ -23,7 +23,7 @@ add_role = { ^"add role" ~ (role ~ ","?)+ ~ ";" }
 
 // add posit command
 insert = { "+" ~ variable }
-recall = { "$" ~ variable }
+recall = { variable }
 appearance = { "(" ~ (insert | recall) ~ "," ~ role ~ ")" } 
 appearance_set = { "{" ~ (appearance ~ ","?)+ ~ "}" }
 appearing_value = { constant | json | string | time | certainty | decimal | int }
