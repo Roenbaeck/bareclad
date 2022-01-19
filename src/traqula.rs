@@ -470,7 +470,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             Rule::role => {
                                                 roles.push(appearance.as_str());
                                             },
-                                            _ => ()
+                                            _ => println!("Unknown appearance: {:?}", appearance)
                                         }
                                     }
                                 }
@@ -511,7 +511,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             //println!("i64: {}", value_type.as_str());
                                             value_as_i64 = parse_i64(value_type.as_str());
                                         }, 
-                                        _ => ()
+                                        _ => println!("Unknown value type: {:?}", value_type)
                                     }
                                 }
                             }
@@ -525,11 +525,11 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             //println!("Time: {}", value_type.as_str());
                                             appearance_time = parse_time(time_type.as_str());
                                         }
-                                        _ => ()
+                                        _ => println!("Unknown time type: {:?}", time_type)
                                     }
                                 }
                             }
-                            _ => ()
+                            _ => println!("Unknown component: {:?}", component)
                         }
                     }
                     let mut variable_to_things = HashMap::new();
@@ -611,7 +611,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                         }
                     }
                 }
-                _ => ()
+                _ => println!("Unknown structure: {:?}", structure)
             }
             if variable.is_some() {
                 match variables.entry(variable.unwrap()) {
@@ -633,7 +633,48 @@ impl<'db, 'en> Engine<'db, 'en> {
         }
     }
     fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
-        println!("Search: {}", command.as_str());  
+        for clause in command.into_inner() {
+            match clause.as_rule() {
+                Rule::search_clause => {
+                    for structure in clause.into_inner() {
+                        match structure.as_rule() {
+                            Rule::posit_search => {
+                                for component in structure.into_inner() {
+                                    match component.as_rule() {
+                                        Rule::insert => {
+                                            let variable = Some(component.into_inner().next().unwrap().as_str().to_string()); 
+                                            println!("Insert: {}", &variable.unwrap());
+                                        }
+                                        Rule::appearance_set_search => {
+                                            println!("Appearance set search: {}", component.as_str());
+                                        }
+                                        Rule::appearing_value_search => {
+                                            println!("Appearing value search: {}", component.as_str());
+                                        }
+                                        Rule::appearance_time_search => {
+                                            println!("Appearing time search: {}", component.as_str());
+                                        }
+                                        _ => println!("Unknown component: {:?}", component)
+                                    }
+                                } 
+                            }, 
+                            _ => println!("Unknown posit structure: {:?}", structure)
+                        }
+                    } 
+                },
+                Rule::return_clause => {
+                    for structure in clause.into_inner() {
+                        match structure.as_rule() {
+                            Rule::recall => {
+                                println!("Return recall: {}", structure.as_str()); 
+                            }, 
+                            _ => println!("Unknown return structure: {:?}", structure)
+                        }
+                    } 
+                }, 
+                _ => println!("Unknown clause: {:?}", clause)
+            }
+        }
     }
     pub fn execute(&self, traqula: &str) {
         let mut variables: Variables = Variables::default();
@@ -643,7 +684,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                 Rule::add_role => self.add_role(command),
                 Rule::add_posit => self.add_posit(command, &mut variables),
                 Rule::search => self.search(command, &mut variables),
-                _ => ()
+                Rule::EOI => (), // end of input
+                _ => println!("Unknown command: {:?}", command)
             }
         }
         println!("Variables: {:?}", &variables);
