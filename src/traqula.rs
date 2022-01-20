@@ -434,7 +434,7 @@ impl<'db, 'en> Engine<'db, 'en> {
             let mut value_as_decimal: Option<Decimal> = None;
             let mut value_as_i64: Option<i64> = None;
             let mut value_as_certainty: Option<Certainty> = None;
-            let mut appearance_time: Option<Time> = None;
+            let mut time: Option<Time> = None;
             let mut local_variables = Vec::new();
             let mut roles = Vec::new();
             match structure.as_rule() {
@@ -479,7 +479,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 for value_type in component.into_inner() {
                                     match value_type.as_rule() {
                                         Rule::constant => {
-                                            println!("Constant: {}", value_type.as_str());
+                                            //println!("Constant: {}", value_type.as_str());
                                             value_as_json = parse_json_constant(value_type.as_str());
                                             value_as_string = parse_string_constant(value_type.as_str());
                                             value_as_time = parse_time_constant(value_type.as_str());
@@ -519,11 +519,11 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 for time_type in component.into_inner() {
                                     match time_type.as_rule() {
                                         Rule::constant => {
-                                            appearance_time = parse_time_constant(time_type.as_str());
+                                            time = parse_time_constant(time_type.as_str());
                                         }
                                         Rule::time => {
                                             //println!("Time: {}", value_type.as_str());
-                                            appearance_time = parse_time(time_type.as_str());
+                                            time = parse_time(time_type.as_str());
                                         }
                                         _ => println!("Unknown time type: {:?}", time_type)
                                     }
@@ -580,32 +580,32 @@ impl<'db, 'en> Engine<'db, 'en> {
                     for appearance_set in appearance_sets {
                         // create the posit of the found type
                         if value_as_json.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), appearance_time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
                             println!("Posit: {}", kept_posit);
                         }
                         else if value_as_string.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), appearance_time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
                             println!("Posit: {}", kept_posit);
                         }
                         else if value_as_time.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), appearance_time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
                             println!("Posit: {}", kept_posit);
                         }
                         else if value_as_certainty.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), appearance_time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
                             println!("Posit: {}", kept_posit);
                         }
                         else if value_as_decimal.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), appearance_time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
                             println!("Posit: {}", kept_posit);
                         }
                         else if value_as_i64.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), appearance_time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
                             println!("Posit: {}", kept_posit);
                         }
@@ -637,22 +637,131 @@ impl<'db, 'en> Engine<'db, 'en> {
             match clause.as_rule() {
                 Rule::search_clause => {
                     for structure in clause.into_inner() {
+                        let mut variable: Option<String> = None;
+                        let mut posits: Vec<Thing> = Vec::new();
+                        let mut value_as_json: Option<JSON> = None;
+                        let mut value_as_string: Option<String> = None;
+                        let mut value_as_time: Option<Time> = None;
+                        let mut value_as_decimal: Option<Decimal> = None;
+                        let mut value_as_i64: Option<i64> = None;
+                        let mut value_as_certainty: Option<Certainty> = None;
+                        let mut value_as_variable: Option<&str> = None;
+                        let mut value_is_wildcard = false;
+                        let mut time: Option<Time> = None;
+                        let mut time_as_variable: Option<&str> = None;
+                        let mut time_is_wildcard = false;
+                        let mut local_variables = Vec::new();
+                        let mut roles = Vec::new();
                         match structure.as_rule() {
                             Rule::posit_search => {
                                 for component in structure.into_inner() {
                                     match component.as_rule() {
                                         Rule::insert => {
                                             let variable = Some(component.into_inner().next().unwrap().as_str().to_string()); 
-                                            println!("Insert: {}", &variable.unwrap());
+                                            //println!("Insert: {}", &variable.unwrap());
                                         }
                                         Rule::appearance_set_search => {
-                                            println!("Appearance set search: {}", component.as_str());
+                                            // println!("Appearance set search: {}", component.as_str());
+                                            for member in component.into_inner() {
+                                                for appearance in member.into_inner() {
+                                                    match appearance.as_rule() {
+                                                        Rule::insert => {
+                                                            let local_variable = appearance.into_inner().next().unwrap().as_str();
+                                                            local_variables.push(local_variable);
+                                                            match variables.entry(local_variable.to_string()) {
+                                                                Entry::Vacant(entry) => {
+                                                                    let result_set = ResultSet::new();
+                                                                    entry.insert(result_set);
+                                                                }
+                                                                _ => ()
+                                                            }
+                                                        }
+                                                        Rule::wildcard => {
+                                                            local_variables.push(appearance.as_str());
+                                                            //println!("wildcard");
+                                                        }
+                                                        Rule::recall => {
+                                                            local_variables.push(appearance.into_inner().next().unwrap().as_str());
+                                                        }
+                                                        Rule::role => {
+                                                            roles.push(appearance.as_str());
+                                                        },
+                                                        _ => println!("Unknown appearance: {:?}", appearance)
+                                                    }
+                                                }
+                                            }
                                         }
                                         Rule::appearing_value_search => {
-                                            println!("Appearing value search: {}", component.as_str());
+                                            // println!("Appearing value search: {}", component.as_str());
+                                            for value_type in component.into_inner() {
+                                                match value_type.as_rule() {
+                                                    Rule::insert | Rule::recall => {
+                                                        let local_variable = value_type.into_inner().next().unwrap().as_str();
+                                                        value_as_variable = Some(local_variable);
+                                                    }
+                                                    Rule::wildcard => {
+                                                        value_is_wildcard = true;
+                                                        //println!("wildcard");
+                                                    }
+                                                    Rule::constant => {
+                                                        //println!("Constant: {}", value_type.as_str());
+                                                        value_as_json = parse_json_constant(value_type.as_str());
+                                                        value_as_string = parse_string_constant(value_type.as_str());
+                                                        value_as_time = parse_time_constant(value_type.as_str());
+                                                        value_as_certainty = parse_certainty_constant(value_type.as_str());
+                                                        value_as_decimal = parse_decimal_constant(value_type.as_str());
+                                                        value_as_i64 = parse_i64_constant(value_type.as_str());
+                                                    }
+                                                    Rule::json => {
+                                                        //println!("JSON: {}", value_type.as_str());
+                                                        value_as_json = parse_json(value_type.as_str());
+                                                    }
+                                                    Rule::string => {
+                                                        //println!("String: {}", value_type.as_str());
+                                                        value_as_string = parse_string(value_type.as_str());  
+                                                    }
+                                                    Rule::time => {
+                                                        //println!("Time: {}", value_type.as_str());
+                                                        value_as_time = parse_time(value_type.as_str());
+                                                    }
+                                                    Rule::certainty => {
+                                                        //println!("Certainty: {}", value_type.as_str());
+                                                        value_as_certainty = parse_certainty(value_type.as_str());
+                                                    }
+                                                    Rule::decimal => {
+                                                        //println!("Decimal: {}", value_type.as_str());
+                                                        value_as_decimal = parse_decimal(value_type.as_str());
+                                                    }
+                                                    Rule::int => {
+                                                        //println!("i64: {}", value_type.as_str());
+                                                        value_as_i64 = parse_i64(value_type.as_str());
+                                                    }, 
+                                                    _ => println!("Unknown value type: {:?}", value_type)
+                                                }
+                                            }
                                         }
                                         Rule::appearance_time_search => {
-                                            println!("Appearing time search: {}", component.as_str());
+                                            // println!("Appearing time search: {}", component.as_str());
+                                            for time_type in component.into_inner() {
+                                                match time_type.as_rule() {
+                                                    Rule::insert | Rule::recall => {
+                                                        let local_variable = time_type.into_inner().next().unwrap().as_str();
+                                                        time_as_variable = Some(local_variable);
+                                                    }
+                                                    Rule::wildcard => {
+                                                        time_is_wildcard = true;
+                                                        //println!("wildcard");
+                                                    }
+                                                    Rule::constant => {
+                                                        time = parse_time_constant(time_type.as_str());
+                                                    }
+                                                    Rule::time => {
+                                                        //println!("Time: {}", value_type.as_str());
+                                                        time = parse_time(time_type.as_str());
+                                                    }
+                                                    _ => println!("Unknown time type: {:?}", time_type)
+                                                }
+                                            }
                                         }
                                         _ => println!("Unknown component: {:?}", component)
                                     }
@@ -660,6 +769,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                             }, 
                             _ => println!("Unknown posit structure: {:?}", structure)
                         }
+                        println!("Local variables: {:?}", local_variables);
                     } 
                 },
                 Rule::return_clause => {

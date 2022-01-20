@@ -38,8 +38,8 @@ add_posit = { ^"add posit" ~ (posit ~ ","?)+ ~ ";" }
 wildcard = { "*" }
 appearance_search = { "(" ~ (wildcard | insert | recall) ~ "," ~ (wildcard | role) ~ ")" } 
 appearance_set_search = { (wildcard | "{" ~ (appearance_search ~ ","?)+ ~ "}") }
-appearing_value_search = { (wildcard | insert | recall | appearing_value) }
-appearance_time_search = { (wildcard | insert | recall | appearance_time) }
+appearing_value_search = { (wildcard | insert | recall | constant | json | string | time | certainty | decimal | int) }
+appearance_time_search = { (wildcard | insert | recall | constant | time) }
 posit_search = { 
     insert? ~ 
     "[" ~ appearance_set_search ~ "," ~ appearing_value_search ~ "," ~ appearance_time_search ~ "]" 
