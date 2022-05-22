@@ -26,6 +26,8 @@ use crate::persist::Persistor;
 use crate::datatype::{DataType, Time};
 
 // ------------- Thing -------------
+// Mem check example: 
+// https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=5b196af2532ce0d3413e4523b17980a5
 pub type Thing = u64; 
 
 pub type ThingHasher = BuildHasherDefault<SeaHasher>;
