@@ -525,6 +525,9 @@ pub struct Database<'db> {
     pub appearance_set_to_posit_thing_lookup:
         Arc<Mutex<ThingLookup<Arc<AppearanceSet>, OtherHasher>>>,
     pub role_to_posit_thing_lookup: Arc<Mutex<ThingLookup<Thing, OtherHasher>>>,
+    /// Reverse lookup: posit thing -> its appearance set (type-erased from value/time).
+    pub posit_thing_to_appearance_set_lookup:
+        Arc<Mutex<HashMap<Thing, Arc<AppearanceSet>, ThingHasher>>>,
     pub role_name_to_data_type_lookup: Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>>,
     // responsible for the the persistence layer
     pub persistor: Arc<Mutex<Persistor<'db>>>,
@@ -544,6 +547,8 @@ impl<'db> Database<'db> {
         let appearance_set_to_posit_thing_lookup = ThingLookup::new();
         let role_to_posit_thing_lookup = ThingLookup::new();
         let role_name_to_data_type_lookup = Lookup::new();
+        let posit_thing_to_appearance_set_lookup: HashMap<Thing, Arc<AppearanceSet>, ThingHasher> =
+            HashMap::default();
         let persistor = persistor;
 
         // Create the database so that we can prime it before returning it
@@ -562,6 +567,9 @@ impl<'db> Database<'db> {
                 appearance_set_to_posit_thing_lookup,
             )),
             role_to_posit_thing_lookup: Arc::new(Mutex::new(role_to_posit_thing_lookup)),
+            posit_thing_to_appearance_set_lookup: Arc::new(Mutex::new(
+                posit_thing_to_appearance_set_lookup,
+            )),
             role_name_to_data_type_lookup: Arc::new(Mutex::new(role_name_to_data_type_lookup)),
             persistor: Arc::new(Mutex::new(persistor)),
         };
@@ -623,6 +631,11 @@ impl<'db> Database<'db> {
     }
     pub fn role_to_posit_thing_lookup(&self) -> Arc<Mutex<ThingLookup<Thing, OtherHasher>>> {
         Arc::clone(&self.role_to_posit_thing_lookup)
+    }
+    pub fn posit_thing_to_appearance_set_lookup(
+        &self,
+    ) -> Arc<Mutex<HashMap<Thing, Arc<AppearanceSet>, ThingHasher>>> {
+        Arc::clone(&self.posit_thing_to_appearance_set_lookup)
     }
     pub fn create_thing(&self) -> Arc<Thing> {
         let thing = self.thing_generator.lock().unwrap().generate();
@@ -702,6 +715,10 @@ impl<'db> Database<'db> {
                 .lock()
                 .unwrap()
                 .insert(kept_posit.appearance_set(), kept_posit.posit());
+            self.posit_thing_to_appearance_set_lookup
+                .lock()
+                .unwrap()
+                .insert(kept_posit.posit(), kept_posit.appearance_set());
             // Index posit thing by each role in its appearance set
             for appearance in kept_posit.appearance_set().appearances().iter() {
                 let role_thing = appearance.role().role();
