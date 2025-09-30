@@ -37,7 +37,7 @@ add_posit = { ^"add posit" ~ (posit ~ ","?)+ ~ ";" }
 // search command
 wildcard = { "*" }
 recall_union = { recall ~ ("|" ~ recall)+ }
-appearance_search = { "(" ~ (wildcard | insert | recall | recall_union) ~ "," ~ (wildcard | role) ~ ")" } 
+appearance_search = { "(" ~ (wildcard | insert | recall_union | recall) ~ "," ~ (wildcard | role) ~ ")" } 
 appearance_set_search = { (wildcard | "{" ~ (appearance_search ~ ","?)+ ~ "}") }
 appearing_value_search = { (wildcard | insert | recall | constant | json | string | time | certainty | decimal | int) }
 appearance_time_search = { (wildcard | insert | recall | constant | time) }
@@ -47,4 +47,8 @@ posit_search = {
 }
 return_clause = { ^"return" ~ (recall ~ ","?)+ }
 search_clause = { ^"search" ~ (posit_search ~ ","?)+ }
-search = { search_clause ~ return_clause ~ ";" }
+// where clause: variable comparator time-constant/literal, optional ANDs
+comparator = { "<=" | ">=" | "<" | ">" | "==" | "=" }
+condition = { recall ~ comparator ~ (constant | time) }
+where_clause = { ^"where" ~ condition ~ ("and" ~ condition)* }
+search = { search_clause ~ where_clause? ~ return_clause ~ ";" }

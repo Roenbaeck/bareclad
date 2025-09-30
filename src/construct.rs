@@ -529,6 +529,8 @@ pub struct Database<'db> {
     pub posit_thing_to_appearance_set_lookup:
         Arc<Mutex<HashMap<Thing, Arc<AppearanceSet>, ThingHasher>>>,
     pub role_name_to_data_type_lookup: Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>>,
+    /// Type-erased index: posit thing -> its time (for generic time filtering)
+    pub posit_time_lookup: Arc<Mutex<HashMap<Thing, Time, ThingHasher>>>,
     // responsible for the the persistence layer
     pub persistor: Arc<Mutex<Persistor<'db>>>,
 }
@@ -549,6 +551,7 @@ impl<'db> Database<'db> {
         let role_name_to_data_type_lookup = Lookup::new();
         let posit_thing_to_appearance_set_lookup: HashMap<Thing, Arc<AppearanceSet>, ThingHasher> =
             HashMap::default();
+        let posit_time_lookup: HashMap<Thing, Time, ThingHasher> = HashMap::default();
         let persistor = persistor;
 
         // Create the database so that we can prime it before returning it
@@ -571,6 +574,7 @@ impl<'db> Database<'db> {
                 posit_thing_to_appearance_set_lookup,
             )),
             role_name_to_data_type_lookup: Arc::new(Mutex::new(role_name_to_data_type_lookup)),
+            posit_time_lookup: Arc::new(Mutex::new(posit_time_lookup)),
             persistor: Arc::new(Mutex::new(persistor)),
         };
 
@@ -636,6 +640,9 @@ impl<'db> Database<'db> {
         &self,
     ) -> Arc<Mutex<HashMap<Thing, Arc<AppearanceSet>, ThingHasher>>> {
         Arc::clone(&self.posit_thing_to_appearance_set_lookup)
+    }
+    pub fn posit_time_lookup(&self) -> Arc<Mutex<HashMap<Thing, Time, ThingHasher>>> {
+        Arc::clone(&self.posit_time_lookup)
     }
     pub fn create_thing(&self) -> Arc<Thing> {
         let thing = self.thing_generator.lock().unwrap().generate();
@@ -719,6 +726,11 @@ impl<'db> Database<'db> {
                 .lock()
                 .unwrap()
                 .insert(kept_posit.posit(), kept_posit.appearance_set());
+            // Record posit time in type-erased lookup for generic time filtering
+            self.posit_time_lookup
+                .lock()
+                .unwrap()
+                .insert(kept_posit.posit(), kept_posit.time().clone());
             // Index posit thing by each role in its appearance set
             for appearance in kept_posit.appearance_set().appearances().iter() {
                 let role_thing = appearance.role().role();

@@ -50,24 +50,26 @@ fn main() {
     );
     let traqula_content = read_to_string(traqula_file_to_run_on_startup).unwrap();
     engine.execute(&traqula_content);
-    println!(
-        "Kept roles: {}",
-        bareclad.role_keeper().lock().unwrap().len()
-    );
-    println!(
-        "Kept appearances: {}",
-        bareclad.appearance_keeper().lock().unwrap().len()
-    );
-    println!(
-        "Kept appearance sets: {}",
-        bareclad.appearance_set_keeper().lock().unwrap().len()
-    );
-    println!(
-        "Kept posits: {}",
-        bareclad.posit_keeper().lock().unwrap().len()
-    );
-    println!(
-        "Role->data type partitions: {:?}",
-        bareclad.role_name_to_data_type_lookup().lock().unwrap()
-    );
+    if cfg!(debug_assertions) {
+        println!(
+            "Kept roles: {}",
+            bareclad.role_keeper().lock().unwrap().len()
+        );
+        println!(
+            "Kept appearances: {}",
+            bareclad.appearance_keeper().lock().unwrap().len()
+        );
+        println!(
+            "Kept appearance sets: {}",
+            bareclad.appearance_set_keeper().lock().unwrap().len()
+        );
+        println!(
+            "Kept posits: {}",
+            bareclad.posit_keeper().lock().unwrap().len()
+        );
+        println!(
+            "Role->data type partitions: {:?}",
+            bareclad.role_name_to_data_type_lookup().lock().unwrap()
+        );
+    }
 }

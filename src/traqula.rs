@@ -733,6 +733,12 @@ impl<'db, 'en> Engine<'db, 'en> {
     fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
         // Track variables referenced in this search command to guide projection
         let mut active_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Track candidate name posits (filtered by any time constraint) to drive return of n/t
+        let mut name_candidate_posits: Option<RoaringTreemap> = None;
+    // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
+    let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
+        // Parsed where conditions on time variables: var -> (comparator, Time)
+        let mut where_time: Vec<(String, String, Time)> = Vec::new();
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
@@ -976,6 +982,28 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         });
                                     }
                                     if let Some(cands) = candidates {
+                                        // Optional time filter for any role when a literal/constant time is provided
+                                        let mut cands = cands;
+                                        if let Some(ref t) = _time {
+                                            let mut filtered = RoaringTreemap::new();
+                                            let tk = self.database.posit_time_lookup();
+                                            let guard = tk.lock().unwrap();
+                                            for id in cands.iter() {
+                                                if let Some(pt) = guard.get(&id) {
+                                                    if pt == t { filtered.insert(id); }
+                                                }
+                                            }
+                                            cands = filtered;
+                                        }
+                                        // Remember candidate posits for projection when returning n/t
+                                        if !cands.is_empty() && roles.len() == 1 {
+                                            name_candidate_posits = Some(cands.clone());
+                                        }
+                                        // If the time slot used a variable, capture its candidate posits under that variable name
+                                        if let Some(varname) = _time_as_variable {
+                                            time_var_candidates.insert(varname.to_string(), cands.clone());
+                                            active_vars.insert(varname.to_string());
+                                        }
                                         // Bind outer posit variable (e.g., +p)
                                         if let Some(var) = &variable {
                                             let name = var.strip_prefix('+').unwrap_or(var);
@@ -1171,6 +1199,31 @@ impl<'db, 'en> Engine<'db, 'en> {
                         }
                     }
                 }
+                Rule::where_clause => {
+                    // Parse one or more conditions of the form: x <= 'YYYY-MM-DD'
+                    for part in clause.into_inner() {
+                        match part.as_rule() {
+                            Rule::condition => {
+                                let mut var: Option<String> = None;
+                                let mut op: Option<String> = None;
+                                let mut rhs_time: Option<Time> = None;
+                                for c in part.into_inner() {
+                                    match c.as_rule() {
+                                        Rule::recall => var = Some(c.into_inner().next().unwrap().as_str().to_string()),
+                                        Rule::comparator => op = Some(c.as_str().to_string()),
+                                        Rule::constant => rhs_time = parse_time_constant(c.as_str()),
+                                        Rule::time => rhs_time = parse_time(c.as_str()),
+                                        _ => {}
+                                    }
+                                }
+                                if let (Some(v), Some(o), Some(t)) = (var, op, rhs_time) {
+                                    where_time.push((v, o, t));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 Rule::return_clause => {
                     let mut returns: Vec<String> = Vec::new();
                     for structure in clause.into_inner() {
@@ -1186,28 +1239,75 @@ impl<'db, 'en> Engine<'db, 'en> {
                     }
                     // Generalized projection: build rows from requested variables. For name/time, derive from identity variables.
                     if !returns.is_empty() {
-                        // Determine driving identity set: support union w|h when name clause used recall_union
-                        let mut driving_ids: Vec<Thing> = Vec::new();
+                        // If we have candidate posits from the search (possibly time-filtered), use them directly.
+                        if let Some(ref name_cands) = name_candidate_posits {
+                            let want_name = returns.iter().any(|v| v == "n");
+                            let want_time = returns.iter().any(|v| v == "t");
+                            // Apply where constraints on any bound time variable (e.g., t, tw)
+                            let mut cands = name_cands.clone();
+                            if !where_time.is_empty() {
+                                let tk = self.database.posit_time_lookup();
+                                let guard = tk.lock().unwrap();
+                                for (v, op, tcmp) in &where_time {
+                                    if let Some(var_bitmap) = time_var_candidates.get(v) {
+                                        // Filter that variable's candidates by comparator and intersect with current cands
+                                        let mut filtered = RoaringTreemap::new();
+                                        for pid in var_bitmap.iter() {
+                                            if let Some(pt) = guard.get(&pid) {
+                                                let ok = match op.as_str() {
+                                                    "<" => pt < tcmp,
+                                                    "<=" => pt <= tcmp,
+                                                    ">" => pt > tcmp,
+                                                    ">=" => pt >= tcmp,
+                                                    "==" | "=" => pt == tcmp,
+                                                    _ => false,
+                                                };
+                                                if ok { filtered.insert(pid); }
+                                            }
+                                        }
+                                        // Intersect with overall candidates (to keep it aligned with name clause)
+                                        let mut new_cands = RoaringTreemap::new();
+                                        for pid in cands.iter() {
+                                            if filtered.contains(pid) { new_cands.insert(pid); }
+                                        }
+                                        cands = new_cands;
+                                    }
+                                }
+                            }
+                            for pid in cands.iter() {
+                                let p = {
+                                    let lk = self.database.posit_keeper();
+                                    let mut guard = lk.lock().unwrap();
+                                    guard.posit::<String>(pid)
+                                };
+                                match (want_name, want_time) {
+                                    (true, true) => println!("{}, {}", p.value(), p.time()),
+                                    (true, false) => println!("{}", p.value()),
+                                    (false, true) => println!("{}", p.time()),
+                                    _ => {}
+                                }
+                            }
+                            // We've emitted based on exact candidates; skip identity-driven projection to avoid duplicates.
+                            continue;
+                        }
+                        // Determine driving identity set: include w, h, idw, idh and deduplicate via bitmap.
+                        let mut driving_ids = RoaringTreemap::new();
                         let mut collect = |rs: &ResultSet| {
                             match rs.mode {
-                                ResultSetMode::Thing => driving_ids.push(rs.thing.unwrap()),
-                                ResultSetMode::Multi => for t in rs.multi.as_ref().unwrap().iter() { driving_ids.push(t); },
+                                ResultSetMode::Thing => { driving_ids.insert(rs.thing.unwrap()); }
+                                ResultSetMode::Multi => for t in rs.multi.as_ref().unwrap().iter() { driving_ids.insert(t); },
                                 ResultSetMode::Empty => {}
                             }
                         };
-                        if active_vars.contains("w") && active_vars.contains("h") {
-                            if let Some(wrs) = variables.get("w") { collect(wrs); }
-                            if let Some(hrs) = variables.get("h") { collect(hrs); }
-                        } else if active_vars.contains("w") {
-                            if let Some(wrs) = variables.get("w") { collect(wrs); }
-                        } else if active_vars.contains("h") {
-                            if let Some(hrs) = variables.get("h") { collect(hrs); }
+                        for candidate in ["w", "h", "idw", "idh"].iter() {
+                            if let Some(rs) = variables.get(*candidate) { collect(rs); }
                         }
                         if !driving_ids.is_empty() {
                             let emit_row = |who: Thing| {
-                                // Only support returning n,t for now: emit one line per (who, name) posit
-                                let want_name_time = returns.iter().any(|v| v == "n") && returns.iter().any(|v| v == "t");
-                                if !want_name_time { return; }
+                                // Support returning n and/or t (name and time) per identity.
+                                let want_name = returns.iter().any(|v| v == "n");
+                                let want_time = returns.iter().any(|v| v == "t");
+                                if !want_name && !want_time { return; }
                                 let name_role = {
                                     let rk = self.database.role_keeper();
                                     let rk_guard = rk.lock().unwrap();
@@ -1237,12 +1337,17 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 let mut guard = lk.lock().unwrap();
                                                 guard.posit::<String>(pid)
                                             };
-                                            println!("{}, {}", p.value(), p.time());
+                                            match (want_name, want_time) {
+                                                (true, true) => println!("{}, {}", p.value(), p.time()),
+                                                (true, false) => println!("{}", p.value()),
+                                                (false, true) => println!("{}", p.time()),
+                                                _ => {}
+                                            }
                                         }
                                     }
                                 }
                             };
-                            for who in driving_ids { emit_row(who); }
+                            for who in driving_ids.iter() { emit_row(who); }
                         }
                     }
                 }

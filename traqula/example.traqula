@@ -23,22 +23,46 @@ add posit +p1 [{(idh, name)}, "Lars Roenbaeck", '2004-07-01'];
 add posit [{(p1, posit), (idh, ascertains)}, 100%, @NOW], 
           [{(p2, posit), (idh, ascertains)}, -100%, @NOW];
 
+/* From all married couples, that have been ascertained, give me the name values of the wives and 
+   the time since when they had that name */
+
+/*
 search +p [{(+w, wife), (*, husband)}, "married", *], 
           [{(p, posit), (*, ascertains)}, *, *], 
           [{(w, name)}, +n, +t]
 return
     n, t;
+*/
 
+/* For everything that has a name, give me all name values that became valid on 1972-02-13 */
+search [{(*, name)}, +n, '1972-02-13']
+return
+    n;
+
+/* For everything that has a name, give me all name values that were valid on or before 1999-12-31 */
+search [{(*, name)}, +n, +t]
+where t <= '1999-12-31'
+return
+    n;
+
+/* Marriage asserted and name at a specific time for either spouse (union) */
+search +p [{(+w, wife), (+h, husband)}, "married", *],
+          [{(p, posit), (*, ascertains)}, *, *],
+          [{(w|h, name)}, +n, '2004-07-01']
+return
+    n;
+
+/*
 search +p [{(*, wife), (+h, husband)}, "married", *], 
           [{(p, posit), (*, ascertains)}, *, *], 
           [{(h, name)}, +n, +t]
 return
     n, t;
 
-/* Verify generalized return: drive by both w and h */
 search +p [{(+w, wife), (+h, husband)}, "married", *],
           [{(p, posit), (*, ascertains)}, *, *],
           [{(w|h, name)}, +n, +t]
 return
     n, t;
+*/
 
