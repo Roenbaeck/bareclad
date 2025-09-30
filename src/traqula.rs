@@ -739,18 +739,20 @@ impl<'db, 'en> Engine<'db, 'en> {
                     for structure in clause.into_inner() {
                         let mut variable: Option<String> = None;
                         let mut _posits: Vec<Thing> = Vec::new();
-                        let mut value_as_json: Option<JSON> = None;
-                        let mut value_as_string: Option<String> = None;
-                        let mut value_as_time: Option<Time> = None;
-                        let mut value_as_decimal: Option<Decimal> = None;
-                        let mut value_as_i64: Option<i64> = None;
-                        let mut value_as_certainty: Option<Certainty> = None;
-                        let mut value_as_variable: Option<&str> = None;
-                        let mut value_is_wildcard = false;
-                        let mut time: Option<Time> = None;
-                        let mut time_as_variable: Option<&str> = None;
-                        let mut time_is_wildcard = false;
+                        let mut _value_as_json: Option<JSON> = None;
+                        let mut _value_as_string: Option<String> = None;
+                        let mut _value_as_time: Option<Time> = None;
+                        let mut _value_as_decimal: Option<Decimal> = None;
+                        let mut _value_as_i64: Option<i64> = None;
+                        let mut _value_as_certainty: Option<Certainty> = None;
+                        let mut _value_as_variable: Option<&str> = None;
+                        let mut _value_is_wildcard = false;
+                        let mut _time: Option<Time> = None;
+                        let mut _time_as_variable: Option<&str> = None;
+                        let mut _time_is_wildcard = false;
                         let mut local_variables = Vec::new();
+                        // Track unions like (w|h, name) => ["w","h"]. Parallel to local_variables by index; None for non-union
+                        let mut local_variable_unions: Vec<Option<Vec<String>>> = Vec::new();
                         let mut roles = Vec::new();
                         match structure.as_rule() {
                             Rule::posit_search => {
@@ -782,6 +784,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                                 .unwrap()
                                                                 .as_str();
                                                             local_variables.push(local_variable);
+                                                            local_variable_unions.push(None);
                                                             match variables
                                                                 .entry(local_variable.to_string())
                                                             {
@@ -797,6 +800,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         Rule::wildcard => {
                                                             local_variables
                                                                 .push(appearance.as_str());
+                                                            local_variable_unions.push(None);
                                                             //println!("wildcard");
                                                         }
                                                         Rule::recall => {
@@ -807,9 +811,25 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                                     .unwrap()
                                                                     .as_str(),
                                                             );
+                                                            local_variable_unions.push(None);
                                                             if let Some(v) = local_variables.last() {
                                                                 active_vars.insert((*v).to_string());
                                                             }
+                                                        }
+                                                        Rule::recall_union => {
+                                                            // Collect all recall names separated by '|'
+                                                            let mut names: Vec<String> = Vec::new();
+                                                            for part in appearance.into_inner() {
+                                                                // parts alternate: recall, '|', recall, '|', ... but pest grouped only recalls due to rule
+                                                                if part.as_rule() == Rule::recall {
+                                                                    names.push(part.into_inner().next().unwrap().as_str().to_string());
+                                                                }
+                                                            }
+                                                            // Store a synthetic token representing the union; we use "w|h" literal for variable token, but keep union list separately
+                                                            let token = names.join("|");
+                                                            local_variables.push(Box::leak(token.into_boxed_str()));
+                                                            local_variable_unions.push(Some(names.clone()));
+                                                            for n in names { active_vars.insert(n); }
                                                         }
                                                         Rule::role => {
                                                             roles.push(appearance.as_str());
@@ -832,62 +852,62 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             .next()
                                                             .unwrap()
                                                             .as_str();
-                                                        value_as_variable = Some(local_variable);
+                                                        _value_as_variable = Some(local_variable);
                                                         active_vars.insert(local_variable.to_string());
                                                     }
                                                     Rule::wildcard => {
-                                                        value_is_wildcard = true;
+                                                        _value_is_wildcard = true;
                                                         //println!("wildcard");
                                                     }
                                                     Rule::constant => {
                                                         //println!("Constant: {}", value_type.as_str());
-                                                        value_as_json = parse_json_constant(
+                                                        _value_as_json = parse_json_constant(
                                                             value_type.as_str(),
                                                         );
-                                                        value_as_string = parse_string_constant(
+                                                        _value_as_string = parse_string_constant(
                                                             value_type.as_str(),
                                                         );
-                                                        value_as_time = parse_time_constant(
+                                                        _value_as_time = parse_time_constant(
                                                             value_type.as_str(),
                                                         );
-                                                        value_as_certainty =
+                                                        _value_as_certainty =
                                                             parse_certainty_constant(
                                                                 value_type.as_str(),
                                                             );
-                                                        value_as_decimal = parse_decimal_constant(
+                                                        _value_as_decimal = parse_decimal_constant(
                                                             value_type.as_str(),
                                                         );
-                                                        value_as_i64 =
+                                                        _value_as_i64 =
                                                             parse_i64_constant(value_type.as_str());
                                                     }
                                                     Rule::json => {
                                                         //println!("JSON: {}", value_type.as_str());
-                                                        value_as_json =
+                                                        _value_as_json =
                                                             parse_json(value_type.as_str());
                                                     }
                                                     Rule::string => {
                                                         //println!("String: {}", value_type.as_str());
-                                                        value_as_string =
+                                                        _value_as_string =
                                                             parse_string(value_type.as_str());
                                                     }
                                                     Rule::time => {
                                                         //println!("Time: {}", value_type.as_str());
-                                                        value_as_time =
+                                                        _value_as_time =
                                                             parse_time(value_type.as_str());
                                                     }
                                                     Rule::certainty => {
                                                         //println!("Certainty: {}", value_type.as_str());
-                                                        value_as_certainty =
+                                                        _value_as_certainty =
                                                             parse_certainty(value_type.as_str());
                                                     }
                                                     Rule::decimal => {
                                                         //println!("Decimal: {}", value_type.as_str());
-                                                        value_as_decimal =
+                                                        _value_as_decimal =
                                                             parse_decimal(value_type.as_str());
                                                     }
                                                     Rule::int => {
                                                         //println!("i64: {}", value_type.as_str());
-                                                        value_as_i64 =
+                                                        _value_as_i64 =
                                                             parse_i64(value_type.as_str());
                                                     }
                                                     _ => println!(
@@ -907,20 +927,20 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             .next()
                                                             .unwrap()
                                                             .as_str();
-                                                        time_as_variable = Some(local_variable);
+                                                        _time_as_variable = Some(local_variable);
                                                         active_vars.insert(local_variable.to_string());
                                                     }
                                                     Rule::wildcard => {
-                                                        time_is_wildcard = true;
+                                                        _time_is_wildcard = true;
                                                         //println!("wildcard");
                                                     }
                                                     Rule::constant => {
-                                                        time =
+                                                        _time =
                                                             parse_time_constant(time_type.as_str());
                                                     }
                                                     Rule::time => {
                                                         //println!("Time: {}", value_type.as_str());
-                                                        time = parse_time(time_type.as_str());
+                                                        _time = parse_time(time_type.as_str());
                                                     }
                                                     _ => println!(
                                                         "Unknown time type: {:?}",
@@ -996,19 +1016,38 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     {
                                                         // For inserted vars (+x): bind or intersect. For recalls (x): if unbound, bind; else leave as-is.
                                                         let is_insert = token.starts_with('+');
-                                                        let key = vname.to_string();
-                                                        if let Entry::Vacant(entry) = variables.entry(key.clone()) {
-                                                            // Bind when not present (insert or recall)
-                                                            let mut rs = ResultSet::new();
-                                                            rs.insert(bound);
-                                                            entry.insert(rs);
-                                                        } else if is_insert {
-                                                            // Intersect existing with this bound only for inserted variables
-                                                            if let Entry::Occupied(mut entry) = variables.entry(key) {
-                                                                let rs = entry.get_mut();
-                                                                let mut narrowed = ResultSet::new();
-                                                                narrowed.insert(bound);
-                                                                rs.intersect_with(&narrowed);
+                                                        // Handle union variables like w|h by updating each member variable separately
+                                                        if let Some(Some(union_names)) = local_variable_unions.get(i) {
+                                                            for member in union_names {
+                                                                let key = member.to_string();
+                                                                if let Entry::Vacant(entry) = variables.entry(key.clone()) {
+                                                                    let mut rs = ResultSet::new();
+                                                                    rs.insert(bound);
+                                                                    entry.insert(rs);
+                                                                } else if is_insert {
+                                                                    if let Entry::Occupied(mut entry) = variables.entry(key) {
+                                                                        let rs = entry.get_mut();
+                                                                        let mut narrowed = ResultSet::new();
+                                                                        narrowed.insert(bound);
+                                                                        rs.intersect_with(&narrowed);
+                                                                    }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            let key = vname.to_string();
+                                                            if let Entry::Vacant(entry) = variables.entry(key.clone()) {
+                                                                // Bind when not present (insert or recall)
+                                                                let mut rs = ResultSet::new();
+                                                                rs.insert(bound);
+                                                                entry.insert(rs);
+                                                            } else if is_insert {
+                                                                // Intersect existing with this bound only for inserted variables
+                                                                if let Entry::Occupied(mut entry) = variables.entry(key) {
+                                                                    let rs = entry.get_mut();
+                                                                    let mut narrowed = ResultSet::new();
+                                                                    narrowed.insert(bound);
+                                                                    rs.intersect_with(&narrowed);
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -1145,20 +1184,30 @@ impl<'db, 'en> Engine<'db, 'en> {
                             _ => println!("Unknown return structure: {:?}", structure),
                         }
                     }
-                    // Minimal projection: if returning (n, t), print name/time for bound w or h
-                    if returns.iter().any(|v| v == "n") && returns.iter().any(|v| v == "t") {
-                        // Choose driving variable based on variables referenced in this search
-                        let driving = if active_vars.contains("w") {
-                            variables.get("w").map(|wrs| ("w", wrs))
-                        } else if active_vars.contains("h") {
-                            variables.get("h").map(|hrs| ("h", hrs))
-                        } else {
-                            None
+                    // Generalized projection: build rows from requested variables. For name/time, derive from identity variables.
+                    if !returns.is_empty() {
+                        // Determine driving identity set: support union w|h when name clause used recall_union
+                        let mut driving_ids: Vec<Thing> = Vec::new();
+                        let mut collect = |rs: &ResultSet| {
+                            match rs.mode {
+                                ResultSetMode::Thing => driving_ids.push(rs.thing.unwrap()),
+                                ResultSetMode::Multi => for t in rs.multi.as_ref().unwrap().iter() { driving_ids.push(t); },
+                                ResultSetMode::Empty => {}
+                            }
                         };
-                        if let Some((_key, wrs)) = driving {
-                            let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
-                            let each_w = |w: Thing, seen: &mut std::collections::BTreeSet<(String, String)>| {
-                                // Find (w, name) posits and print value/time
+                        if active_vars.contains("w") && active_vars.contains("h") {
+                            if let Some(wrs) = variables.get("w") { collect(wrs); }
+                            if let Some(hrs) = variables.get("h") { collect(hrs); }
+                        } else if active_vars.contains("w") {
+                            if let Some(wrs) = variables.get("w") { collect(wrs); }
+                        } else if active_vars.contains("h") {
+                            if let Some(hrs) = variables.get("h") { collect(hrs); }
+                        }
+                        if !driving_ids.is_empty() {
+                            let emit_row = |who: Thing| {
+                                // Only support returning n,t for now: emit one line per (who, name) posit
+                                let want_name_time = returns.iter().any(|v| v == "n") && returns.iter().any(|v| v == "t");
+                                if !want_name_time { return; }
                                 let name_role = {
                                     let rk = self.database.role_keeper();
                                     let rk_guard = rk.lock().unwrap();
@@ -1167,12 +1216,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 let apps: Vec<Arc<Appearance>> = {
                                     let lk = self.database.thing_to_appearance_lookup();
                                     let app_guard = lk.lock().unwrap();
-                                    app_guard.lookup(&w).iter().cloned().collect()
+                                    app_guard.lookup(&who).iter().cloned().collect()
                                 };
                                 for ap in apps.into_iter() {
-                                    if ap.role().name() != name_role.name() {
-                                        continue;
-                                    }
+                                    if ap.role().name() != name_role.name() { continue; }
                                     let asets: Vec<Arc<AppearanceSet>> = {
                                         let lk = self.database.appearance_to_appearance_set_lookup();
                                         let aset_guard = lk.lock().unwrap();
@@ -1185,29 +1232,17 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             pos_guard.lookup(&aset).clone()
                                         };
                                         for pid in pids.iter() {
-                                            // Fetch typed posit to access value/time
                                             let p = {
                                                 let lk = self.database.posit_keeper();
                                                 let mut guard = lk.lock().unwrap();
                                                 guard.posit::<String>(pid)
                                             };
-                                            let key = (p.value().to_string(), p.time().to_string());
-                                            if seen.insert(key.clone()) {
-                                                println!("{}, {}", key.0, key.1);
-                                            }
+                                            println!("{}, {}", p.value(), p.time());
                                         }
                                     }
                                 }
                             };
-                            match wrs.mode {
-                                ResultSetMode::Thing => each_w(wrs.thing.unwrap(), &mut seen),
-                                ResultSetMode::Multi => {
-                                    for w in wrs.multi.as_ref().unwrap().iter() {
-                                        each_w(w, &mut seen);
-                                    }
-                                }
-                                ResultSetMode::Empty => {}
-                            }
+                            for who in driving_ids { emit_row(who); }
                         }
                     }
                 }

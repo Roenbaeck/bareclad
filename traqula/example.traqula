@@ -34,3 +34,11 @@ search +p [{(*, wife), (+h, husband)}, "married", *],
           [{(h, name)}, +n, +t]
 return
     n, t;
+
+/* Verify generalized return: drive by both w and h */
+search +p [{(+w, wife), (+h, husband)}, "married", *],
+          [{(p, posit), (*, ascertains)}, *, *],
+          [{(w|h, name)}, +n, +t]
+return
+    n, t;
+
