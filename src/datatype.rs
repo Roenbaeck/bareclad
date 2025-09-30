@@ -1,3 +1,43 @@
+//! Data type abstractions and concrete value/time representations.
+//!
+//! The [`DataType`] trait is implemented for all value/time types that can be
+//! stored inside a posit. Each implementation declares a stable numeric
+//! identifier (`UID`) and a textual name (`DATA_TYPE`) which are persisted in
+//! the catalog. A helper [`DataType::convert`] function reconstructs a value
+//! from a SQLite `ValueRef` during restoration.
+//!
+//! # Implementing a Custom Data Type
+//! To add a new logical value type implement the trait for your type and make
+//! sure it satisfies the required bounds. Example (toy wrapper around `i64`):
+//! ```
+//! use rusqlite::types::{ValueRef, ToSql, ToSqlOutput};
+//! use std::fmt;
+//! use bareclad::datatype::DataType;
+//! #[derive(Eq, PartialEq, Hash)]
+//! struct MyCount(i64);
+//! impl fmt::Display for MyCount { fn fmt(&self, f:&mut fmt::Formatter)->fmt::Result { write!(f, "{}", self.0) } }
+//! impl ToSql for MyCount { fn to_sql(&self)->rusqlite::Result<ToSqlOutput<'_>> { Ok(ToSqlOutput::from(self.0)) } }
+//! impl DataType for MyCount {
+//!     const UID: u8 = 250; // choose a free id
+//!     const DATA_TYPE: &'static str = "MyCount";
+//!     fn convert(v:&ValueRef)->Self { MyCount(v.as_i64().unwrap()) }
+//! }
+//! assert_eq!(MyCount(3).data_type(), "MyCount");
+//! ```
+//!
+//! # Special Provided Types
+//! * [`Certainty`] – subjective probability-like measure with saturation.
+//! * [`Decimal`] – arbitrary precision numeric (BigDecimal wrapper).
+//! * [`JSON`] – JSON payload using `jsondata::Json`.
+//! * [`Time`] / [`TimeType`] – hierarchical (abstract + concrete) temporal points.
+//!
+//! # Equality & Ordering
+//! Most wrapper types delegate ordering and equality to their internal
+//! representations while ensuring a stable textual form for persistence.
+//!
+//! # Notes
+//! Adding a new [`DataType`] also requires updating restoration logic in
+//! `persist.rs` (see MAINTENANCE comments there).
 // used for persistence
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
@@ -21,18 +61,22 @@ use std::cmp::Ordering;
 
 use crate::traqula::parse_time;
 
+/// Trait implemented by all logical value/time types that may appear in a posit.
+///
+/// Implementors must provide a stable numeric `UID` and textual name
+/// `DATA_TYPE`. These are persisted so changing them breaks backward
+/// compatibility.
 pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql  {
-    // static stuff which needs to be implemented downstream
+    /// Stable numeric identifier for catalog persistence.
     const UID: u8;
+    /// Stable human readable name stored in persistence.
     const DATA_TYPE: &'static str;
+    /// Convert from a raw SQLite value (during restore).
     fn convert(value: &ValueRef) -> Self;
-    // instance callable with pre-made implementation
-    fn data_type(&self) -> &'static str {
-        Self::DATA_TYPE
-    }
-    fn identifier(&self) -> u8 {
-        Self::UID
-    }
+    /// Returns the textual data type name.
+    fn data_type(&self) -> &'static str { Self::DATA_TYPE }
+    /// Returns the numeric identifier.
+    fn identifier(&self) -> u8 { Self::UID }
 }
 
 // ------------- Data Types --------------
@@ -96,6 +140,7 @@ impl DataType for Time {
 }
 
 // Special types below
+/// JSON value wrapper implementing [`DataType`]. Display prints compact JSON.
 #[derive(Eq, PartialEq, PartialOrd, Ord, Clone)]
 pub struct JSON (Json);
 
@@ -162,6 +207,23 @@ The master will certainly lose.
 
 */
 
+/// Subjective certainty value in [-1,1] saturated & stored internally as an i8 percent.
+///
+/// Negative numbers indicate certainty of the *opposite* proposition.
+///
+/// # Example
+/// ```
+/// use bareclad::datatype::Certainty;
+/// let a = Certainty::new(0.30); // +30%
+/// let b = Certainty::new(-0.20); // -20%
+/// // By the non-contradictory inequality (#negatives + sum(alpha) <= 1),
+/// // this pair is inconsistent: 1 + 0.10 = 1.10 > 1
+/// assert!(!Certainty::consistent(&[a.clone(), b.clone()]));
+/// // Display includes the leading zero for decimals in (-1,1)
+/// assert_eq!(format!("{}", a), "0.30");
+/// let s = f64::from(a.clone()) + f64::from(b.clone());
+/// assert!((s - 0.10).abs() < 1e-6);
+/// ```
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Debug)]
 pub struct Certainty {
     alpha: i8,
@@ -181,6 +243,32 @@ impl Certainty {
             alpha: (100f64 * a) as i8,
         }
     }
+    /// Returns true if a set of reliabilities is non-contradictory per
+    /// the inequality from Transitional Modeling:
+    ///
+    /// (1/2) * Σ [1 - α_i/|α_i|] + Σ α_i ≤ 1
+    ///
+    /// where α_i ∈ [-1,1] are individual reliabilities. The first term counts
+    /// the number of negative assertions (each contributes 1), and the second
+    /// term is the signed sum of reliabilities.
+    ///
+    /// # Examples
+    ///
+    /// Donna's example: +0.25 and -0.75 yields 0.5, which is ≤ 1.
+    /// ```
+    /// use bareclad::datatype::Certainty;
+    /// let s1 = [Certainty::new(0.25), Certainty::new(-0.75)];
+    /// assert!(Certainty::consistent(&s1));
+    /// ```
+    ///
+    /// Twenty 95% negative assertions remain non-contradictory, but the 21st does not.
+    /// ```
+    /// use bareclad::datatype::Certainty;
+    /// let twenty = vec![Certainty::new(-0.95); 20];
+    /// assert!(Certainty::consistent(&twenty));
+    /// let twenty_one = vec![Certainty::new(-0.95); 21];
+    /// assert!(!Certainty::consistent(&twenty_one));
+    /// ```
     pub fn consistent(rs: &[Certainty]) -> bool {
         let r_total = rs
             .iter()
@@ -243,6 +331,7 @@ impl FromSql for Certainty {
     }
 }
 
+/// Arbitrary precision decimal wrapper implementing [`DataType`].
 #[derive(Eq, PartialEq, Hash, PartialOrd, Ord, Clone)]
 pub struct Decimal (BigDecimal);
 
@@ -283,6 +372,7 @@ impl ops::DerefMut for Decimal {
 
 // TODO: We will use a specialized time type instead of the 
 // trait constrained generic
+/// Hierarchical temporal points (abstract sentinels + concrete resolutions).
 #[derive(Eq, PartialEq, Ord, Debug, Hash, Clone)]
 pub enum TimeType {
     // abstract time points
@@ -369,24 +459,30 @@ impl PartialOrd for TimeType {
 }
 
 
+/// Public temporal wrapper used in posits. Provides helper constructors.
 #[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Clone)]
 pub struct Time {
     moment: TimeType
 }
 impl Time {
+    /// Now (UTC) time point.
     pub fn new() -> Time {
         Time { moment: TimeType::DateTime(Utc::now().naive_utc()) }
     }
+    /// Abstract lower bound.
     pub fn new_beginning_of_time() -> Time {
         Time { moment: TimeType::BeginningOfTime }
     }
+    /// Abstract upper bound.
     pub fn new_end_of_time() -> Time {
         Time { moment: TimeType::EndOfTime }
     }
     // TODO: may panic
+    /// Creates a `Time` from a year string (e.g. "2024"). Panics on invalid input.
     pub fn new_year_from(d: &str) -> Time {
         Time { moment: TimeType::Year(d.parse::<i32>().unwrap()) }
     }
+    /// Creates a `Time` from a year-month string ("YYYY-MM"). Panics on invalid input.
     pub fn new_year_month_from(d: &str) -> Time {
         let mut year = String::new();
         let mut month = String::new();
@@ -402,9 +498,11 @@ impl Time {
         }
         Time { moment: TimeType::YearMonth(year.parse::<i32>().unwrap(), month.parse::<u8>().unwrap()) }
     }
+    /// Creates a `Time` from a date string ("YYYY-MM-DD"). Panics on invalid input.
     pub fn new_date_from(d: &str) -> Time {
         Time { moment: TimeType::Date(NaiveDate::from_str(d).unwrap()) } 
     }
+    /// Creates a `Time` from a datetime string acceptable by `NaiveDateTime::from_str`.
     pub fn new_datetime_from(d: &str) -> Time {
         Time { moment: TimeType::DateTime(NaiveDateTime::from_str(d).unwrap()) } 
     }

@@ -1,3 +1,32 @@
+//! Persistence layer: SQLite schema management and (re)construction logic.
+//!
+//! The `Persistor` encapsulates prepared statements for both writing and
+//! restoring constructs. It owns no *logical* state besides a small cache of
+//! seen data type identifiers (`seen_data_types`) to avoid redundant catalog
+//! inserts.
+//!
+//! # Schema Overview
+//! * `Thing(Thing_Identity)` – canonical identity table.
+//! * `Role(Role_Identity, Role, Reserved)` – role metadata (identity FK to Thing).
+//! * `DataType(DataType_Identity, DataType)` – catalog of logical value/time types.
+//! * `Posit(Posit_Identity, AppearanceSet, AppearingValue, ValueType_Identity, AppearanceTime)` – stored propositions.
+//!
+//! Appearance sets are serialized as a pipe separated list of `thing,role` pairs
+//! in natural order: `thing_id,role_id|thing_id,role_id|...`.
+//!
+//! # Lifecyle
+//! * During startup `Database::new` calls restoration helpers which replay
+//!   persisted rows into in-memory keepers.
+//! * New constructs invoke `persist_*` methods which perform idempotent writes
+//!   (checking for existing rows first) and return whether the row already existed.
+//!
+//! # Adding New Data Types
+//! After implementing [`crate::datatype::DataType`] for a type, extend the
+//! match section in `restore_posits` so the value can be reconstructed.
+//!
+//! # Error Handling
+//! Current implementation panics on unexpected SQLite errors. A future revision
+//! could propagate a domain error type instead.
 // used for persistence
 use rusqlite::{params, Connection, Error, Statement};
 
@@ -7,24 +36,25 @@ use crate::datatype::{DataType, Decimal, JSON, Time};
 
 // ------------- Persistence -------------
 pub struct Persistor<'db> {
+    /// Underlying SQLite connection (borrowed).
     pub db: &'db Connection,
-    // Adders
-    pub add_thing: Statement<'db>,
-    pub add_role: Statement<'db>,
-    pub add_posit: Statement<'db>,
-    // Get the identity of one thing
-    pub get_thing: Statement<'db>,
-    pub get_role: Statement<'db>,
-    pub get_posit: Statement<'db>,
-    // Get everything for all things
-    pub all_things: Statement<'db>,
-    pub all_roles: Statement<'db>,
-    pub all_posits: Statement<'db>,
-    // DataType particulars
-    pub add_data_type: Statement<'db>,
-    pub seen_data_types: Vec<u8>,
+    // Prepared statements (kept private to allow future refactors without API breakage)
+    add_thing: Statement<'db>,
+    add_role: Statement<'db>,
+    add_posit: Statement<'db>,
+    get_thing: Statement<'db>,
+    get_role: Statement<'db>,
+    get_posit: Statement<'db>,
+    all_things: Statement<'db>,
+    all_roles: Statement<'db>,
+    all_posits: Statement<'db>,
+    add_data_type: Statement<'db>,
+    /// Cache of data type identifiers already inserted into `DataType`.
+    seen_data_types: Vec<u8>,
 }
 impl<'db> Persistor<'db> {
+    /// Creates (and if needed migrates) the underlying schema then prepares
+    /// all commonly used statements.
     pub fn new<'connection>(connection: &'connection Connection) -> Persistor<'connection> {
         // The "STRICT" keyword introduced in 3.37.0 breaks JDBC connections, which makes
         // debugging using an external tool like DBeaver impossible
@@ -192,6 +222,8 @@ impl<'db> Persistor<'db> {
             seen_data_types: Vec::new(),
         }
     }
+    /// Persist a thing identity if not already present.
+    /// Returns true if the record already existed.
     pub fn persist_thing(&mut self, thing: &Thing) -> bool {
         let mut existing = false;
         match self
@@ -213,6 +245,7 @@ impl<'db> Persistor<'db> {
         }
         existing
     }
+    /// Persist a role row by unique role name. Returns true if already present.
     pub fn persist_role(&mut self, role: &Role) -> bool {
         let mut existing = false;
         match self
@@ -237,10 +270,9 @@ impl<'db> Persistor<'db> {
         }
         existing
     }
-    pub fn persist_posit<V: 'static + DataType>(
-        &mut self,
-        posit: &Posit<V>,
-    ) -> bool {
+    /// Persist a posit (idempotent). If unseen, ensures associated value & time
+    /// data types are catalogued. Returns true if the posit already existed.
+    pub fn persist_posit<V: 'static + DataType>(&mut self, posit: &Posit<V>) -> bool {
         let mut appearances = Vec::new();
         let appearance_set = posit.appearance_set();
         for appearance in appearance_set.appearances().iter() {
@@ -296,6 +328,7 @@ impl<'db> Persistor<'db> {
         }
         existing
     }
+    /// Rehydrate all thing identities into the in-memory generator.
     pub fn restore_things(&mut self, db: &Database) {
         let thing_iter = self
         .all_things
@@ -307,6 +340,7 @@ impl<'db> Persistor<'db> {
             db.thing_generator().lock().unwrap().retain(thing.unwrap());
         }
     }
+    /// Rehydrate all roles into the in-memory keeper.
     pub fn restore_roles(&mut self, db: &Database) {
         let role_iter = self
             .all_roles
@@ -322,6 +356,9 @@ impl<'db> Persistor<'db> {
             db.keep_role(role.unwrap());
         }
     }
+    /// Rehydrate all posits (including nested appearance sets) into memory.
+    ///
+    /// Appearance sets are parsed from their serialized pipe-separated form.
     pub fn restore_posits(&mut self, db: &Database) {
         let mut rows = self.all_posits.query([]).unwrap();
         while let Some(row) = rows.next().unwrap() {

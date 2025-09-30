@@ -1,39 +1,82 @@
+//! Core construct definitions for the Bareclad database engine.
+//!
+//! This module defines the fundamental building blocks used throughout the
+//! engine. Most types follow a "keeper" pattern: keepers own canonical
+//! instances (wrapped in `Arc`) and guarantee uniqueness by logical identity
+//! (role name, appearance set contents, posit components, etc.).
+//!
+//! # Main Concepts
+//! * [`Thing`]: Opaque identity (currently a `u64`).
+//! * [`Role`]: A named semantic placeholder a thing can appear in.
+//! * [`Appearance`]: A (Thing, Role) pairing.
+//! * [`AppearanceSet`]: A sorted, duplicate-free collection of appearances, at
+//!   most one per role.
+//! * [`Posit`]: A proposition: (AppearanceSet, Value, Time) with its own
+//!   identity (also a thing).
+//!
+//! # Example
+//! Create a role, a thing, an appearance, an appearance set and finally a
+//! posit with a string value and time.
+//! ```
+//! use rusqlite::Connection;
+//! use bareclad::persist::Persistor;
+//! use bareclad::construct::Database;
+//! use bareclad::datatype::Time;
+//! let conn = Connection::open_in_memory().unwrap();
+//! let persistor = Persistor::new(&conn);
+//! let db = Database::new(persistor);
+//! let (role, _) = db.create_role("person".to_string(), false);
+//! let thing = db.create_thing();
+//! let (appearance, _) = db.create_apperance(*thing, role);
+//! let (appearance_set, _) = db.create_appearance_set(vec![appearance]);
+//! let time = Time::new();
+//! let posit = db.create_posit(appearance_set, String::from("Alice"), time.clone());
+//! assert_eq!(posit.value(), &"Alice".to_string());
+//! ```
 use std::sync::{Arc, Mutex};
-
-// used in the keeper of posits, since they are generically typed: Posit<V,T> and 
-// therefore require a HashSet per type combo
-use typemap::{Key, TypeMap};
-
-// used to keep the one-to-one mapping between posits and their assigned identities
-use bimap::BiMap;
-
-// other keepers use HashSet or HashMap
-use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
-use std::collections::hash_map::{Entry, RandomState};
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_set::Iter;
-use std::hash::Hash;
+use std::collections::hash_map::{Entry, RandomState};
+use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
 use seahash::SeaHasher;
-
-// custom made ordering for appearances
 use std::cmp::Ordering;
-
-// used to print out readable forms of a construct
+use std::hash::Hash;
 use std::fmt;
-
-// our own stuff that we need
-use crate::persist::Persistor;
+use std::any::{Any, TypeId};
+use bimap::BiMap;
 use crate::datatype::{DataType, Time};
+use crate::persist::Persistor;
+
+/// Internal heterogeneous map keyed by `TypeId` used for storing per-value
+/// type bimap indices for posits.
+struct TypeMap {
+    map: HashMap<TypeId, Box<dyn Any>>,
+}
+
+impl TypeMap {
+    pub fn new() -> Self {
+        Self { map: HashMap::new() }
+    }
+
+    pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.map.get_mut(&TypeId::of::<T>()).and_then(|b| b.downcast_mut::<T>())
+    }
+
+    pub fn insert<T: 'static>(&mut self, value: T) {
+        self.map.insert(TypeId::of::<T>(), Box::new(value));
+    }
+}
 
 // ------------- Thing -------------
 // Mem check example: 
 // https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=5b196af2532ce0d3413e4523b17980a5
+/// Opaque identity type used for every persisted construct.
 pub type Thing = u64; 
+/// Reserved identity constant representing the initial lower bound for the generator.
+pub const GENESIS: Thing = 0;
 
 pub type ThingHasher = BuildHasherDefault<SeaHasher>;
 pub type OtherHasher = BuildHasherDefault<SeaHasher>;
-
-pub const GENESIS: Thing = 0;
 
 #[derive(Debug)]
 pub struct ThingGenerator {
@@ -43,6 +86,7 @@ pub struct ThingGenerator {
 }
 
 impl ThingGenerator {
+    /// Creates a fresh generator with the lower bound set to [`GENESIS`].
     pub fn new() -> Self {
         Self {
             lower_bound: GENESIS,
@@ -50,25 +94,26 @@ impl ThingGenerator {
             released: Vec::new(),
         }
     }
-    // Things may be explicitly referenced, but only implicitly created.
-    // The following will throw an error if 42 does not already exist.
-    // add posit [{(+idw, wife), (42, husband)}, "married", '2004-06-19'];
-    // The retain function is necessary though, when restoring an existing
-    // persisted database. 
+    /// Things may be explicitly referenced (e.g. restored) but only implicitly
+    /// created through the generator. Retaining teaches the generator about an
+    /// externally observed identity (e.g. during persistence restore).
     pub fn retain(&mut self, t: Thing) {
         self.retained.insert(t);
         if t > self.lower_bound {
             self.lower_bound = t;
         }
     }
+    /// Returns the supplied identity if it is currently retained.
     pub fn check(&self, t: Thing) -> Option<Thing> {
         self.retained.get(&t).cloned()
     }
+    /// Releases an identity making it available for reuse.
     pub fn release(&mut self, t: Thing) {
         if self.retained.remove(&t) {
             self.released.push(t);
         }
     }
+    /// Generates a new (or recycled) identity.
     pub fn generate(&mut self) -> Thing {
         self.released.pop().unwrap_or_else(|| {
             self.lower_bound += 1;
@@ -76,7 +121,8 @@ impl ThingGenerator {
             self.lower_bound
         })
     }
-    pub fn iter(&self) -> Iter<Thing> {
+    /// Iterates over currently retained identities (unordered).
+    pub fn iter(&self) -> Iter<'_, Thing> {
         self.retained.iter()
     }
 }
@@ -350,13 +396,10 @@ impl<V: DataType> fmt::Display for Posit<V> {
 }
 
 // This key needs to be defined in order to store posits in a TypeMap.
-impl<V: 'static + DataType> Key for Posit<V> {
-    type Value = BiMap<Arc<Posit<V>>, Thing>;
-}
 
 pub struct PositKeeper {
-    pub kept: TypeMap,
-    pub length: usize
+    kept: TypeMap,
+    length: usize
 }
 impl PositKeeper {
     pub fn new() -> Self {
@@ -370,10 +413,12 @@ impl PositKeeper {
         posit: Posit<V>,
     ) -> (Arc<Posit<V>>, bool) {
         // ensure the map can work with this particular type combo
-        let map = self
-            .kept
-            .entry::<Posit<V>>()
-            .or_insert(BiMap::<Arc<Posit<V>>, Thing>::new());
+        let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
+            m
+        } else {
+            self.kept.insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
+        };
         let keepsake_thing = posit.posit();
         let keepsake = Arc::new(posit);
         let mut previously_kept = false;
@@ -397,20 +442,24 @@ impl PositKeeper {
         &mut self,
         posit: Arc<Posit<V>>,
     ) -> Thing {
-        let map = self
-            .kept
-            .entry::<Posit<V>>()
-            .or_insert(BiMap::<Arc<Posit<V>>, Thing>::new());
+        let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
+            m
+        } else {
+            self.kept.insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
+        };
         *map.get_by_left(&posit).unwrap()
     }
     pub fn posit<V: 'static + DataType>(
         &mut self,
         thing: Thing,
     ) -> Arc<Posit<V>> {
-        let map = self
-            .kept
-            .entry::<Posit<V>>()
-            .or_insert(BiMap::<Arc<Posit<V>>, Thing>::new());
+        let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
+            m
+        } else {
+            self.kept.insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
+        };
         Arc::clone(map.get_by_right(&thing).unwrap())
     }
     pub fn len(&self) -> usize {

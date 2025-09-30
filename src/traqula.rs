@@ -1,4 +1,41 @@
-
+//! Traqula query & mutation language engine.
+//!
+//! This module provides a rudimentary parser (Pest based) and executor for a
+//! domain specific language used to:
+//! * add roles
+//! * insert ("posit") propositions
+//! * perform simple pattern based searches over existing posits
+//!
+//! The language is defined in the grammar file `traqula.pest`. Commands are
+//! parsed into a tree of `Pair<Rule>` values which the [`Engine`] walks to
+//! mutate the in-memory [`Database`].
+//!
+//! # Result Sets
+//! Internally query evaluation uses a compact tri-state result representation
+//! [`ResultSetMode`]:
+//! * `Empty` – no hits
+//! * `Thing` – exactly one identity
+//! * `Multi` – a roaring bitmap of identities
+//!
+//! This allows set operations (intersection, union, difference, symmetric
+//! difference) to be implemented efficiently without premature allocation.
+//!
+//! # Example (executing Traqula)
+//! ```
+//! use rusqlite::Connection;
+//! use bareclad::persist::Persistor;
+//! use bareclad::construct::Database;
+//! use bareclad::traqula::Engine;
+//! let conn = Connection::open_in_memory().unwrap();
+//! let persistor = Persistor::new(&conn);
+//! let db = Database::new(persistor);
+//! let engine = Engine::new(&db);
+//! engine.execute("add role person; add posit [{(+a, person)}, \"Alice\", @NOW];");
+//! ```
+//!
+//! NOTE: The search functionality is still evolving; many captured variables
+//! are currently parsed but not yet materialized into final query outputs.
+//! Debug logging is gated behind `cfg(debug_assertions)` where appropriate.
 use regex::{Regex};
 use lazy_static::lazy_static;
 use crate::construct::{Database, Thing, OtherHasher};
@@ -20,6 +57,10 @@ pub enum ResultSetMode {
     Multi
 }
 
+/// Compact set abstraction used during query evaluation.
+///
+/// Public fields allow light‑weight pattern matching by the engine. External
+/// crates should treat this as opaque and rely on future higher level APIs.
 #[derive(Debug)]
 pub struct ResultSet {
     pub mode: ResultSetMode,
@@ -301,6 +342,8 @@ impl SubAssign<&'_ ResultSet> for ResultSet  {
 
 
 // search functions in order to find posits matching certain circumstances
+/// Collects the identities of all posits whose appearance sets involve the
+/// supplied thing.
 pub fn posits_involving_thing(database: &Database, thing: Thing) -> ResultSet {
     let mut result_set = ResultSet::new();
     for appearance in database
@@ -335,7 +378,7 @@ fn parse_string(value: &str) -> Option<String> {
     c.next_back();
     Some(c.collect::<String>().replace("\"\"", "\""))
 }
-fn parse_string_constant(value: &str) -> Option<String> {
+fn parse_string_constant(_value: &str) -> Option<String> {
     None
 }
 fn parse_i64(value: &str) -> Option<i64> {
@@ -344,7 +387,7 @@ fn parse_i64(value: &str) -> Option<i64> {
         Err(_) => None
     }
 }
-fn parse_i64_constant(value: &str) -> Option<i64> {
+fn parse_i64_constant(_value: &str) -> Option<i64> {
     None
 }
 fn parse_certainty(value: &str) -> Option<Certainty> {
@@ -354,21 +397,22 @@ fn parse_certainty(value: &str) -> Option<Certainty> {
         Err(_) => None
     }
 }
-fn parse_certainty_constant(value: &str) -> Option<Certainty> {
+fn parse_certainty_constant(_value: &str) -> Option<Certainty> {
     None
 }
 fn parse_decimal(value: &str) -> Option<Decimal> {
     Decimal::from_str(value)
 }
-fn parse_decimal_constant(value: &str) -> Option<Decimal> {
+fn parse_decimal_constant(_value: &str) -> Option<Decimal> {
     None
 }
 fn parse_json(value: &str) -> Option<JSON> {
     JSON::from_str(value)
 }
-fn parse_json_constant(value: &str) -> Option<JSON> {
+fn parse_json_constant(_value: &str) -> Option<JSON> {
     None
 }
+/// Parse a time literal or constant used in Traqula.
 pub fn parse_time(value: &str) -> Option<Time> {
     let stripped = value.replace("'", "");
     let time = "'".to_owned() + &stripped + "'";
@@ -410,20 +454,24 @@ use pest::iterators::Pair;
 #[grammar = "traqula.pest"] // relative to src
 struct TraqulaParser;
 
+/// Execution engine binding a parsed Traqula script to a concrete database.
 pub struct Engine<'db, 'en> {
     database: &'en Database<'db>, 
 }
 impl<'db, 'en> Engine<'db, 'en> {
+    /// Create a new engine borrowing the provided database.
     pub fn new(database: &'en Database<'db>) -> Self {
         Self {
             database
         }
     }
+    /// Handle an `add role` command.
     fn add_role(&self, command: Pair<Rule>) {
         for role in command.into_inner() {
             self.database.create_role(role.as_str().to_string(), false);
         }
     }
+    /// Handle an `add posit` command producing one or more posits.
     fn add_posit(&self, command: Pair<Rule>, variables: &mut Variables) {
         for structure in command.into_inner() {
             let mut variable: Option<String> = None;
@@ -582,32 +630,32 @@ impl<'db, 'en> Engine<'db, 'en> {
                         if value_as_json.is_some() {
                             let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
-                            println!("Posit: {}", kept_posit);
+                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
                         }
                         else if value_as_string.is_some() {
                             let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
-                            println!("Posit: {}", kept_posit);
+                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
                         }
                         else if value_as_time.is_some() {
                             let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
-                            println!("Posit: {}", kept_posit);
+                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
                         }
                         else if value_as_certainty.is_some() {
                             let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
-                            println!("Posit: {}", kept_posit);
+                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
                         }
                         else if value_as_decimal.is_some() {
                             let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
-                            println!("Posit: {}", kept_posit);
+                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
                         }
                         else if value_as_i64.is_some() {
                             let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), time.clone().unwrap());
                             posits.push(kept_posit.posit());
-                            println!("Posit: {}", kept_posit);
+                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
                         }
                     }
                 }
@@ -657,7 +705,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 for component in structure.into_inner() {
                                     match component.as_rule() {
                                         Rule::insert => {
-                                            let variable = Some(component.into_inner().next().unwrap().as_str().to_string()); 
+                                            let variable = Some(component.into_inner().next().unwrap().as_str().to_string());
                                             //println!("Insert: {}", &variable.unwrap());
                                         }
                                         Rule::appearance_set_search => {
@@ -769,14 +817,14 @@ impl<'db, 'en> Engine<'db, 'en> {
                             }, 
                             _ => println!("Unknown posit structure: {:?}", structure)
                         }
-                        println!("Local variables: {:?}", local_variables);
+                        if cfg!(debug_assertions) { println!("Local variables: {:?}", local_variables); }
                     } 
                 },
                 Rule::return_clause => {
                     for structure in clause.into_inner() {
                         match structure.as_rule() {
                             Rule::recall => {
-                                println!("Return recall: {}", structure.as_str()); 
+                                if cfg!(debug_assertions) { println!("Return recall: {}", structure.as_str()); }
                             }, 
                             _ => println!("Unknown return structure: {:?}", structure)
                         }
@@ -786,6 +834,7 @@ impl<'db, 'en> Engine<'db, 'en> {
             }
         }
     }
+    /// Parse and execute a Traqula script (one or more commands).
     pub fn execute(&self, traqula: &str) {
         let mut variables: Variables = Variables::default();
         let traqula = TraqulaParser::parse(Rule::traqula, traqula.trim()).expect("Parsing error");
@@ -798,7 +847,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                 _ => println!("Unknown command: {:?}", command)
             }
         }
-        println!("Variables: {:?}", &variables);
+        if cfg!(debug_assertions) { println!("Variables: {:?}", &variables); }
     }  
 }
 
@@ -814,6 +863,7 @@ Additionally, all code snippets and fragments are also licensed under both the t
 MIT license and the Unlicense (at the licensee's choice), unless otherwise noted.
 */
 
+/// Helper producing the Cartesian product of accumulated rows with another slice.
 pub fn partial_cartesian<T: Clone>(a: Vec<Vec<T>>, b: &[T]) -> Vec<Vec<T>> {
     a.into_iter().flat_map(|xs| {
         b.iter().cloned().map(|y| {
@@ -824,6 +874,7 @@ pub fn partial_cartesian<T: Clone>(a: Vec<Vec<T>>, b: &[T]) -> Vec<Vec<T>> {
     }).collect()
 }
 
+/// Cartesian product for a slice of slices.
 pub fn cartesian_product<T: Clone>(lists: &[&[T]]) -> Vec<Vec<T>> {
     match lists.split_first() {
         Some((first, rest)) => {

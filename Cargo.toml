@@ -1,38 +1,37 @@
 [package]
 name = "bareclad"
-version = "0.1.3"
-edition = "2021"
+version = "0.1.4"
+edition = "2024"
 authors = ["Lars Rönnbäck <lars@bareclad.com>"]
 
 [dependencies]
 # chrono provides various data types for time
-chrono = "0.4"
+chrono = "0.4.38"
 # bimap is a bidirectional hashmap, so lookups can be done both from left and right
-bimap = "0.6.1"
+bimap = "0.6.3"
 # typemap holds one value per type of key, useful for Posit<V,T>
-typemap = "0.3.3"
 # pest is a parser used when parsing Traqula
-pest = "2.1.3"
-pest_derive = "2.1.0"
+pest = "2.7.11"
+pest_derive = "2.7.11"
 # config lets you read a separate config file 
-config = "0.11"
+config = "0.15"
 # the "standard" regular expression package
-regex = "1.5.4"
+regex = "1.10"
 # anyhow provides easy custom error handling
-anyhow = "1.0"
+anyhow = "1.0.86"
 # since every posit is a thing in itself we can use bitsets to "join" them
 # the "roaring bitmaps" seem to have the best ergonomics 
-roaring = "0.8.1"
+roaring = "0.11"
 # we will use a fast hashing algo for hashmaps and hashsets where keys are not Things
 seahash = "4.1.0"
 # rusqlite for the persistence layer
-rusqlite = { version = "0.26.3", features = ["chrono", "bundled"] }
+rusqlite = { version = "0.37", features = ["chrono", "bundled"] }
 # for decimal numbers of arbitrary size
-bigdecimal = "0.3.0"
+bigdecimal = "0.4"
 # for JSON data type
-jsondata = "0.8.0"
+jsondata = "0.8.1"
 # so regular expressions don't have to be recompiled 
-lazy_static = "1.4.0"
+lazy_static = "1.5"
 
 # ---- THESE MAY BE USED LATER -----
 #jql = "3.0.4"
@@ -46,7 +45,7 @@ lazy_static = "1.4.0"
 #logos = "0.12"
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.7"
 
 [[bench]]
 name = "benchmark"
