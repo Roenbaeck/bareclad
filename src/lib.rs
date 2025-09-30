@@ -63,7 +63,7 @@
 //! Generated crate docs intentionally aggregate conceptual guidance formerly
 //! kept in `main.rs` so that library consumers see them directly on docs.rs.
 
-pub mod datatype;
 pub mod construct;
+pub mod datatype;
 pub mod persist;
 pub mod traqula;

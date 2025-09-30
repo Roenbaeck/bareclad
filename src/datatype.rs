@@ -42,7 +42,7 @@
 use rusqlite::types::{FromSql, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 
 // used for timestamps in the database
-use chrono::{NaiveDateTime, NaiveDate, Utc, Datelike};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
 // used for decimal numbers
 use bigdecimal::BigDecimal;
 // used for JSON
@@ -66,7 +66,7 @@ use crate::traqula::parse_time;
 /// Implementors must provide a stable numeric `UID` and textual name
 /// `DATA_TYPE`. These are persisted so changing them breaks backward
 /// compatibility.
-pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql  {
+pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql {
     /// Stable numeric identifier for catalog persistence.
     const UID: u8;
     /// Stable human readable name stored in persistence.
@@ -74,14 +74,18 @@ pub trait DataType: fmt::Display + Eq + Hash + Send + Sync + ToSql  {
     /// Convert from a raw SQLite value (during restore).
     fn convert(value: &ValueRef) -> Self;
     /// Returns the textual data type name.
-    fn data_type(&self) -> &'static str { Self::DATA_TYPE }
+    fn data_type(&self) -> &'static str {
+        Self::DATA_TYPE
+    }
     /// Returns the numeric identifier.
-    fn identifier(&self) -> u8 { Self::UID }
+    fn identifier(&self) -> u8 {
+        Self::UID
+    }
 }
 
 // ------------- Data Types --------------
 impl DataType for Certainty {
-    const UID: u8 = 1; 
+    const UID: u8 = 1;
     const DATA_TYPE: &'static str = "Certainty";
     fn convert(value: &ValueRef) -> Certainty {
         Certainty {
@@ -121,14 +125,14 @@ impl DataType for Decimal {
     const UID: u8 = 6;
     const DATA_TYPE: &'static str = "Decimal";
     fn convert(value: &ValueRef) -> Decimal {
-        Decimal (BigDecimal::from_str(value.as_str().unwrap()).unwrap())
+        Decimal(BigDecimal::from_str(value.as_str().unwrap()).unwrap())
     }
 }
 impl DataType for JSON {
     const UID: u8 = 7;
     const DATA_TYPE: &'static str = "JSON";
     fn convert(value: &ValueRef) -> JSON {
-        JSON (Json::from_str(value.as_str().unwrap()).unwrap())
+        JSON(Json::from_str(value.as_str().unwrap()).unwrap())
     }
 }
 impl DataType for Time {
@@ -136,19 +140,19 @@ impl DataType for Time {
     const DATA_TYPE: &'static str = "Time";
     fn convert(value: &ValueRef) -> Time {
         parse_time(value.as_str().unwrap()).unwrap()
-    }   
+    }
 }
 
 // Special types below
 /// JSON value wrapper implementing [`DataType`]. Display prints compact JSON.
 #[derive(Eq, PartialEq, PartialOrd, Ord, Clone)]
-pub struct JSON (Json);
+pub struct JSON(Json);
 
 impl JSON {
     pub fn from_str(s: &str) -> Option<JSON> {
         match Json::from_str(s) {
-            Ok(json) => Some(JSON (json)),
-            _ => None
+            Ok(json) => Some(JSON(json)),
+            _ => None,
         }
     }
 }
@@ -159,7 +163,7 @@ impl ToSql for JSON {
 }
 impl FromSql for JSON {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        rusqlite::Result::Ok(JSON (Json::from_str(value.as_str().unwrap()).unwrap()))
+        rusqlite::Result::Ok(JSON(Json::from_str(value.as_str().unwrap()).unwrap()))
     }
 }
 impl Hash for JSON {
@@ -178,7 +182,7 @@ impl ops::Deref for JSON {
         &self.0
     }
 }
-/* 
+/*
 // all our values are immutable
 impl ops::DerefMut for JSON {
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -186,7 +190,6 @@ impl ops::DerefMut for JSON {
     }
 }
 */
-
 
 /*
 Certainty is a subjective measure that can be held against a posit.
@@ -333,13 +336,13 @@ impl FromSql for Certainty {
 
 /// Arbitrary precision decimal wrapper implementing [`DataType`].
 #[derive(Eq, PartialEq, Hash, PartialOrd, Ord, Clone)]
-pub struct Decimal (BigDecimal);
+pub struct Decimal(BigDecimal);
 
 impl Decimal {
     pub fn from_str(s: &str) -> Option<Decimal> {
         match BigDecimal::from_str(s) {
-            Ok(decimal) => Some(Decimal (decimal)),
-            _ => None
+            Ok(decimal) => Some(Decimal(decimal)),
+            _ => None,
         }
     }
 }
@@ -350,7 +353,9 @@ impl fmt::Display for Decimal {
 }
 impl FromSql for Decimal {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        rusqlite::Result::Ok(Decimal (BigDecimal::from_str(value.as_str().unwrap()).unwrap()))
+        rusqlite::Result::Ok(Decimal(
+            BigDecimal::from_str(value.as_str().unwrap()).unwrap(),
+        ))
     }
 }
 impl ToSql for Decimal {
@@ -370,7 +375,7 @@ impl ops::DerefMut for Decimal {
     }
 }
 
-// TODO: We will use a specialized time type instead of the 
+// TODO: We will use a specialized time type instead of the
 // trait constrained generic
 /// Hierarchical temporal points (abstract sentinels + concrete resolutions).
 #[derive(Eq, PartialEq, Ord, Debug, Hash, Clone)]
@@ -380,107 +385,97 @@ pub enum TimeType {
     EndOfTime,
     // concrete time points
     Year(i32),
-    YearMonth(i32,u8),
-    Date(NaiveDate), 
-    DateTime(NaiveDateTime)
+    YearMonth(i32, u8),
+    Date(NaiveDate),
+    DateTime(NaiveDateTime),
 }
 
 impl PartialOrd for TimeType {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
             // abstact type combinations
-            (TimeType::BeginningOfTime, TimeType::BeginningOfTime) | (TimeType::EndOfTime, TimeType::EndOfTime) => Some(Ordering::Equal),
+            (TimeType::BeginningOfTime, TimeType::BeginningOfTime)
+            | (TimeType::EndOfTime, TimeType::EndOfTime) => Some(Ordering::Equal),
             (TimeType::BeginningOfTime, _) | (_, TimeType::EndOfTime) => Some(Ordering::Less),
             (_, TimeType::BeginningOfTime) | (TimeType::EndOfTime, _) => Some(Ordering::Greater),
             // concrete type combinations
-            (TimeType::Year(y_self), type_other) => {
-                match type_other {
-                    TimeType::Year(y) => y_self.partial_cmp(y),
-                    TimeType::YearMonth(y, _) => y_self.partial_cmp(y),
-                    TimeType::Date(d) => y_self.partial_cmp(&d.year()),
-                    TimeType::DateTime(d) => y_self.partial_cmp(&d.year()),
-                    _ => None
-                }
+            (TimeType::Year(y_self), type_other) => match type_other {
+                TimeType::Year(y) => y_self.partial_cmp(y),
+                TimeType::YearMonth(y, _) => y_self.partial_cmp(y),
+                TimeType::Date(d) => y_self.partial_cmp(&d.year()),
+                TimeType::DateTime(d) => y_self.partial_cmp(&d.year()),
+                _ => None,
             },
-            (TimeType::YearMonth(y_self, m_self), type_other) => {
-                match type_other {
-                    TimeType::Year(y) => y_self.partial_cmp(y),
-                    TimeType::YearMonth(y, m) => {
-                        match y_self.partial_cmp(y) {
-                            Some(Ordering::Equal) => m_self.partial_cmp(m),
-                            _ => y_self.partial_cmp(y)
-                        }
-                    },
-                    TimeType::Date(d) => {
-                        match y_self.partial_cmp(&d.year()) {
-                            Some(Ordering::Equal) => m_self.partial_cmp(&(d.month() as u8)),
-                            _ => y_self.partial_cmp(&d.year())
-                        }
-                    },
-                    TimeType::DateTime(d) => {
-                        match y_self.partial_cmp(&d.year()) {
-                            Some(Ordering::Equal) => m_self.partial_cmp(&(d.month() as u8)),
-                            _ => y_self.partial_cmp(&d.year())
-                        }
-                    },
-                    _ => None
-                }
-            }, 
-            (TimeType::Date(d_self), type_other) => {
-                match type_other {
-                    TimeType::Year(y) => d_self.year().partial_cmp(y),
-                    TimeType::YearMonth(y, m) => {
-                        match d_self.year().partial_cmp(y) {
-                            Some(Ordering::Equal) => (d_self.month() as u8).partial_cmp(m),
-                            _ => d_self.year().partial_cmp(y)
-                        }
-                    },
-                    TimeType::Date(d) => d_self.partial_cmp(d),
-                    TimeType::DateTime(d) => d_self.partial_cmp(&d.date()),
-                    _ => None
-                }
+            (TimeType::YearMonth(y_self, m_self), type_other) => match type_other {
+                TimeType::Year(y) => y_self.partial_cmp(y),
+                TimeType::YearMonth(y, m) => match y_self.partial_cmp(y) {
+                    Some(Ordering::Equal) => m_self.partial_cmp(m),
+                    _ => y_self.partial_cmp(y),
+                },
+                TimeType::Date(d) => match y_self.partial_cmp(&d.year()) {
+                    Some(Ordering::Equal) => m_self.partial_cmp(&(d.month() as u8)),
+                    _ => y_self.partial_cmp(&d.year()),
+                },
+                TimeType::DateTime(d) => match y_self.partial_cmp(&d.year()) {
+                    Some(Ordering::Equal) => m_self.partial_cmp(&(d.month() as u8)),
+                    _ => y_self.partial_cmp(&d.year()),
+                },
+                _ => None,
             },
-            (TimeType::DateTime(d_self), type_other) => {
-                match type_other {
-                    TimeType::Year(y) => d_self.year().partial_cmp(y),
-                    TimeType::YearMonth(y, m) => {
-                        match d_self.year().partial_cmp(y) {
-                            Some(Ordering::Equal) => (d_self.month() as u8).partial_cmp(m),
-                            _ => d_self.year().partial_cmp(y)
-                        }
-                    },
-                    TimeType::Date(d) => d_self.date().partial_cmp(d),
-                    TimeType::DateTime(d) => d_self.partial_cmp(d),
-                    _ => None
-                }
+            (TimeType::Date(d_self), type_other) => match type_other {
+                TimeType::Year(y) => d_self.year().partial_cmp(y),
+                TimeType::YearMonth(y, m) => match d_self.year().partial_cmp(y) {
+                    Some(Ordering::Equal) => (d_self.month() as u8).partial_cmp(m),
+                    _ => d_self.year().partial_cmp(y),
+                },
+                TimeType::Date(d) => d_self.partial_cmp(d),
+                TimeType::DateTime(d) => d_self.partial_cmp(&d.date()),
+                _ => None,
             },
-        } 
+            (TimeType::DateTime(d_self), type_other) => match type_other {
+                TimeType::Year(y) => d_self.year().partial_cmp(y),
+                TimeType::YearMonth(y, m) => match d_self.year().partial_cmp(y) {
+                    Some(Ordering::Equal) => (d_self.month() as u8).partial_cmp(m),
+                    _ => d_self.year().partial_cmp(y),
+                },
+                TimeType::Date(d) => d_self.date().partial_cmp(d),
+                TimeType::DateTime(d) => d_self.partial_cmp(d),
+                _ => None,
+            },
+        }
     }
 }
-
 
 /// Public temporal wrapper used in posits. Provides helper constructors.
 #[derive(Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Clone)]
 pub struct Time {
-    moment: TimeType
+    moment: TimeType,
 }
 impl Time {
     /// Now (UTC) time point.
     pub fn new() -> Time {
-        Time { moment: TimeType::DateTime(Utc::now().naive_utc()) }
+        Time {
+            moment: TimeType::DateTime(Utc::now().naive_utc()),
+        }
     }
     /// Abstract lower bound.
     pub fn new_beginning_of_time() -> Time {
-        Time { moment: TimeType::BeginningOfTime }
+        Time {
+            moment: TimeType::BeginningOfTime,
+        }
     }
     /// Abstract upper bound.
     pub fn new_end_of_time() -> Time {
-        Time { moment: TimeType::EndOfTime }
+        Time {
+            moment: TimeType::EndOfTime,
+        }
     }
     // TODO: may panic
     /// Creates a `Time` from a year string (e.g. "2024"). Panics on invalid input.
     pub fn new_year_from(d: &str) -> Time {
-        Time { moment: TimeType::Year(d.parse::<i32>().unwrap()) }
+        Time {
+            moment: TimeType::Year(d.parse::<i32>().unwrap()),
+        }
     }
     /// Creates a `Time` from a year-month string ("YYYY-MM"). Panics on invalid input.
     pub fn new_year_month_from(d: &str) -> Time {
@@ -490,21 +485,26 @@ impl Time {
             if c != '-' {
                 if year.len() < 4 {
                     year.push(c);
-                }
-                else {
+                } else {
                     month.push(c);
                 }
             }
         }
-        Time { moment: TimeType::YearMonth(year.parse::<i32>().unwrap(), month.parse::<u8>().unwrap()) }
+        Time {
+            moment: TimeType::YearMonth(year.parse::<i32>().unwrap(), month.parse::<u8>().unwrap()),
+        }
     }
     /// Creates a `Time` from a date string ("YYYY-MM-DD"). Panics on invalid input.
     pub fn new_date_from(d: &str) -> Time {
-        Time { moment: TimeType::Date(NaiveDate::from_str(d).unwrap()) } 
+        Time {
+            moment: TimeType::Date(NaiveDate::from_str(d).unwrap()),
+        }
     }
     /// Creates a `Time` from a datetime string acceptable by `NaiveDateTime::from_str`.
     pub fn new_datetime_from(d: &str) -> Time {
-        Time { moment: TimeType::DateTime(NaiveDateTime::from_str(d).unwrap()) } 
+        Time {
+            moment: TimeType::DateTime(NaiveDateTime::from_str(d).unwrap()),
+        }
     }
 }
 impl fmt::Display for Time {

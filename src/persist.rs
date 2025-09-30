@@ -28,10 +28,10 @@
 //! Current implementation panics on unexpected SQLite errors. A future revision
 //! could propagate a domain error type instead.
 // used for persistence
-use rusqlite::{params, Connection, Error, Statement};
+use rusqlite::{Connection, Error, Statement, params};
 
 // our own stuff
-use crate::construct::{Database, Role, Posit, Appearance, AppearanceSet, Thing};
+use crate::construct::{Appearance, AppearanceSet, Database, Posit, Role, Thing};
 use crate::datatype::{DataType, Decimal, JSON, Time};
 
 // ------------- Persistence -------------
@@ -276,9 +276,8 @@ impl<'db> Persistor<'db> {
         let mut appearances = Vec::new();
         let appearance_set = posit.appearance_set();
         for appearance in appearance_set.appearances().iter() {
-            appearances.push(
-                appearance.thing().to_string() + "," + &appearance.role().role().to_string(),
-            );
+            appearances
+                .push(appearance.thing().to_string() + "," + &appearance.role().role().to_string());
         }
         let apperance_set_as_text = appearances.join("|");
         let mut existing = false;
@@ -331,11 +330,9 @@ impl<'db> Persistor<'db> {
     /// Rehydrate all thing identities into the in-memory generator.
     pub fn restore_things(&mut self, db: &Database) {
         let thing_iter = self
-        .all_things
-        .query_map([], |row| {
-            Ok(row.get(0).unwrap())
-        })
-        .unwrap();
+            .all_things
+            .query_map([], |row| Ok(row.get(0).unwrap()))
+            .unwrap();
         for thing in thing_iter {
             db.thing_generator().lock().unwrap().retain(thing.unwrap());
         }
@@ -370,8 +367,7 @@ impl<'db> Persistor<'db> {
                 let (thing, role) = appearance_text.split_once(',').unwrap();
                 let appearance = Appearance::new(
                     thing.parse().unwrap(),
-                    db
-                        .role_keeper()
+                    db.role_keeper()
                         .lock()
                         .unwrap()
                         .lookup(&role.parse::<Thing>().unwrap()),
@@ -379,65 +375,53 @@ impl<'db> Persistor<'db> {
                 let (kept_appearance, _) = db.keep_appearance(appearance);
                 appearance_set.push(kept_appearance);
             }
-            let (kept_appearance_set, _) = db.keep_appearance_set(AppearanceSet::new(
-                appearance_set,
-            ).unwrap());
+            let (kept_appearance_set, _) =
+                db.keep_appearance_set(AppearanceSet::new(appearance_set).unwrap());
 
             // MAINTENANCE: The section below needs to be extended when new data types are added
             match value_type.as_str() {
                 String::DATA_TYPE => {
-                    db.keep_posit(
-                        Posit::new(
-                            thing,
-                            kept_appearance_set,
-                            <String as DataType>::convert(&row.get_ref_unwrap(2)),
-                            Time::convert(&row.get_ref_unwrap(4))
-                        )
-                    );
-                }, 
+                    db.keep_posit(Posit::new(
+                        thing,
+                        kept_appearance_set,
+                        <String as DataType>::convert(&row.get_ref_unwrap(2)),
+                        Time::convert(&row.get_ref_unwrap(4)),
+                    ));
+                }
                 i64::DATA_TYPE => {
-                    db.keep_posit(
-                        Posit::new(
-                            thing,
-                            kept_appearance_set,
-                            <i64 as DataType>::convert(&row.get_ref_unwrap(2)),
-                            Time::convert(&row.get_ref_unwrap(4))
-                        )
-                    );
-                }, 
+                    db.keep_posit(Posit::new(
+                        thing,
+                        kept_appearance_set,
+                        <i64 as DataType>::convert(&row.get_ref_unwrap(2)),
+                        Time::convert(&row.get_ref_unwrap(4)),
+                    ));
+                }
                 Decimal::DATA_TYPE => {
-                    db.keep_posit(
-                        Posit::new(
-                            thing,
-                            kept_appearance_set,
-                            <Decimal as DataType>::convert(&row.get_ref_unwrap(2)),
-                            Time::convert(&row.get_ref_unwrap(4))
-                        )
-                    );
-                }, 
+                    db.keep_posit(Posit::new(
+                        thing,
+                        kept_appearance_set,
+                        <Decimal as DataType>::convert(&row.get_ref_unwrap(2)),
+                        Time::convert(&row.get_ref_unwrap(4)),
+                    ));
+                }
                 Time::DATA_TYPE => {
-                    db.keep_posit(
-                        Posit::new(
-                            thing,
-                            kept_appearance_set,
-                            <Time as DataType>::convert(&row.get_ref_unwrap(2)),
-                            Time::convert(&row.get_ref_unwrap(4))
-                        )
-                    );
-                }, 
+                    db.keep_posit(Posit::new(
+                        thing,
+                        kept_appearance_set,
+                        <Time as DataType>::convert(&row.get_ref_unwrap(2)),
+                        Time::convert(&row.get_ref_unwrap(4)),
+                    ));
+                }
                 JSON::DATA_TYPE => {
-                    db.keep_posit(
-                        Posit::new(
-                            thing,
-                            kept_appearance_set,
-                            <JSON as DataType>::convert(&row.get_ref_unwrap(2)),
-                            Time::convert(&row.get_ref_unwrap(4))
-                        )
-                    );
-                }, 
-                _ => ()
+                    db.keep_posit(Posit::new(
+                        thing,
+                        kept_appearance_set,
+                        <JSON as DataType>::convert(&row.get_ref_unwrap(2)),
+                        Time::convert(&row.get_ref_unwrap(4)),
+                    ));
+                }
+                _ => (),
             }
         }
     }
 }
-

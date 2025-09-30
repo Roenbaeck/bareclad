@@ -33,19 +33,20 @@
 //! let posit = db.create_posit(appearance_set, String::from("Alice"), time.clone());
 //! assert_eq!(posit.value(), &"Alice".to_string());
 //! ```
-use std::sync::{Arc, Mutex};
-use std::collections::{HashMap, HashSet};
-use std::collections::hash_set::Iter;
-use std::collections::hash_map::{Entry, RandomState};
-use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
-use seahash::SeaHasher;
-use std::cmp::Ordering;
-use std::hash::Hash;
-use std::fmt;
-use std::any::{Any, TypeId};
-use bimap::BiMap;
 use crate::datatype::{DataType, Time};
 use crate::persist::Persistor;
+use bimap::BiMap;
+use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
+use roaring::RoaringTreemap;
+use seahash::SeaHasher;
+use std::any::{Any, TypeId};
+use std::cmp::Ordering;
+use std::collections::hash_map::{Entry, RandomState};
+use std::collections::hash_set::Iter;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 
 /// Internal heterogeneous map keyed by `TypeId` used for storing per-value
 /// type bimap indices for posits.
@@ -55,11 +56,15 @@ struct TypeMap {
 
 impl TypeMap {
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        self.map.get_mut(&TypeId::of::<T>()).and_then(|b| b.downcast_mut::<T>())
+        self.map
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|b| b.downcast_mut::<T>())
     }
 
     pub fn insert<T: 'static>(&mut self, value: T) {
@@ -68,10 +73,10 @@ impl TypeMap {
 }
 
 // ------------- Thing -------------
-// Mem check example: 
+// Mem check example:
 // https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=5b196af2532ce0d3413e4523b17980a5
 /// Opaque identity type used for every persisted construct.
-pub type Thing = u64; 
+pub type Thing = u64;
 /// Reserved identity constant representing the initial lower bound for the generator.
 pub const GENESIS: Thing = 0;
 
@@ -311,7 +316,6 @@ impl fmt::Display for AppearanceSet {
     }
 }
 
-
 #[derive(Debug)]
 pub struct AppearanceSetKeeper {
     kept: HashSet<Arc<AppearanceSet>, OtherHasher>,
@@ -338,18 +342,13 @@ impl AppearanceSetKeeper {
 // --------------- Posit ----------------
 #[derive(Eq, PartialOrd, Ord, Debug)]
 pub struct Posit<V: DataType> {
-    posit: Thing,   // a posit is also a thing we can "talk" about
+    posit: Thing, // a posit is also a thing we can "talk" about
     appearance_set: Arc<AppearanceSet>,
-    value: V,       // in theory any imprecise value
-    time: Time,     // in thoery any imprecise time (note that this must be a data type with a natural ordering)
+    value: V,   // in theory any imprecise value
+    time: Time, // in thoery any imprecise time (note that this must be a data type with a natural ordering)
 }
 impl<V: DataType> Posit<V> {
-    pub fn new(
-        posit: Thing,
-        appearance_set: Arc<AppearanceSet>,
-        value: V,
-        time: Time,
-    ) -> Posit<V> {
+    pub fn new(posit: Thing, appearance_set: Arc<AppearanceSet>, value: V, time: Time) -> Posit<V> {
         Self {
             posit,
             appearance_set,
@@ -386,10 +385,12 @@ impl<V: DataType> Hash for Posit<V> {
 }
 impl<V: DataType> fmt::Display for Posit<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} [{}, {}, {}]", 
+        write!(
+            f,
+            "{} [{}, {}, {}]",
             self.posit,
-            self.appearance_set, 
-            self.value.to_string() + "::<" + self.value.data_type() + ">", 
+            self.appearance_set,
+            self.value.to_string() + "::<" + self.value.data_type() + ">",
             self.time.to_string() + "::<" + self.time.data_type() + ">"
         )
     }
@@ -399,24 +400,22 @@ impl<V: DataType> fmt::Display for Posit<V> {
 
 pub struct PositKeeper {
     kept: TypeMap,
-    length: usize
+    length: usize,
 }
 impl PositKeeper {
     pub fn new() -> Self {
         Self {
             kept: TypeMap::new(),
-            length: 0
+            length: 0,
         }
     }
-    pub fn keep<V: 'static + DataType>(
-        &mut self,
-        posit: Posit<V>,
-    ) -> (Arc<Posit<V>>, bool) {
+    pub fn keep<V: 'static + DataType>(&mut self, posit: Posit<V>) -> (Arc<Posit<V>>, bool) {
         // ensure the map can work with this particular type combo
         let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
             m
         } else {
-            self.kept.insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept
+                .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
             self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
         };
         let keepsake_thing = posit.posit();
@@ -438,26 +437,22 @@ impl PositKeeper {
             previously_kept,
         )
     }
-    pub fn thing<V: 'static + DataType>(
-        &mut self,
-        posit: Arc<Posit<V>>,
-    ) -> Thing {
+    pub fn thing<V: 'static + DataType>(&mut self, posit: Arc<Posit<V>>) -> Thing {
         let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
             m
         } else {
-            self.kept.insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept
+                .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
             self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
         };
         *map.get_by_left(&posit).unwrap()
     }
-    pub fn posit<V: 'static + DataType>(
-        &mut self,
-        thing: Thing,
-    ) -> Arc<Posit<V>> {
+    pub fn posit<V: 'static + DataType>(&mut self, thing: Thing) -> Arc<Posit<V>> {
         let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
             m
         } else {
-            self.kept.insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept
+                .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
             self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
         };
         Arc::clone(map.get_by_right(&thing).unwrap())
@@ -487,6 +482,31 @@ impl<K: Eq + Hash, V: Eq + Hash, H: BuildHasher + Default> Lookup<K, V, H> {
     }
 }
 
+/// Lookup mapping a key to a set of Thing IDs, backed by a RoaringTreemap.
+#[derive(Debug)]
+pub struct ThingLookup<K, H = RandomState> {
+    index: HashMap<K, RoaringTreemap, H>,
+}
+impl<K: Eq + Hash, H: BuildHasher + Default> ThingLookup<K, H> {
+    pub fn new() -> Self {
+        Self {
+            index: HashMap::<K, RoaringTreemap, H>::default(),
+        }
+    }
+    pub fn insert(&mut self, key: K, thing: Thing) {
+        let set = self.index.entry(key).or_insert(RoaringTreemap::new());
+        set.insert(thing);
+    }
+    pub fn remove(&mut self, key: &K, thing: Thing) {
+        if let Some(set) = self.index.get_mut(key) {
+            set.remove(thing);
+        }
+    }
+    pub fn lookup(&self, key: &K) -> &RoaringTreemap {
+        self.index.get(key).unwrap()
+    }
+}
+
 // ------------- Database -------------
 // This sets up the database with the necessary structures
 pub struct Database<'db> {
@@ -500,8 +520,11 @@ pub struct Database<'db> {
     // owns lookups between constructs (similar to database indexes)
     pub thing_to_appearance_lookup: Arc<Mutex<Lookup<Thing, Arc<Appearance>, ThingHasher>>>,
     pub role_to_appearance_lookup: Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>>,
-    pub appearance_to_appearance_set_lookup: Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>, OtherHasher>>>,
-    pub appearance_set_to_posit_thing_lookup: Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing, OtherHasher>>>,
+    pub appearance_to_appearance_set_lookup:
+        Arc<Mutex<Lookup<Arc<Appearance>, Arc<AppearanceSet>, OtherHasher>>>,
+    pub appearance_set_to_posit_thing_lookup:
+        Arc<Mutex<ThingLookup<Arc<AppearanceSet>, OtherHasher>>>,
+    pub role_to_posit_thing_lookup: Arc<Mutex<ThingLookup<Thing, OtherHasher>>>,
     pub role_name_to_data_type_lookup: Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>>,
     // responsible for the the persistence layer
     pub persistor: Arc<Mutex<Persistor<'db>>>,
@@ -518,7 +541,8 @@ impl<'db> Database<'db> {
         let thing_to_appearance_lookup = Lookup::new();
         let role_to_appearance_lookup = Lookup::new();
         let appearance_to_appearance_set_lookup = Lookup::new();
-        let appearance_set_to_posit_thing_lookup = Lookup::new();
+        let appearance_set_to_posit_thing_lookup = ThingLookup::new();
+        let role_to_posit_thing_lookup = ThingLookup::new();
         let role_name_to_data_type_lookup = Lookup::new();
         let persistor = persistor;
 
@@ -537,6 +561,7 @@ impl<'db> Database<'db> {
             appearance_set_to_posit_thing_lookup: Arc::new(Mutex::new(
                 appearance_set_to_posit_thing_lookup,
             )),
+            role_to_posit_thing_lookup: Arc::new(Mutex::new(role_to_posit_thing_lookup)),
             role_name_to_data_type_lookup: Arc::new(Mutex::new(role_name_to_data_type_lookup)),
             persistor: Arc::new(Mutex::new(persistor)),
         };
@@ -576,10 +601,14 @@ impl<'db> Database<'db> {
     ) -> Arc<Mutex<Lookup<Thing, Arc<Appearance>, ThingHasher>>> {
         Arc::clone(&self.thing_to_appearance_lookup)
     }
-    pub fn role_to_appearance_lookup(&self) -> Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>> {
+    pub fn role_to_appearance_lookup(
+        &self,
+    ) -> Arc<Mutex<Lookup<Arc<Role>, Arc<Appearance>, OtherHasher>>> {
         Arc::clone(&self.role_to_appearance_lookup)
     }
-    pub fn role_name_to_data_type_lookup(&self) -> Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>> {
+    pub fn role_name_to_data_type_lookup(
+        &self,
+    ) -> Arc<Mutex<Lookup<Vec<String>, String, OtherHasher>>> {
         Arc::clone(&self.role_name_to_data_type_lookup)
     }
     pub fn appearance_to_appearance_set_lookup(
@@ -589,8 +618,11 @@ impl<'db> Database<'db> {
     }
     pub fn appearance_set_to_posit_thing_lookup(
         &self,
-    ) -> Arc<Mutex<Lookup<Arc<AppearanceSet>, Thing, OtherHasher>>> {
+    ) -> Arc<Mutex<ThingLookup<Arc<AppearanceSet>, OtherHasher>>> {
         Arc::clone(&self.appearance_set_to_posit_thing_lookup)
+    }
+    pub fn role_to_posit_thing_lookup(&self) -> Arc<Mutex<ThingLookup<Thing, OtherHasher>>> {
+        Arc::clone(&self.role_to_posit_thing_lookup)
     }
     pub fn create_thing(&self) -> Arc<Thing> {
         let thing = self.thing_generator.lock().unwrap().generate();
@@ -637,10 +669,7 @@ impl<'db> Database<'db> {
     pub fn create_apperance(&self, thing: Thing, role: Arc<Role>) -> (Arc<Appearance>, bool) {
         self.keep_appearance(Appearance::new(thing, role))
     }
-    pub fn keep_appearance_set(
-        &self,
-        appearance_set: AppearanceSet,
-    ) -> (Arc<AppearanceSet>, bool) {
+    pub fn keep_appearance_set(&self, appearance_set: AppearanceSet) -> (Arc<AppearanceSet>, bool) {
         let (kept_appearance_set, previously_kept) = self
             .appearance_set_keeper
             .lock()
@@ -662,17 +691,25 @@ impl<'db> Database<'db> {
     ) -> (Arc<AppearanceSet>, bool) {
         self.keep_appearance_set(AppearanceSet::new(appearance_set).unwrap())
     }
-    pub fn keep_posit<V: 'static + DataType>(
-        &self,
-        posit: Posit<V>,
-    ) -> (Arc<Posit<V>>, bool) {
+    pub fn keep_posit<V: 'static + DataType>(&self, posit: Posit<V>) -> (Arc<Posit<V>>, bool) {
         let (kept_posit, previously_kept) = self.posit_keeper.lock().unwrap().keep(posit);
         if !previously_kept {
-            self.role_name_to_data_type_lookup.lock().unwrap().insert(kept_posit.appearance_set().roles(), V::DATA_TYPE.to_string());
+            self.role_name_to_data_type_lookup.lock().unwrap().insert(
+                kept_posit.appearance_set().roles(),
+                V::DATA_TYPE.to_string(),
+            );
             self.appearance_set_to_posit_thing_lookup
                 .lock()
                 .unwrap()
                 .insert(kept_posit.appearance_set(), kept_posit.posit());
+            // Index posit thing by each role in its appearance set
+            for appearance in kept_posit.appearance_set().appearances().iter() {
+                let role_thing = appearance.role().role();
+                self.role_to_posit_thing_lookup
+                    .lock()
+                    .unwrap()
+                    .insert(role_thing, kept_posit.posit());
+            }
         }
         (kept_posit, previously_kept)
     }
@@ -697,4 +734,3 @@ impl<'db> Database<'db> {
         kept_posit
     }
 }
-

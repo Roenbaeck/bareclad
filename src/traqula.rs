@@ -36,25 +36,25 @@
 //! NOTE: The search functionality is still evolving; many captured variables
 //! are currently parsed but not yet materialized into final query outputs.
 //! Debug logging is gated behind `cfg(debug_assertions)` where appropriate.
-use regex::{Regex};
+use crate::construct::{Database, OtherHasher, Thing};
+use crate::datatype::{Certainty, Decimal, JSON, Time};
 use lazy_static::lazy_static;
-use crate::construct::{Database, Thing, OtherHasher};
-use crate::datatype::{Decimal, JSON, Time, Certainty};
-use std::collections::{HashMap};
+use regex::Regex;
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
-use std::ops::{BitAndAssign, BitOrAssign, SubAssign, BitXorAssign};
+use std::ops::{BitAndAssign, BitOrAssign, BitXorAssign, SubAssign};
 
 type Variables = HashMap<String, ResultSet, OtherHasher>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSetMode {
     Empty,
-    Thing, 
-    Multi
+    Thing,
+    Multi,
 }
 
 /// Compact set abstraction used during query evaluation.
@@ -65,7 +65,7 @@ pub enum ResultSetMode {
 pub struct ResultSet {
     pub mode: ResultSetMode,
     pub thing: Option<Thing>,
-    pub multi: Option<RoaringTreemap>
+    pub multi: Option<RoaringTreemap>,
 }
 impl ResultSet {
     pub fn new() -> Self {
@@ -78,7 +78,7 @@ impl ResultSet {
     fn empty(&mut self) {
         self.mode = ResultSetMode::Empty;
         self.thing = None;
-        self.multi = None;  
+        self.multi = None;
     }
     fn thing(&mut self, thing: Thing) {
         self.mode = ResultSetMode::Thing;
@@ -95,44 +95,43 @@ impl ResultSet {
             match (&self.mode, &other.mode) {
                 (_, ResultSetMode::Empty) => {
                     self.empty();
-                }, 
+                }
                 (ResultSetMode::Thing, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     if self.thing.unwrap() != other_thing {
                         self.empty();
                     }
-                },
+                }
                 (ResultSetMode::Thing, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
                     if !other_multi.contains(self.thing.unwrap()) {
                         self.empty();
                     }
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     if self.multi.as_ref().unwrap().contains(other_thing) {
                         self.thing(other_thing);
-                    }
-                    else {
+                    } else {
                         self.empty();
                     }
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
                     let multi = self.multi.as_mut().unwrap();
-                    *multi &= other_multi; 
+                    *multi &= other_multi;
                     match multi.len() {
                         0 => {
                             self.empty();
-                        },
+                        }
                         1 => {
                             let thing = multi.min().unwrap();
                             self.thing(thing);
-                        },
-                        _ => ()
+                        }
+                        _ => (),
                     }
-                },
-                (_, _) => ()
+                }
+                (_, _) => (),
             }
         }
     }
@@ -142,36 +141,36 @@ impl ResultSet {
                 (ResultSetMode::Empty, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     self.thing(other_thing);
-                },
+                }
                 (ResultSetMode::Empty, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
-                    let mut multi = RoaringTreemap::new(); 
+                    let mut multi = RoaringTreemap::new();
                     multi.clone_from(other_multi);
                     self.multi(multi);
-                },
+                }
                 (ResultSetMode::Thing, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
-                    let mut multi = RoaringTreemap::new(); 
+                    let mut multi = RoaringTreemap::new();
                     multi.insert(other_thing);
                     multi.insert(self.thing.unwrap());
                     self.multi(multi);
-                },
+                }
                 (ResultSetMode::Thing, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
-                    let mut multi = RoaringTreemap::new(); 
+                    let mut multi = RoaringTreemap::new();
                     multi.clone_from(other_multi);
                     multi.insert(self.thing.unwrap());
                     self.multi(multi);
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     self.multi.as_mut().unwrap().insert(other_thing);
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
                     *self.multi.as_mut().unwrap() |= other_multi;
-                }, 
-                (_, _) => ()
+                }
+                (_, _) => (),
             }
         }
     }
@@ -183,13 +182,13 @@ impl ResultSet {
                     if self.thing.unwrap() == other_thing {
                         self.empty();
                     }
-                },
+                }
                 (ResultSetMode::Thing, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
                     if other_multi.contains(self.thing.unwrap()) {
                         self.empty();
                     }
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     let multi = self.multi.as_mut().unwrap();
@@ -197,14 +196,14 @@ impl ResultSet {
                     match multi.len() {
                         0 => {
                             self.empty();
-                        },
+                        }
                         1 => {
                             let thing = multi.min().unwrap();
                             self.thing(thing);
-                        },
-                        _ => ()
+                        }
+                        _ => (),
                     }
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
                     let multi = self.multi.as_mut().unwrap();
@@ -212,18 +211,18 @@ impl ResultSet {
                     match multi.len() {
                         0 => {
                             self.empty();
-                        },
+                        }
                         1 => {
                             let thing = multi.min().unwrap();
                             self.thing(thing);
-                        },
-                        _ => ()
+                        }
+                        _ => (),
                     }
-                }, 
-                (_, _) => ()
+                }
+                (_, _) => (),
             }
         }
-    } 
+    }
     fn symmetric_difference_with(&mut self, other: &ResultSet) {
         if other.mode != ResultSetMode::Empty && self.mode != ResultSetMode::Empty {
             match (&self.mode, &other.mode) {
@@ -231,58 +230,55 @@ impl ResultSet {
                     let other_thing = other.thing.unwrap();
                     if self.thing.unwrap() == other_thing {
                         self.empty();
-                    }
-                    else {
-                        let mut multi = RoaringTreemap::new(); 
+                    } else {
+                        let mut multi = RoaringTreemap::new();
                         multi.insert(other_thing);
                         multi.insert(self.thing.unwrap());
                         self.multi(multi);
                     }
-                },
+                }
                 (ResultSetMode::Thing, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
-                    let mut multi = RoaringTreemap::new(); 
+                    let mut multi = RoaringTreemap::new();
                     multi.clone_from(other_multi);
                     let thing = self.thing.unwrap();
                     if other_multi.contains(self.thing.unwrap()) {
                         multi.remove(thing);
-                    }
-                    else {
+                    } else {
                         multi.insert(thing);
                     }
                     match multi.len() {
                         0 => {
                             self.empty();
-                        },
+                        }
                         1 => {
                             let thing = multi.min().unwrap();
                             self.thing(thing);
-                        },
+                        }
                         _ => {
                             self.multi(multi);
                         }
                     }
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Thing) => {
                     let other_thing = other.thing.unwrap();
                     let multi = self.multi.as_mut().unwrap();
                     if multi.contains(other_thing) {
                         multi.remove(other_thing);
-                    }
-                    else {
+                    } else {
                         multi.insert(other_thing);
                     }
                     match multi.len() {
                         0 => {
                             self.empty();
-                        },
+                        }
                         1 => {
                             let thing = multi.min().unwrap();
                             self.thing(thing);
-                        },
-                        _ => ()
+                        }
+                        _ => (),
                     }
-                },
+                }
                 (ResultSetMode::Multi, ResultSetMode::Multi) => {
                     let other_multi = other.multi.as_ref().unwrap();
                     let multi = self.multi.as_mut().unwrap();
@@ -290,15 +286,15 @@ impl ResultSet {
                     match multi.len() {
                         0 => {
                             self.empty();
-                        },
+                        }
                         1 => {
                             let thing = multi.min().unwrap();
                             self.thing(thing);
-                        },
-                        _ => ()
+                        }
+                        _ => (),
                     }
-                }, 
-                (_, _) => ()
+                }
+                (_, _) => (),
             }
         }
     }
@@ -306,40 +302,39 @@ impl ResultSet {
         match self.mode {
             ResultSetMode::Empty => {
                 self.thing(thing);
-            }, 
+            }
             ResultSetMode::Thing => {
-                let mut multi = RoaringTreemap::new(); 
+                let mut multi = RoaringTreemap::new();
                 multi.insert(self.thing.unwrap());
                 multi.insert(thing);
                 self.multi(multi);
-            },   
+            }
             ResultSetMode::Multi => {
                 self.multi.as_mut().unwrap().insert(thing);
-            }    
+            }
         }
     }
 }
-impl BitAndAssign<&'_ ResultSet> for ResultSet  {
+impl BitAndAssign<&'_ ResultSet> for ResultSet {
     fn bitand_assign(&mut self, rhs: &ResultSet) {
         self.intersect_with(rhs);
     }
 }
-impl BitOrAssign<&'_ ResultSet> for ResultSet  {
+impl BitOrAssign<&'_ ResultSet> for ResultSet {
     fn bitor_assign(&mut self, rhs: &ResultSet) {
         self.union_with(rhs);
     }
 }
-impl BitXorAssign<&'_ ResultSet> for ResultSet  {
+impl BitXorAssign<&'_ ResultSet> for ResultSet {
     fn bitxor_assign(&mut self, rhs: &ResultSet) {
         self.symmetric_difference_with(rhs);
     }
 }
-impl SubAssign<&'_ ResultSet> for ResultSet  {
+impl SubAssign<&'_ ResultSet> for ResultSet {
     fn sub_assign(&mut self, rhs: &ResultSet) {
         self.difference_with(rhs);
     }
 }
-
 
 // search functions in order to find posits matching certain circumstances
 /// Collects the identities of all posits whose appearance sets involve the
@@ -358,13 +353,13 @@ pub fn posits_involving_thing(database: &Database, thing: Thing) -> ResultSet {
             .unwrap()
             .lookup(appearance)
         {
-            for posit_thing in database
+            let guard = database
                 .appearance_set_to_posit_thing_lookup
                 .lock()
-                .unwrap()
-                .lookup(appearance_set)
-            {
-                result_set.insert(*posit_thing);
+                .unwrap();
+            let bitmap = guard.lookup(appearance_set);
+            for posit_thing in bitmap.iter() {
+                result_set.insert(posit_thing);
             }
         }
     }
@@ -383,8 +378,8 @@ fn parse_string_constant(_value: &str) -> Option<String> {
 }
 fn parse_i64(value: &str) -> Option<i64> {
     match value.parse::<i64>() {
-        Ok(v) => Some(v), 
-        Err(_) => None
+        Ok(v) => Some(v),
+        Err(_) => None,
     }
 }
 fn parse_i64_constant(_value: &str) -> Option<i64> {
@@ -393,8 +388,8 @@ fn parse_i64_constant(_value: &str) -> Option<i64> {
 fn parse_certainty(value: &str) -> Option<Certainty> {
     let value = value.replace("%", "");
     match value.parse::<i8>() {
-        Ok(v) => Some(Certainty::new(v)), 
-        Err(_) => None
+        Ok(v) => Some(Certainty::new(v)),
+        Err(_) => None,
     }
 }
 fn parse_certainty_constant(_value: &str) -> Option<Certainty> {
@@ -418,37 +413,38 @@ pub fn parse_time(value: &str) -> Option<Time> {
     let time = "'".to_owned() + &stripped + "'";
     // MAINTENANCE: The section below needs to be extended when new data types are added
     lazy_static! {
-        static ref RE_DATETIME: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9].+'"#).unwrap();
+        static ref RE_DATETIME: Regex =
+            Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9].+'"#).unwrap();
         static ref RE_DATE: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
         static ref RE_YEAR_MONTH: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]'"#).unwrap();
         static ref RE_YEAR: Regex = Regex::new(r#"'\-?[0-9]{4,8}'"#).unwrap();
     }
     if RE_DATETIME.is_match(&time) {
-        return Some(Time::new_datetime_from(&stripped))
+        return Some(Time::new_datetime_from(&stripped));
     }
     if RE_DATE.is_match(&time) {
-        return Some(Time::new_date_from(&stripped))
+        return Some(Time::new_date_from(&stripped));
     }
     if RE_YEAR_MONTH.is_match(&time) {
-        return Some(Time::new_year_month_from(&stripped))
+        return Some(Time::new_year_month_from(&stripped));
     }
     if RE_YEAR.is_match(&time) {
-        return Some(Time::new_year_from(&stripped))
+        return Some(Time::new_year_from(&stripped));
     }
     parse_time_constant(value)
 }
 fn parse_time_constant(value: &str) -> Option<Time> {
     match value.replace("@", "").as_str() {
         "NOW" => Some(Time::new()),
-        "BOT" => Some(Time::new_beginning_of_time()), 
+        "BOT" => Some(Time::new_beginning_of_time()),
         "EOT" => Some(Time::new_end_of_time()),
-        _ => None
+        _ => None,
     }
 }
 
 use pest::Parser;
-use pest_derive::Parser;
 use pest::iterators::Pair;
+use pest_derive::Parser;
 
 #[derive(Parser)]
 #[grammar = "traqula.pest"] // relative to src
@@ -456,14 +452,12 @@ struct TraqulaParser;
 
 /// Execution engine binding a parsed Traqula script to a concrete database.
 pub struct Engine<'db, 'en> {
-    database: &'en Database<'db>, 
+    database: &'en Database<'db>,
 }
 impl<'db, 'en> Engine<'db, 'en> {
     /// Create a new engine borrowing the provided database.
     pub fn new(database: &'en Database<'db>) -> Self {
-        Self {
-            database
-        }
+        Self { database }
     }
     /// Handle an `add role` command.
     fn add_role(&self, command: Pair<Rule>) {
@@ -490,7 +484,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                     for component in structure.into_inner() {
                         match component.as_rule() {
                             Rule::insert => {
-                                variable = Some(component.into_inner().next().unwrap().as_str().to_string()); 
+                                variable = Some(
+                                    component.into_inner().next().unwrap().as_str().to_string(),
+                                );
                                 //println!("Insert: {:?}", &variable);
                             }
                             Rule::appearance_set => {
@@ -498,9 +494,18 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     for appearance in member.into_inner() {
                                         match appearance.as_rule() {
                                             Rule::insert => {
-                                                let local_variable = appearance.into_inner().next().unwrap().as_str();
+                                                let local_variable = appearance
+                                                    .into_inner()
+                                                    .next()
+                                                    .unwrap()
+                                                    .as_str();
                                                 local_variables.push(local_variable);
-                                                let thing = self.database.thing_generator().lock().unwrap().generate();
+                                                let thing = self
+                                                    .database
+                                                    .thing_generator()
+                                                    .lock()
+                                                    .unwrap()
+                                                    .generate();
                                                 match variables.entry(local_variable.to_string()) {
                                                     Entry::Vacant(entry) => {
                                                         let mut result_set = ResultSet::new();
@@ -513,12 +518,18 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 }
                                             }
                                             Rule::recall => {
-                                                local_variables.push(appearance.into_inner().next().unwrap().as_str());
+                                                local_variables.push(
+                                                    appearance
+                                                        .into_inner()
+                                                        .next()
+                                                        .unwrap()
+                                                        .as_str(),
+                                                );
                                             }
                                             Rule::role => {
                                                 roles.push(appearance.as_str());
-                                            },
-                                            _ => println!("Unknown appearance: {:?}", appearance)
+                                            }
+                                            _ => println!("Unknown appearance: {:?}", appearance),
                                         }
                                     }
                                 }
@@ -528,11 +539,16 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     match value_type.as_rule() {
                                         Rule::constant => {
                                             //println!("Constant: {}", value_type.as_str());
-                                            value_as_json = parse_json_constant(value_type.as_str());
-                                            value_as_string = parse_string_constant(value_type.as_str());
-                                            value_as_time = parse_time_constant(value_type.as_str());
-                                            value_as_certainty = parse_certainty_constant(value_type.as_str());
-                                            value_as_decimal = parse_decimal_constant(value_type.as_str());
+                                            value_as_json =
+                                                parse_json_constant(value_type.as_str());
+                                            value_as_string =
+                                                parse_string_constant(value_type.as_str());
+                                            value_as_time =
+                                                parse_time_constant(value_type.as_str());
+                                            value_as_certainty =
+                                                parse_certainty_constant(value_type.as_str());
+                                            value_as_decimal =
+                                                parse_decimal_constant(value_type.as_str());
                                             value_as_i64 = parse_i64_constant(value_type.as_str());
                                         }
                                         Rule::json => {
@@ -541,7 +557,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         }
                                         Rule::string => {
                                             //println!("String: {}", value_type.as_str());
-                                            value_as_string = parse_string(value_type.as_str());  
+                                            value_as_string = parse_string(value_type.as_str());
                                         }
                                         Rule::time => {
                                             //println!("Time: {}", value_type.as_str());
@@ -549,7 +565,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         }
                                         Rule::certainty => {
                                             //println!("Certainty: {}", value_type.as_str());
-                                            value_as_certainty = parse_certainty(value_type.as_str());
+                                            value_as_certainty =
+                                                parse_certainty(value_type.as_str());
                                         }
                                         Rule::decimal => {
                                             //println!("Decimal: {}", value_type.as_str());
@@ -558,8 +575,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         Rule::int => {
                                             //println!("i64: {}", value_type.as_str());
                                             value_as_i64 = parse_i64(value_type.as_str());
-                                        }, 
-                                        _ => println!("Unknown value type: {:?}", value_type)
+                                        }
+                                        _ => println!("Unknown value type: {:?}", value_type),
                                     }
                                 }
                             }
@@ -573,11 +590,11 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             //println!("Time: {}", value_type.as_str());
                                             time = parse_time(time_type.as_str());
                                         }
-                                        _ => println!("Unknown time type: {:?}", time_type)
+                                        _ => println!("Unknown time type: {:?}", time_type),
                                     }
                                 }
                             }
-                            _ => println!("Unknown component: {:?}", component)
+                            _ => println!("Unknown component: {:?}", component),
                         }
                     }
                     let mut variable_to_things = HashMap::new();
@@ -588,10 +605,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                         let things = variable_to_things.get_mut(local_variables[i]).unwrap();
                         let result_set = variables.get(local_variables[i]).unwrap();
                         match result_set.mode {
-                            ResultSetMode::Empty => (), 
+                            ResultSetMode::Empty => (),
                             ResultSetMode::Thing => {
                                 things.push(result_set.thing.unwrap());
-                            }, 
+                            }
                             ResultSetMode::Multi => {
                                 let multi = result_set.multi.as_ref().unwrap();
                                 for thing in multi {
@@ -605,61 +622,94 @@ impl<'db, 'en> Engine<'db, 'en> {
                         let things_for_role = variable_to_things.get(local_variables[i]).unwrap();
                         things_for_roles.push(things_for_role.as_slice());
                     }
-                    
+
                     let cartesian = cartesian_product(things_for_roles.as_slice());
-                    
+
                     //println!("variable_to_things {:?}", variable_to_things);
                     //println!("things_for_roles {:?}", things_for_roles.as_slice());
-                    
+
                     let mut appearance_sets = Vec::new();
                     for things_in_appearance_set in cartesian {
                         let mut appearances = Vec::new();
                         for i in 0..things_in_appearance_set.len() {
                             let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
-                            let (appearance, _) = self.database.create_apperance(things_in_appearance_set[i], Arc::clone(&role));
+                            let (appearance, _) = self
+                                .database
+                                .create_apperance(things_in_appearance_set[i], Arc::clone(&role));
                             appearances.push(appearance);
                         }
                         let (appearance_set, _) = self.database.create_appearance_set(appearances);
                         appearance_sets.push(appearance_set);
                     }
 
-                    // println!("Appearance sets {:?}", appearance_sets);     
+                    // println!("Appearance sets {:?}", appearance_sets);
 
                     for appearance_set in appearance_sets {
                         // create the posit of the found type
                         if value_as_json.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_json.clone().unwrap(), time.clone().unwrap());
+                            let kept_posit = self.database.create_posit(
+                                appearance_set,
+                                value_as_json.clone().unwrap(),
+                                time.clone().unwrap(),
+                            );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
-                        }
-                        else if value_as_string.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_string.clone().unwrap(), time.clone().unwrap());
+                            if cfg!(debug_assertions) {
+                                println!("Posit: {}", kept_posit);
+                            }
+                        } else if value_as_string.is_some() {
+                            let kept_posit = self.database.create_posit(
+                                appearance_set,
+                                value_as_string.clone().unwrap(),
+                                time.clone().unwrap(),
+                            );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
-                        }
-                        else if value_as_time.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_time.clone().unwrap(), time.clone().unwrap());
+                            if cfg!(debug_assertions) {
+                                println!("Posit: {}", kept_posit);
+                            }
+                        } else if value_as_time.is_some() {
+                            let kept_posit = self.database.create_posit(
+                                appearance_set,
+                                value_as_time.clone().unwrap(),
+                                time.clone().unwrap(),
+                            );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
-                        }
-                        else if value_as_certainty.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_certainty.clone().unwrap(), time.clone().unwrap());
+                            if cfg!(debug_assertions) {
+                                println!("Posit: {}", kept_posit);
+                            }
+                        } else if value_as_certainty.is_some() {
+                            let kept_posit = self.database.create_posit(
+                                appearance_set,
+                                value_as_certainty.clone().unwrap(),
+                                time.clone().unwrap(),
+                            );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
-                        }
-                        else if value_as_decimal.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_decimal.clone().unwrap(), time.clone().unwrap());
+                            if cfg!(debug_assertions) {
+                                println!("Posit: {}", kept_posit);
+                            }
+                        } else if value_as_decimal.is_some() {
+                            let kept_posit = self.database.create_posit(
+                                appearance_set,
+                                value_as_decimal.clone().unwrap(),
+                                time.clone().unwrap(),
+                            );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
-                        }
-                        else if value_as_i64.is_some() {
-                            let kept_posit = self.database.create_posit(appearance_set, value_as_i64.clone().unwrap(), time.clone().unwrap());
+                            if cfg!(debug_assertions) {
+                                println!("Posit: {}", kept_posit);
+                            }
+                        } else if value_as_i64.is_some() {
+                            let kept_posit = self.database.create_posit(
+                                appearance_set,
+                                value_as_i64.clone().unwrap(),
+                                time.clone().unwrap(),
+                            );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) { println!("Posit: {}", kept_posit); }
+                            if cfg!(debug_assertions) {
+                                println!("Posit: {}", kept_posit);
+                            }
                         }
                     }
                 }
-                _ => println!("Unknown structure: {:?}", structure)
+                _ => println!("Unknown structure: {:?}", structure),
             }
             if variable.is_some() {
                 match variables.entry(variable.unwrap()) {
@@ -705,7 +755,14 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 for component in structure.into_inner() {
                                     match component.as_rule() {
                                         Rule::insert => {
-                                            let variable = Some(component.into_inner().next().unwrap().as_str().to_string());
+                                            let variable = Some(
+                                                component
+                                                    .into_inner()
+                                                    .next()
+                                                    .unwrap()
+                                                    .as_str()
+                                                    .to_string(),
+                                            );
                                             //println!("Insert: {}", &variable.unwrap());
                                         }
                                         Rule::appearance_set_search => {
@@ -714,27 +771,44 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 for appearance in member.into_inner() {
                                                     match appearance.as_rule() {
                                                         Rule::insert => {
-                                                            let local_variable = appearance.into_inner().next().unwrap().as_str();
+                                                            let local_variable = appearance
+                                                                .into_inner()
+                                                                .next()
+                                                                .unwrap()
+                                                                .as_str();
                                                             local_variables.push(local_variable);
-                                                            match variables.entry(local_variable.to_string()) {
+                                                            match variables
+                                                                .entry(local_variable.to_string())
+                                                            {
                                                                 Entry::Vacant(entry) => {
-                                                                    let result_set = ResultSet::new();
+                                                                    let result_set =
+                                                                        ResultSet::new();
                                                                     entry.insert(result_set);
                                                                 }
-                                                                _ => ()
+                                                                _ => (),
                                                             }
                                                         }
                                                         Rule::wildcard => {
-                                                            local_variables.push(appearance.as_str());
+                                                            local_variables
+                                                                .push(appearance.as_str());
                                                             //println!("wildcard");
                                                         }
                                                         Rule::recall => {
-                                                            local_variables.push(appearance.into_inner().next().unwrap().as_str());
+                                                            local_variables.push(
+                                                                appearance
+                                                                    .into_inner()
+                                                                    .next()
+                                                                    .unwrap()
+                                                                    .as_str(),
+                                                            );
                                                         }
                                                         Rule::role => {
                                                             roles.push(appearance.as_str());
-                                                        },
-                                                        _ => println!("Unknown appearance: {:?}", appearance)
+                                                        }
+                                                        _ => println!(
+                                                            "Unknown appearance: {:?}",
+                                                            appearance
+                                                        ),
                                                     }
                                                 }
                                             }
@@ -744,7 +818,11 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             for value_type in component.into_inner() {
                                                 match value_type.as_rule() {
                                                     Rule::insert | Rule::recall => {
-                                                        let local_variable = value_type.into_inner().next().unwrap().as_str();
+                                                        let local_variable = value_type
+                                                            .into_inner()
+                                                            .next()
+                                                            .unwrap()
+                                                            .as_str();
                                                         value_as_variable = Some(local_variable);
                                                     }
                                                     Rule::wildcard => {
@@ -753,38 +831,59 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     }
                                                     Rule::constant => {
                                                         //println!("Constant: {}", value_type.as_str());
-                                                        value_as_json = parse_json_constant(value_type.as_str());
-                                                        value_as_string = parse_string_constant(value_type.as_str());
-                                                        value_as_time = parse_time_constant(value_type.as_str());
-                                                        value_as_certainty = parse_certainty_constant(value_type.as_str());
-                                                        value_as_decimal = parse_decimal_constant(value_type.as_str());
-                                                        value_as_i64 = parse_i64_constant(value_type.as_str());
+                                                        value_as_json = parse_json_constant(
+                                                            value_type.as_str(),
+                                                        );
+                                                        value_as_string = parse_string_constant(
+                                                            value_type.as_str(),
+                                                        );
+                                                        value_as_time = parse_time_constant(
+                                                            value_type.as_str(),
+                                                        );
+                                                        value_as_certainty =
+                                                            parse_certainty_constant(
+                                                                value_type.as_str(),
+                                                            );
+                                                        value_as_decimal = parse_decimal_constant(
+                                                            value_type.as_str(),
+                                                        );
+                                                        value_as_i64 =
+                                                            parse_i64_constant(value_type.as_str());
                                                     }
                                                     Rule::json => {
                                                         //println!("JSON: {}", value_type.as_str());
-                                                        value_as_json = parse_json(value_type.as_str());
+                                                        value_as_json =
+                                                            parse_json(value_type.as_str());
                                                     }
                                                     Rule::string => {
                                                         //println!("String: {}", value_type.as_str());
-                                                        value_as_string = parse_string(value_type.as_str());  
+                                                        value_as_string =
+                                                            parse_string(value_type.as_str());
                                                     }
                                                     Rule::time => {
                                                         //println!("Time: {}", value_type.as_str());
-                                                        value_as_time = parse_time(value_type.as_str());
+                                                        value_as_time =
+                                                            parse_time(value_type.as_str());
                                                     }
                                                     Rule::certainty => {
                                                         //println!("Certainty: {}", value_type.as_str());
-                                                        value_as_certainty = parse_certainty(value_type.as_str());
+                                                        value_as_certainty =
+                                                            parse_certainty(value_type.as_str());
                                                     }
                                                     Rule::decimal => {
                                                         //println!("Decimal: {}", value_type.as_str());
-                                                        value_as_decimal = parse_decimal(value_type.as_str());
+                                                        value_as_decimal =
+                                                            parse_decimal(value_type.as_str());
                                                     }
                                                     Rule::int => {
                                                         //println!("i64: {}", value_type.as_str());
-                                                        value_as_i64 = parse_i64(value_type.as_str());
-                                                    }, 
-                                                    _ => println!("Unknown value type: {:?}", value_type)
+                                                        value_as_i64 =
+                                                            parse_i64(value_type.as_str());
+                                                    }
+                                                    _ => println!(
+                                                        "Unknown value type: {:?}",
+                                                        value_type
+                                                    ),
                                                 }
                                             }
                                         }
@@ -793,7 +892,11 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             for time_type in component.into_inner() {
                                                 match time_type.as_rule() {
                                                     Rule::insert | Rule::recall => {
-                                                        let local_variable = time_type.into_inner().next().unwrap().as_str();
+                                                        let local_variable = time_type
+                                                            .into_inner()
+                                                            .next()
+                                                            .unwrap()
+                                                            .as_str();
                                                         time_as_variable = Some(local_variable);
                                                     }
                                                     Rule::wildcard => {
@@ -801,36 +904,44 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         //println!("wildcard");
                                                     }
                                                     Rule::constant => {
-                                                        time = parse_time_constant(time_type.as_str());
+                                                        time =
+                                                            parse_time_constant(time_type.as_str());
                                                     }
                                                     Rule::time => {
                                                         //println!("Time: {}", value_type.as_str());
                                                         time = parse_time(time_type.as_str());
                                                     }
-                                                    _ => println!("Unknown time type: {:?}", time_type)
+                                                    _ => println!(
+                                                        "Unknown time type: {:?}",
+                                                        time_type
+                                                    ),
                                                 }
                                             }
                                         }
-                                        _ => println!("Unknown component: {:?}", component)
+                                        _ => println!("Unknown component: {:?}", component),
                                     }
-                                } 
-                            }, 
-                            _ => println!("Unknown posit structure: {:?}", structure)
+                                }
+                            }
+                            _ => println!("Unknown posit structure: {:?}", structure),
                         }
-                        if cfg!(debug_assertions) { println!("Local variables: {:?}", local_variables); }
-                    } 
-                },
+                        if cfg!(debug_assertions) {
+                            println!("Local variables: {:?}", local_variables);
+                        }
+                    }
+                }
                 Rule::return_clause => {
                     for structure in clause.into_inner() {
                         match structure.as_rule() {
                             Rule::recall => {
-                                if cfg!(debug_assertions) { println!("Return recall: {}", structure.as_str()); }
-                            }, 
-                            _ => println!("Unknown return structure: {:?}", structure)
+                                if cfg!(debug_assertions) {
+                                    println!("Return recall: {}", structure.as_str());
+                                }
+                            }
+                            _ => println!("Unknown return structure: {:?}", structure),
                         }
-                    } 
-                }, 
-                _ => println!("Unknown clause: {:?}", clause)
+                    }
+                }
+                _ => println!("Unknown clause: {:?}", clause),
             }
         }
     }
@@ -844,18 +955,20 @@ impl<'db, 'en> Engine<'db, 'en> {
                 Rule::add_posit => self.add_posit(command, &mut variables),
                 Rule::search => self.search(command, &mut variables),
                 Rule::EOI => (), // end of input
-                _ => println!("Unknown command: {:?}", command)
+                _ => println!("Unknown command: {:?}", command),
             }
         }
-        if cfg!(debug_assertions) { println!("Variables: {:?}", &variables); }
-    }  
+        if cfg!(debug_assertions) {
+            println!("Variables: {:?}", &variables);
+        }
+    }
 }
 
-/* 
-The following code for cartesian products has been made by Kyle Lacy, 
-and was originally found here: 
+/*
+The following code for cartesian products has been made by Kyle Lacy,
+and was originally found here:
 
-https://gist.github.com/kylewlacy/115965b40e02a3325558 
+https://gist.github.com/kylewlacy/115965b40e02a3325558
 
 Copyright © 2016-2021 Kyle Lacy, Some Rights Reserved.
 
@@ -865,13 +978,18 @@ MIT license and the Unlicense (at the licensee's choice), unless otherwise noted
 
 /// Helper producing the Cartesian product of accumulated rows with another slice.
 pub fn partial_cartesian<T: Clone>(a: Vec<Vec<T>>, b: &[T]) -> Vec<Vec<T>> {
-    a.into_iter().flat_map(|xs| {
-        b.iter().cloned().map(|y| {
-            let mut vec = xs.clone();
-            vec.push(y);
-            vec
-        }).collect::<Vec<_>>()
-    }).collect()
+    a.into_iter()
+        .flat_map(|xs| {
+            b.iter()
+                .cloned()
+                .map(|y| {
+                    let mut vec = xs.clone();
+                    vec.push(y);
+                    vec
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Cartesian product for a slice of slices.
@@ -880,13 +998,12 @@ pub fn cartesian_product<T: Clone>(lists: &[&[T]]) -> Vec<Vec<T>> {
         Some((first, rest)) => {
             let init: Vec<Vec<T>> = first.iter().cloned().map(|n| vec![n]).collect();
 
-            rest.iter().cloned().fold(init, |vec, list| {
-                partial_cartesian(vec, list)
-            })
-        },
+            rest.iter()
+                .cloned()
+                .fold(init, |vec, list| partial_cartesian(vec, list))
+        }
         None => {
             vec![]
         }
     }
 }
-
