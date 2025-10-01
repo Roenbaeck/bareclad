@@ -1,0 +1,29 @@
+{
+  "name": "traqula-syntax",
+  "displayName": "Traqula Syntax Highlighting",
+  "description": "Syntax highlighting for the Traqula language",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "traqula",
+        "aliases": ["Traqula", "traqula"],
+        "extensions": [".traqula"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "traqula",
+        "scopeName": "source.traqula",
+        "path": "./syntaxes/traqula.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "name": "Traqula",
+  "scopeName": "source.traqula",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#times"
+    },
+    {
+      "include": "#json"
+    },
+    {
+      "include": "#variables"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.traqula",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.traqula",
+          "match": "\\b(add|role|posit|search|return|where|and)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.traqula",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.traqula",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.traqula",
+          "match": "\\b-?\\d+(\\.\\d+)?%?\\b"
+        }
+      ]
+    },
+    "times": {
+      "name": "string.quoted.single.traqula",
+      "begin": "'",
+      "end": "'"
+    },
+    "json": {
+      "name": "source.json.traqula",
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "source.json"
+        }
+      ]
+    },
+    "variables": {
+      "name": "variable.traqula",
+      "match": "\\b[a-zA-Z][a-zA-Z0-9_]*\\b"
+    },
+    "constants": {
+      "name": "constant.traqula",
+      "match": "@[A-Z]+"
+    },
+    "operators": {
+      "name": "keyword.operator.traqula",
+      "match": "(\\+|\\||<=|>=|<|>|==|=)"
+    },
+    "punctuation": {
+      "name": "punctuation.traqula",
+      "match": "[\\[\\]\\(\\)\\{\\},;.]"
+    }
+  }
+}
