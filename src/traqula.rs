@@ -314,6 +314,48 @@ impl ResultSet {
             }
         }
     }
+    /// Insert many things at once by merging with a bitmap.
+    ///
+    /// This avoids per-element insertion and leverages RoaringTreemap union operations.
+    pub fn insert_many(&mut self, things: &RoaringTreemap) {
+        match self.mode {
+            ResultSetMode::Empty => {
+                match things.len() {
+                    0 => {}
+                    1 => {
+                        let thing = things.min().unwrap();
+                        self.thing(thing);
+                    }
+                    _ => {
+                        let mut multi = RoaringTreemap::new();
+                        multi.clone_from(things);
+                        self.multi(multi);
+                    }
+                }
+            }
+            ResultSetMode::Thing => {
+                let t = self.thing.unwrap();
+                if things.contains(t) {
+                    // If incoming set already includes our singleton, only upgrade when it has extra members.
+                    if things.len() > 1 {
+                        let mut multi = RoaringTreemap::new();
+                        multi.clone_from(things);
+                        self.multi(multi);
+                    }
+                } else {
+                    // Union singleton with incoming set.
+                    let mut multi = RoaringTreemap::new();
+                    multi.clone_from(things);
+                    multi.insert(t);
+                    self.multi(multi);
+                }
+            }
+            ResultSetMode::Multi => {
+                let multi = self.multi.as_mut().unwrap();
+                *multi |= things;
+            }
+        }
+    }
 }
 impl BitAndAssign<&'_ ResultSet> for ResultSet {
     fn bitand_assign(&mut self, rhs: &ResultSet) {
@@ -358,9 +400,7 @@ pub fn posits_involving_thing(database: &Database, thing: Thing) -> ResultSet {
                 .lock()
                 .unwrap();
             let bitmap = guard.lookup(appearance_set);
-            for posit_thing in bitmap.iter() {
-                result_set.insert(posit_thing);
-            }
+            result_set.insert_many(bitmap);
         }
     }
     result_set
