@@ -663,24 +663,27 @@ impl<'db, 'en> Engine<'db, 'en> {
                         things_for_roles.push(things_for_role.as_slice());
                     }
 
-                    let cartesian = cartesian_product(things_for_roles.as_slice());
+                    // Reorder roles and their candidate lists by ascending cardinality to improve iteration locality
+                    let mut order: Vec<usize> = (0..things_for_roles.len()).collect();
+                    order.sort_by_key(|&i| things_for_roles[i].len());
+                    let roles_ord: Vec<&str> = order.iter().map(|&i| roles[i]).collect();
+                    let things_for_roles_ord: Vec<&[Thing]> = order.iter().map(|&i| things_for_roles[i]).collect();
 
-                    //println!("variable_to_things {:?}", variable_to_things);
-                    //println!("things_for_roles {:?}", things_for_roles.as_slice());
-
+                    // Stream the Cartesian product (indices) to avoid allocating all combinations.
                     let mut appearance_sets = Vec::new();
-                    for things_in_appearance_set in cartesian {
+                    for_each_cartesian_indices(things_for_roles_ord.as_slice(), |idxs| {
                         let mut appearances = Vec::new();
-                        for i in 0..things_in_appearance_set.len() {
-                            let role = self.database.role_keeper().lock().unwrap().get(roles[i]);
+                        for i in 0..idxs.len() {
+                            let role = self.database.role_keeper().lock().unwrap().get(roles_ord[i]);
+                            let thing = things_for_roles_ord[i][idxs[i]];
                             let (appearance, _) = self
                                 .database
-                                .create_apperance(things_in_appearance_set[i], Arc::clone(&role));
+                                .create_apperance(thing, Arc::clone(&role));
                             appearances.push(appearance);
                         }
                         let (appearance_set, _) = self.database.create_appearance_set(appearances);
                         appearance_sets.push(appearance_set);
-                    }
+                    });
 
                     // println!("Appearance sets {:?}", appearance_sets);
 
@@ -1050,16 +1053,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             match variables.entry(name.to_string()) {
                                                 Entry::Vacant(entry) => {
                                                     let mut rs = ResultSet::new();
-                                                    for id in cands.iter() {
-                                                        rs.insert(id);
-                                                    }
+                                                    rs.insert_many(&cands);
                                                     entry.insert(rs);
                                                 }
                                                 Entry::Occupied(mut entry) => {
                                                     let rs = entry.get_mut();
-                                                    for id in cands.iter() {
-                                                        rs.insert(id);
-                                                    }
+                                                    rs.insert_many(&cands);
                                                 }
                                             }
                                         }
@@ -1305,12 +1304,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 if ok { filtered.insert(pid); }
                                             }
                                         }
-                                        // Intersect with overall candidates (to keep it aligned with name clause)
-                                        let mut new_cands = RoaringTreemap::new();
-                                        for pid in cands.iter() {
-                                            if filtered.contains(pid) { new_cands.insert(pid); }
-                                        }
-                                        cands = new_cands;
+                                        // Intersect with overall candidates using roaring ops
+                                        cands &= &filtered;
                                     }
                                 }
                             }
@@ -1330,20 +1325,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                             // We've emitted based on exact candidates; skip identity-driven projection to avoid duplicates.
                             continue;
                         }
-                        // Determine driving identity set: include w, h, idw, idh and deduplicate via bitmap.
-                        let mut driving_ids = RoaringTreemap::new();
-                        let mut collect = |rs: &ResultSet| {
-                            match rs.mode {
-                                ResultSetMode::Thing => { driving_ids.insert(rs.thing.unwrap()); }
-                                ResultSetMode::Multi => for t in rs.multi.as_ref().unwrap().iter() { driving_ids.insert(t); },
-                                ResultSetMode::Empty => {}
-                            }
-                        };
-                        for candidate in ["w", "h", "idw", "idh"].iter() {
-                            if let Some(rs) = variables.get(*candidate) { collect(rs); }
-                        }
-                        if !driving_ids.is_empty() {
-                            let emit_row = |who: Thing| {
+                        // Determine driving identity set via ResultSet union (keeps Thing/Multi compactly)
+                        let emit_row = |who: Thing| {
                                 // Support returning n and/or t (name and time) per identity.
                                 let want_name = returns.iter().any(|v| v == "n");
                                 let want_time = returns.iter().any(|v| v == "t");
@@ -1387,7 +1370,16 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                             };
-                            for who in driving_ids.iter() { emit_row(who); }
+                        let mut driving = ResultSet::new();
+                        for candidate in ["w", "h", "idw", "idh"].iter() {
+                            if let Some(rs) = variables.get(*candidate) { driving |= rs; }
+                        }
+                        match driving.mode {
+                            ResultSetMode::Empty => {}
+                            ResultSetMode::Thing => emit_row(driving.thing.unwrap()),
+                            ResultSetMode::Multi => {
+                                for who in driving.multi.as_ref().unwrap().iter() { emit_row(who); }
+                            }
                         }
                     }
                 }
@@ -1414,46 +1406,37 @@ impl<'db, 'en> Engine<'db, 'en> {
     }
 }
 
-/*
-The following code for cartesian products has been made by Kyle Lacy,
-and was originally found here:
+/// Streaming Cartesian product (indices): calls `mut f` with the index vector for each tuple, avoiding temporary tuple materialization.
+pub fn for_each_cartesian_indices<F: FnMut(&[usize])>(lists: &[&[impl Copy]], mut f: F) {
+    // Early return on empty input
+    if lists.is_empty() {
+        return;
+    }
+    // Track indices for each list; -1 represents uninitialized state for the first increment
+    let n = lists.len();
+    let mut idx = vec![0usize; n];
+    // Verify no empty inner list; if any are empty, there are no combinations
+    if lists.iter().any(|s| s.is_empty()) {
+        return;
+    }
+    // Emit until we overflow the most significant position
+    loop {
+        // Provide the current indices to the callback
+        f(&idx);
 
-https://gist.github.com/kylewlacy/115965b40e02a3325558
-
-Copyright © 2016-2021 Kyle Lacy, Some Rights Reserved.
-
-Additionally, all code snippets and fragments are also licensed under both the terms of the
-MIT license and the Unlicense (at the licensee's choice), unless otherwise noted.
-*/
-
-/// Helper producing the Cartesian product of accumulated rows with another slice.
-pub fn partial_cartesian<T: Clone>(a: Vec<Vec<T>>, b: &[T]) -> Vec<Vec<T>> {
-    a.into_iter()
-        .flat_map(|xs| {
-            b.iter()
-                .cloned()
-                .map(|y| {
-                    let mut vec = xs.clone();
-                    vec.push(y);
-                    vec
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-/// Cartesian product for a slice of slices.
-pub fn cartesian_product<T: Clone>(lists: &[&[T]]) -> Vec<Vec<T>> {
-    match lists.split_first() {
-        Some((first, rest)) => {
-            let init: Vec<Vec<T>> = first.iter().cloned().map(|n| vec![n]).collect();
-
-            rest.iter()
-                .cloned()
-                .fold(init, |vec, list| partial_cartesian(vec, list))
+        // Increment positions from least significant upwards
+        let mut carry_pos = n;
+        for pos in (0..n).rev() {
+            idx[pos] += 1;
+            if idx[pos] < lists[pos].len() {
+                carry_pos = pos;
+                break;
+            } else {
+                idx[pos] = 0;
+            }
         }
-        None => {
-            vec![]
+        if carry_pos == n {
+            break; // overflowed most significant digit; done
         }
     }
 }
