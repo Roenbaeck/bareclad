@@ -36,7 +36,7 @@
 //! NOTE: The search functionality is still evolving; many captured variables
 //! are currently parsed but not yet materialized into final query outputs.
 //! Debug logging is gated behind `cfg(debug_assertions)` where appropriate.
-use crate::construct::{Database, OtherHasher, Thing, Appearance, AppearanceSet};
+use crate::construct::{Appearance, AppearanceSet, Database, OtherHasher, Thing};
 use crate::datatype::{Certainty, Decimal, JSON, Time};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -319,20 +319,18 @@ impl ResultSet {
     /// This avoids per-element insertion and leverages RoaringTreemap union operations.
     pub fn insert_many(&mut self, things: &RoaringTreemap) {
         match self.mode {
-            ResultSetMode::Empty => {
-                match things.len() {
-                    0 => {}
-                    1 => {
-                        let thing = things.min().unwrap();
-                        self.thing(thing);
-                    }
-                    _ => {
-                        let mut multi = RoaringTreemap::new();
-                        multi.clone_from(things);
-                        self.multi(multi);
-                    }
+            ResultSetMode::Empty => match things.len() {
+                0 => {}
+                1 => {
+                    let thing = things.min().unwrap();
+                    self.thing(thing);
                 }
-            }
+                _ => {
+                    let mut multi = RoaringTreemap::new();
+                    multi.clone_from(things);
+                    self.multi(multi);
+                }
+            },
             ResultSetMode::Thing => {
                 let t = self.thing.unwrap();
                 if things.contains(t) {
@@ -667,18 +665,23 @@ impl<'db, 'en> Engine<'db, 'en> {
                     let mut order: Vec<usize> = (0..things_for_roles.len()).collect();
                     order.sort_by_key(|&i| things_for_roles[i].len());
                     let roles_ord: Vec<&str> = order.iter().map(|&i| roles[i]).collect();
-                    let things_for_roles_ord: Vec<&[Thing]> = order.iter().map(|&i| things_for_roles[i]).collect();
+                    let things_for_roles_ord: Vec<&[Thing]> =
+                        order.iter().map(|&i| things_for_roles[i]).collect();
 
                     // Stream the Cartesian product (indices) to avoid allocating all combinations.
                     let mut appearance_sets = Vec::new();
                     for_each_cartesian_indices(things_for_roles_ord.as_slice(), |idxs| {
                         let mut appearances = Vec::new();
                         for i in 0..idxs.len() {
-                            let role = self.database.role_keeper().lock().unwrap().get(roles_ord[i]);
-                            let thing = things_for_roles_ord[i][idxs[i]];
-                            let (appearance, _) = self
+                            let role = self
                                 .database
-                                .create_apperance(thing, Arc::clone(&role));
+                                .role_keeper()
+                                .lock()
+                                .unwrap()
+                                .get(roles_ord[i]);
+                            let thing = things_for_roles_ord[i][idxs[i]];
+                            let (appearance, _) =
+                                self.database.create_apperance(thing, Arc::clone(&role));
                             appearances.push(appearance);
                         }
                         let (appearance_set, _) = self.database.create_appearance_set(appearances);
@@ -776,10 +779,10 @@ impl<'db, 'en> Engine<'db, 'en> {
     fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
         // Track variables referenced in this search command to guide projection
         let mut active_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Track candidate name posits (filtered by any time constraint) to drive return of n/t
+        // Track candidate name posits (filtered by any time constraint) to drive return of n/t
         let mut name_candidate_posits: Option<RoaringTreemap> = None;
-    // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
-    let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
+        // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
+        let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
         // Parsed where conditions on time variables: var -> (comparator, Time)
         let mut where_time: Vec<(String, String, Time)> = Vec::new();
         for clause in command.into_inner() {
@@ -817,7 +820,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     .to_string(),
                                             );
                                             if let Some(v) = &variable {
-                                                active_vars.insert(v.trim_start_matches('+').to_string());
+                                                active_vars
+                                                    .insert(v.trim_start_matches('+').to_string());
                                             }
                                             //println!("Insert: {}", &variable.as_ref().unwrap());
                                         }
@@ -844,7 +848,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                                 }
                                                                 _ => (),
                                                             }
-                                                            active_vars.insert(local_variable.to_string());
+                                                            active_vars
+                                                                .insert(local_variable.to_string());
                                                         }
                                                         Rule::wildcard => {
                                                             local_variables
@@ -861,8 +866,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                                     .as_str(),
                                                             );
                                                             local_variable_unions.push(None);
-                                                            if let Some(v) = local_variables.last() {
-                                                                active_vars.insert((*v).to_string());
+                                                            if let Some(v) = local_variables.last()
+                                                            {
+                                                                active_vars
+                                                                    .insert((*v).to_string());
                                                             }
                                                         }
                                                         Rule::recall_union => {
@@ -871,14 +878,25 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             for part in appearance.into_inner() {
                                                                 // parts alternate: recall, '|', recall, '|', ... but pest grouped only recalls due to rule
                                                                 if part.as_rule() == Rule::recall {
-                                                                    names.push(part.into_inner().next().unwrap().as_str().to_string());
+                                                                    names.push(
+                                                                        part.into_inner()
+                                                                            .next()
+                                                                            .unwrap()
+                                                                            .as_str()
+                                                                            .to_string(),
+                                                                    );
                                                                 }
                                                             }
                                                             // Store a synthetic token representing the union; we use "w|h" literal for variable token, but keep union list separately
                                                             let token = names.join("|");
-                                                            local_variables.push(Box::leak(token.into_boxed_str()));
-                                                            local_variable_unions.push(Some(names.clone()));
-                                                            for n in names { active_vars.insert(n); }
+                                                            local_variables.push(Box::leak(
+                                                                token.into_boxed_str(),
+                                                            ));
+                                                            local_variable_unions
+                                                                .push(Some(names.clone()));
+                                                            for n in names {
+                                                                active_vars.insert(n);
+                                                            }
                                                         }
                                                         Rule::role => {
                                                             roles.push(appearance.as_str());
@@ -902,7 +920,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             .unwrap()
                                                             .as_str();
                                                         _value_as_variable = Some(local_variable);
-                                                        active_vars.insert(local_variable.to_string());
+                                                        active_vars
+                                                            .insert(local_variable.to_string());
                                                     }
                                                     Rule::wildcard => {
                                                         _value_is_wildcard = true;
@@ -977,7 +996,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             .unwrap()
                                                             .as_str();
                                                         _time_as_variable = Some(local_variable);
-                                                        active_vars.insert(local_variable.to_string());
+                                                        active_vars
+                                                            .insert(local_variable.to_string());
                                                     }
                                                     Rule::wildcard => {
                                                         _time_is_wildcard = true;
@@ -1033,7 +1053,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             let guard = tk.lock().unwrap();
                                             for id in cands.iter() {
                                                 if let Some(pt) = guard.get(&id) {
-                                                    if pt == t { filtered.insert(id); }
+                                                    if pt == t {
+                                                        filtered.insert(id);
+                                                    }
                                                 }
                                             }
                                             cands = filtered;
@@ -1044,7 +1066,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         }
                                         // If the time slot used a variable, capture its candidate posits under that variable name
                                         if let Some(varname) = _time_as_variable {
-                                            time_var_candidates.insert(varname.to_string(), cands.clone());
+                                            time_var_candidates
+                                                .insert(varname.to_string(), cands.clone());
                                             active_vars.insert(varname.to_string());
                                         }
                                         // Bind outer posit variable (e.g., +p)
@@ -1067,13 +1090,19 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             // General positional binding (may be too permissive but OK for now)
                                             for id in cands.iter() {
                                                 let appset = {
-                                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                                    let lk = self
+                                                        .database
+                                                        .posit_thing_to_appearance_set_lookup();
                                                     let guard = lk.lock().unwrap();
                                                     Arc::clone(guard.get(&id).unwrap())
                                                 };
-                                                for (i, token) in local_variables.iter().enumerate() {
-                                                    if *token == "*" { continue; }
-                                                    let vname = token.strip_prefix('+').unwrap_or(token);
+                                                for (i, token) in local_variables.iter().enumerate()
+                                                {
+                                                    if *token == "*" {
+                                                        continue;
+                                                    }
+                                                    let vname =
+                                                        token.strip_prefix('+').unwrap_or(token);
                                                     let role_name = roles[i];
                                                     if let Some(bound) = appset
                                                         .appearances()
@@ -1084,34 +1113,49 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         // For inserted vars (+x): bind or intersect. For recalls (x): if unbound, bind; else leave as-is.
                                                         let is_insert = token.starts_with('+');
                                                         // Handle union variables like w|h by updating each member variable separately
-                                                        if let Some(Some(union_names)) = local_variable_unions.get(i) {
+                                                        if let Some(Some(union_names)) =
+                                                            local_variable_unions.get(i)
+                                                        {
                                                             for member in union_names {
                                                                 let key = member.to_string();
-                                                                if let Entry::Vacant(entry) = variables.entry(key.clone()) {
+                                                                if let Entry::Vacant(entry) =
+                                                                    variables.entry(key.clone())
+                                                                {
                                                                     let mut rs = ResultSet::new();
                                                                     rs.insert(bound);
                                                                     entry.insert(rs);
                                                                 } else if is_insert {
-                                                                    if let Entry::Occupied(mut entry) = variables.entry(key) {
+                                                                    if let Entry::Occupied(
+                                                                        mut entry,
+                                                                    ) = variables.entry(key)
+                                                                    {
                                                                         let rs = entry.get_mut();
-                                                                        let mut narrowed = ResultSet::new();
+                                                                        let mut narrowed =
+                                                                            ResultSet::new();
                                                                         narrowed.insert(bound);
-                                                                        rs.intersect_with(&narrowed);
+                                                                        rs.intersect_with(
+                                                                            &narrowed,
+                                                                        );
                                                                     }
                                                                 }
                                                             }
                                                         } else {
                                                             let key = vname.to_string();
-                                                            if let Entry::Vacant(entry) = variables.entry(key.clone()) {
+                                                            if let Entry::Vacant(entry) =
+                                                                variables.entry(key.clone())
+                                                            {
                                                                 // Bind when not present (insert or recall)
                                                                 let mut rs = ResultSet::new();
                                                                 rs.insert(bound);
                                                                 entry.insert(rs);
                                                             } else if is_insert {
                                                                 // Intersect existing with this bound only for inserted variables
-                                                                if let Entry::Occupied(mut entry) = variables.entry(key) {
+                                                                if let Entry::Occupied(mut entry) =
+                                                                    variables.entry(key)
+                                                                {
                                                                     let rs = entry.get_mut();
-                                                                    let mut narrowed = ResultSet::new();
+                                                                    let mut narrowed =
+                                                                        ResultSet::new();
                                                                     narrowed.insert(bound);
                                                                     rs.intersect_with(&narrowed);
                                                                 }
@@ -1121,10 +1165,14 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 }
                                             }
                                             // Explicit support for the example: if this clause asked for wife (+w), bind that from the wife role
-                                            if roles.contains(&"wife") && local_variables.iter().any(|t| *t == "w") {
+                                            if roles.contains(&"wife")
+                                                && local_variables.iter().any(|t| *t == "w")
+                                            {
                                                 for id in cands.iter() {
                                                     let bound = {
-                                                        let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                                        let lk = self
+                                                            .database
+                                                            .posit_thing_to_appearance_set_lookup();
                                                         let guard = lk.lock().unwrap();
                                                         let appset = guard.get(&id).unwrap();
                                                         appset
@@ -1135,17 +1183,27 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     };
                                                     if let Some(b) = bound {
                                                         match variables.entry("w".to_string()) {
-                                                            Entry::Vacant(entry) => { let mut rs = ResultSet::new(); rs.insert(b); entry.insert(rs); }
-                                                            Entry::Occupied(mut entry) => { entry.get_mut().insert(b); }
+                                                            Entry::Vacant(entry) => {
+                                                                let mut rs = ResultSet::new();
+                                                                rs.insert(b);
+                                                                entry.insert(rs);
+                                                            }
+                                                            Entry::Occupied(mut entry) => {
+                                                                entry.get_mut().insert(b);
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
                                             // Explicit support for the example: if this clause asked for husband (h), bind that from the husband role
-                                            if roles.contains(&"husband") && local_variables.iter().any(|t| *t == "h") {
+                                            if roles.contains(&"husband")
+                                                && local_variables.iter().any(|t| *t == "h")
+                                            {
                                                 for id in cands.iter() {
                                                     let bound = {
-                                                        let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                                        let lk = self
+                                                            .database
+                                                            .posit_thing_to_appearance_set_lookup();
                                                         let guard = lk.lock().unwrap();
                                                         let appset = guard.get(&id).unwrap();
                                                         appset
@@ -1156,8 +1214,14 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     };
                                                     if let Some(b) = bound {
                                                         match variables.entry("h".to_string()) {
-                                                            Entry::Vacant(entry) => { let mut rs = ResultSet::new(); rs.insert(b); entry.insert(rs); }
-                                                            Entry::Occupied(mut entry) => { entry.get_mut().insert(b); }
+                                                            Entry::Vacant(entry) => {
+                                                                let mut rs = ResultSet::new();
+                                                                rs.insert(b);
+                                                                entry.insert(rs);
+                                                            }
+                                                            Entry::Occupied(mut entry) => {
+                                                                entry.get_mut().insert(b);
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1178,7 +1242,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         rk_guard.get(r).role()
                                                     };
                                                     let bm_clone = {
-                                                        let lk = self.database.role_to_posit_thing_lookup();
+                                                        let lk = self
+                                                            .database
+                                                            .role_to_posit_thing_lookup();
                                                         let guard = lk.lock().unwrap();
                                                         guard.lookup(&rt).clone()
                                                     };
@@ -1190,7 +1256,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         }
                                                     });
                                                 }
-                                                let asc = asc_cands.unwrap_or_else(RoaringTreemap::new);
+                                                let asc =
+                                                    asc_cands.unwrap_or_else(RoaringTreemap::new);
                                                 // Build filtered p-set
                                                 let mut new_p = ResultSet::new();
                                                 let mut each_p = |p_id: Thing| {
@@ -1201,11 +1268,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             let guard = lk.lock().unwrap();
                                                             Arc::clone(guard.get(&a_id).unwrap())
                                                         };
-                                                        if aset
-                                                            .appearances()
-                                                            .iter()
-                                                            .any(|ap| ap.role().name() == "posit" && ap.thing() == p_id)
-                                                        {
+                                                        if aset.appearances().iter().any(|ap| {
+                                                            ap.role().name() == "posit"
+                                                                && ap.thing() == p_id
+                                                        }) {
                                                             ok = true;
                                                             break;
                                                         }
@@ -1215,7 +1281,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     }
                                                 };
                                                 match rs.mode {
-                                                    ResultSetMode::Thing => each_p(rs.thing.unwrap()),
+                                                    ResultSetMode::Thing => {
+                                                        each_p(rs.thing.unwrap())
+                                                    }
                                                     ResultSetMode::Multi => {
                                                         for p in rs.multi.as_ref().unwrap().iter() {
                                                             each_p(p);
@@ -1223,7 +1291,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     }
                                                     ResultSetMode::Empty => {}
                                                 }
-                                                if let Entry::Occupied(mut e) = variables.entry("p".to_string()) {
+                                                if let Entry::Occupied(mut e) =
+                                                    variables.entry("p".to_string())
+                                                {
                                                     *e.get_mut() = new_p;
                                                 }
                                             }
@@ -1248,9 +1318,15 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 let mut rhs_time: Option<Time> = None;
                                 for c in part.into_inner() {
                                     match c.as_rule() {
-                                        Rule::recall => var = Some(c.into_inner().next().unwrap().as_str().to_string()),
+                                        Rule::recall => {
+                                            var = Some(
+                                                c.into_inner().next().unwrap().as_str().to_string(),
+                                            )
+                                        }
                                         Rule::comparator => op = Some(c.as_str().to_string()),
-                                        Rule::constant => rhs_time = parse_time_constant(c.as_str()),
+                                        Rule::constant => {
+                                            rhs_time = parse_time_constant(c.as_str())
+                                        }
                                         Rule::time => rhs_time = parse_time(c.as_str()),
                                         _ => {}
                                     }
@@ -1271,7 +1347,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 if cfg!(debug_assertions) {
                                     println!("Return recall: {}", structure.as_str());
                                 }
-                                returns.push(structure.into_inner().next().unwrap().as_str().to_string());
+                                returns.push(
+                                    structure.into_inner().next().unwrap().as_str().to_string(),
+                                );
                             }
                             _ => println!("Unknown return structure: {:?}", structure),
                         }
@@ -1301,7 +1379,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                     "==" | "=" => pt == tcmp,
                                                     _ => false,
                                                 };
-                                                if ok { filtered.insert(pid); }
+                                                if ok {
+                                                    filtered.insert(pid);
+                                                }
                                             }
                                         }
                                         // Intersect with overall candidates using roaring ops
@@ -1327,58 +1407,67 @@ impl<'db, 'en> Engine<'db, 'en> {
                         }
                         // Determine driving identity set via ResultSet union (keeps Thing/Multi compactly)
                         let emit_row = |who: Thing| {
-                                // Support returning n and/or t (name and time) per identity.
-                                let want_name = returns.iter().any(|v| v == "n");
-                                let want_time = returns.iter().any(|v| v == "t");
-                                if !want_name && !want_time { return; }
-                                let name_role = {
-                                    let rk = self.database.role_keeper();
-                                    let rk_guard = rk.lock().unwrap();
-                                    rk_guard.get("name")
+                            // Support returning n and/or t (name and time) per identity.
+                            let want_name = returns.iter().any(|v| v == "n");
+                            let want_time = returns.iter().any(|v| v == "t");
+                            if !want_name && !want_time {
+                                return;
+                            }
+                            let name_role = {
+                                let rk = self.database.role_keeper();
+                                let rk_guard = rk.lock().unwrap();
+                                rk_guard.get("name")
+                            };
+                            let apps: Vec<Arc<Appearance>> = {
+                                let lk = self.database.thing_to_appearance_lookup();
+                                let app_guard = lk.lock().unwrap();
+                                app_guard.lookup(&who).iter().cloned().collect()
+                            };
+                            for ap in apps.into_iter() {
+                                if ap.role().name() != name_role.name() {
+                                    continue;
+                                }
+                                let asets: Vec<Arc<AppearanceSet>> = {
+                                    let lk = self.database.appearance_to_appearance_set_lookup();
+                                    let aset_guard = lk.lock().unwrap();
+                                    aset_guard.lookup(&ap).iter().cloned().collect()
                                 };
-                                let apps: Vec<Arc<Appearance>> = {
-                                    let lk = self.database.thing_to_appearance_lookup();
-                                    let app_guard = lk.lock().unwrap();
-                                    app_guard.lookup(&who).iter().cloned().collect()
-                                };
-                                for ap in apps.into_iter() {
-                                    if ap.role().name() != name_role.name() { continue; }
-                                    let asets: Vec<Arc<AppearanceSet>> = {
-                                        let lk = self.database.appearance_to_appearance_set_lookup();
-                                        let aset_guard = lk.lock().unwrap();
-                                        aset_guard.lookup(&ap).iter().cloned().collect()
+                                for aset in asets.into_iter() {
+                                    let pids: RoaringTreemap = {
+                                        let lk =
+                                            self.database.appearance_set_to_posit_thing_lookup();
+                                        let pos_guard = lk.lock().unwrap();
+                                        pos_guard.lookup(&aset).clone()
                                     };
-                                    for aset in asets.into_iter() {
-                                        let pids: RoaringTreemap = {
-                                            let lk = self.database.appearance_set_to_posit_thing_lookup();
-                                            let pos_guard = lk.lock().unwrap();
-                                            pos_guard.lookup(&aset).clone()
+                                    for pid in pids.iter() {
+                                        let p = {
+                                            let lk = self.database.posit_keeper();
+                                            let mut guard = lk.lock().unwrap();
+                                            guard.posit::<String>(pid)
                                         };
-                                        for pid in pids.iter() {
-                                            let p = {
-                                                let lk = self.database.posit_keeper();
-                                                let mut guard = lk.lock().unwrap();
-                                                guard.posit::<String>(pid)
-                                            };
-                                            match (want_name, want_time) {
-                                                (true, true) => println!("{}, {}", p.value(), p.time()),
-                                                (true, false) => println!("{}", p.value()),
-                                                (false, true) => println!("{}", p.time()),
-                                                _ => {}
-                                            }
+                                        match (want_name, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
                                         }
                                     }
                                 }
-                            };
+                            }
+                        };
                         let mut driving = ResultSet::new();
                         for candidate in ["w", "h", "idw", "idh"].iter() {
-                            if let Some(rs) = variables.get(*candidate) { driving |= rs; }
+                            if let Some(rs) = variables.get(*candidate) {
+                                driving |= rs;
+                            }
                         }
                         match driving.mode {
                             ResultSetMode::Empty => {}
                             ResultSetMode::Thing => emit_row(driving.thing.unwrap()),
                             ResultSetMode::Multi => {
-                                for who in driving.multi.as_ref().unwrap().iter() { emit_row(who); }
+                                for who in driving.multi.as_ref().unwrap().iter() {
+                                    emit_row(who);
+                                }
                             }
                         }
                     }
