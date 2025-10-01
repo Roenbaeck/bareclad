@@ -779,12 +779,18 @@ impl<'db, 'en> Engine<'db, 'en> {
     fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
         // Track variables referenced in this search command to guide projection
         let mut active_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
-        // Track candidate name posits (filtered by any time constraint) to drive return of n/t
-        let mut name_candidate_posits: Option<RoaringTreemap> = None;
+    // Track candidate single-role posits (filtered by any time constraint) to drive return of value/time
+    let mut single_role_candidate_posits: Option<RoaringTreemap> = None;
         // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
         let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
+    // Track candidate posits per bound value variable name (e.g., n, name_val)
+    let mut value_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
         // Parsed where conditions on time variables: var -> (comparator, Time)
         let mut where_time: Vec<(String, String, Time)> = Vec::new();
+        // Track kinds of variables seen in this search (identity, value, time)
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum VarKind { Identity, Value, Time }
+        let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
@@ -850,6 +856,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             }
                                                             active_vars
                                                                 .insert(local_variable.to_string());
+                                                            variable_kinds.insert(local_variable.to_string(), VarKind::Identity);
                                                         }
                                                         Rule::wildcard => {
                                                             local_variables
@@ -870,6 +877,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             {
                                                                 active_vars
                                                                     .insert((*v).to_string());
+                                                            }
+                                                            if let Some(v) = local_variables.last() {
+                                                                variable_kinds.insert((*v).to_string(), VarKind::Identity);
                                                             }
                                                         }
                                                         Rule::recall_union => {
@@ -895,6 +905,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             local_variable_unions
                                                                 .push(Some(names.clone()));
                                                             for n in names {
+                                                                variable_kinds
+                                                                    .insert(n.clone(), VarKind::Identity);
                                                                 active_vars.insert(n);
                                                             }
                                                         }
@@ -922,6 +934,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         _value_as_variable = Some(local_variable);
                                                         active_vars
                                                             .insert(local_variable.to_string());
+                                                        variable_kinds.insert(local_variable.to_string(), VarKind::Value);
                                                     }
                                                     Rule::wildcard => {
                                                         _value_is_wildcard = true;
@@ -998,6 +1011,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         _time_as_variable = Some(local_variable);
                                                         active_vars
                                                             .insert(local_variable.to_string());
+                                                        variable_kinds.insert(local_variable.to_string(), VarKind::Time);
                                                     }
                                                     Rule::wildcard => {
                                                         _time_is_wildcard = true;
@@ -1060,9 +1074,15 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             }
                                             cands = filtered;
                                         }
-                                        // Remember candidate posits for projection when returning n/t
+                                        // Remember candidate posits for projection when returning values/times
                                         if !cands.is_empty() && roles.len() == 1 {
-                                            name_candidate_posits = Some(cands.clone());
+                                            single_role_candidate_posits = Some(cands.clone());
+                                        }
+                                        // If the appearing value used a variable (e.g., +n or n), capture its candidates
+                                        if let Some(vname) = _value_as_variable {
+                                            value_var_candidates
+                                                .insert(vname.to_string(), cands.clone());
+                                            active_vars.insert(vname.to_string());
                                         }
                                         // If the time slot used a variable, capture its candidate posits under that variable name
                                         if let Some(varname) = _time_as_variable {
@@ -1354,14 +1374,48 @@ impl<'db, 'en> Engine<'db, 'en> {
                             _ => println!("Unknown return structure: {:?}", structure),
                         }
                     }
-                    // Generalized projection: build rows from requested variables. For name/time, derive from identity variables.
+                    // Generalized projection: build rows from requested variables using per-variable candidate sets when available.
                     if !returns.is_empty() {
-                        // If we have candidate posits from the search (possibly time-filtered), use them directly.
-                        if let Some(ref name_cands) = name_candidate_posits {
-                            let want_name = returns.iter().any(|v| v == "n");
-                            let want_time = returns.iter().any(|v| v == "t");
-                            // Apply where constraints on any bound time variable (e.g., t, tw)
-                            let mut cands = name_cands.clone();
+                        // Preferred path: compute candidate posits from returned value/time variables
+                        let want_value = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
+                        let want_time = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
+                        let mut selected: Option<RoaringTreemap> = None;
+                        // Intersect candidates across returned value variables
+                        for v in &returns {
+                            if variable_kinds.get(v) == Some(&VarKind::Value) {
+                                if let Some(bm) = value_var_candidates.get(v) {
+                                    selected = Some(match selected {
+                                        None => bm.clone(),
+                                        Some(mut acc) => {
+                                            acc &= bm;
+                                            acc
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        // Intersect candidates across returned time variables
+                        for v in &returns {
+                            if variable_kinds.get(v) == Some(&VarKind::Time) {
+                                if let Some(bm) = time_var_candidates.get(v) {
+                                    selected = Some(match selected {
+                                        None => bm.clone(),
+                                        Some(mut acc) => {
+                                            acc &= bm;
+                                            acc
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        // If nothing selected yet but we do request value/time, fall back to single-role candidates when present
+                        if selected.is_none() && (want_value || want_time) {
+                            if let Some(ref sr) = single_role_candidate_posits {
+                                selected = Some(sr.clone());
+                            }
+                        }
+                        // If we have any selected candidates, apply where filters and emit
+                        if let Some(mut cands) = selected {
                             if !where_time.is_empty() {
                                 let tk = self.database.posit_time_lookup();
                                 let guard = tk.lock().unwrap();
@@ -1384,22 +1438,67 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 }
                                             }
                                         }
-                                        // Intersect with overall candidates using roaring ops
                                         cands &= &filtered;
                                     }
                                 }
                             }
+                            let lk = self.database.posit_keeper();
+                            let mut guard = lk.lock().unwrap();
                             for pid in cands.iter() {
-                                let p = {
-                                    let lk = self.database.posit_keeper();
-                                    let mut guard = lk.lock().unwrap();
-                                    guard.posit::<String>(pid)
-                                };
-                                match (want_name, want_time) {
-                                    (true, true) => println!("{}, {}", p.value(), p.time()),
-                                    (true, false) => println!("{}", p.value()),
-                                    (false, true) => println!("{}", p.time()),
-                                    _ => {}
+                                // Try all supported value types
+                                if let Some(p) = guard.try_posit::<String>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                                if let Some(p) = guard.try_posit::<JSON>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                                if let Some(p) = guard.try_posit::<Decimal>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                                if let Some(p) = guard.try_posit::<i64>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                                if let Some(p) = guard.try_posit::<Certainty>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
+                                    }
+                                    continue;
+                                }
+                                if let Some(p) = guard.try_posit::<Time>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
+                                    }
+                                    continue;
                                 }
                             }
                             // We've emitted based on exact candidates; skip identity-driven projection to avoid duplicates.
@@ -1407,26 +1506,21 @@ impl<'db, 'en> Engine<'db, 'en> {
                         }
                         // Determine driving identity set via ResultSet union (keeps Thing/Multi compactly)
                         let emit_row = |who: Thing| {
-                            // Support returning n and/or t (name and time) per identity.
-                            let want_name = returns.iter().any(|v| v == "n");
-                            let want_time = returns.iter().any(|v| v == "t");
-                            if !want_name && !want_time {
+                            // Support returning value and/or time per identity based on return variable kinds
+                            let want_value = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
+                            let want_time = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
+                            if !want_value && !want_time {
                                 return;
                             }
-                            let name_role = {
-                                let rk = self.database.role_keeper();
-                                let rk_guard = rk.lock().unwrap();
-                                rk_guard.get("name")
-                            };
+                            // For generic roles: iterate all posits involving this identity and print their values/times
+                            let mut posits = RoaringTreemap::new();
+                            // Collect all appearance sets where this identity appears
                             let apps: Vec<Arc<Appearance>> = {
                                 let lk = self.database.thing_to_appearance_lookup();
                                 let app_guard = lk.lock().unwrap();
                                 app_guard.lookup(&who).iter().cloned().collect()
                             };
                             for ap in apps.into_iter() {
-                                if ap.role().name() != name_role.name() {
-                                    continue;
-                                }
                                 let asets: Vec<Arc<AppearanceSet>> = {
                                     let lk = self.database.appearance_to_appearance_set_lookup();
                                     let aset_guard = lk.lock().unwrap();
@@ -1434,23 +1528,23 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 };
                                 for aset in asets.into_iter() {
                                     let pids: RoaringTreemap = {
-                                        let lk =
-                                            self.database.appearance_set_to_posit_thing_lookup();
+                                        let lk = self.database.appearance_set_to_posit_thing_lookup();
                                         let pos_guard = lk.lock().unwrap();
                                         pos_guard.lookup(&aset).clone()
                                     };
-                                    for pid in pids.iter() {
-                                        let p = {
-                                            let lk = self.database.posit_keeper();
-                                            let mut guard = lk.lock().unwrap();
-                                            guard.posit::<String>(pid)
-                                        };
-                                        match (want_name, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
+                                    posits |= &pids;
+                                }
+                            }
+                            // Emit values/times for all collected posits (string-typed first; extend to other types later)
+                            let lk = self.database.posit_keeper();
+                            let mut guard = lk.lock().unwrap();
+                            for pid in posits.iter() {
+                                if let Some(p) = guard.try_posit::<String>(pid) {
+                                    match (want_value, want_time) {
+                                        (true, true) => println!("{}, {}", p.value(), p.time()),
+                                        (true, false) => println!("{}", p.value()),
+                                        (false, true) => println!("{}", p.time()),
+                                        _ => {}
                                     }
                                 }
                             }

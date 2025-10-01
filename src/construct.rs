@@ -457,6 +457,17 @@ impl PositKeeper {
         };
         Arc::clone(map.get_by_right(&thing).unwrap())
     }
+    /// Safe typed retrieval: returns None when the thing is not a posit of type V.
+    pub fn try_posit<V: 'static + DataType>(&mut self, thing: Thing) -> Option<Arc<Posit<V>>> {
+        let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
+            m
+        } else {
+            self.kept
+                .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
+            self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
+        };
+        map.get_by_right(&thing).cloned()
+    }
     pub fn len(&self) -> usize {
         self.length
     }
