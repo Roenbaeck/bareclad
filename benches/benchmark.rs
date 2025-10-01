@@ -1,11 +1,11 @@
 use bareclad::traqula::ResultSet;
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::time::Instant;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let start = Instant::now();
     let mut r1 = ResultSet::new();
-    let mut r2 = ResultSet::new();
+    let r2 = ResultSet::new();
     println!("Time spent building the result sets: {:?}", start.elapsed());
     println!("Both result sets look like:");
     println!("{:?}", r1);
