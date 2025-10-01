@@ -1445,60 +1445,83 @@ impl<'db, 'en> Engine<'db, 'en> {
                             let lk = self.database.posit_keeper();
                             let mut guard = lk.lock().unwrap();
                             for pid in cands.iter() {
-                                // Try all supported value types
-                                if let Some(p) = guard.try_posit::<String>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                // Narrow type probing using role->data type partitions for this posit's appearance set
+                                let roles = {
+                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                    let guard = lk.lock().unwrap();
+                                    guard.get(&pid).unwrap().roles()
+                                };
+                                let allowed_types = {
+                                    let lk = self.database.role_name_to_data_type_lookup();
+                                    let guard = lk.lock().unwrap();
+                                    guard.lookup(&roles).clone()
+                                };
+                                // Try only the allowed types, in a stable order
+                                if allowed_types.contains("String") {
+                                    if let Some(p) = guard.try_posit::<String>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
-                                if let Some(p) = guard.try_posit::<JSON>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                if allowed_types.contains("JSON") {
+                                    if let Some(p) = guard.try_posit::<JSON>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
-                                if let Some(p) = guard.try_posit::<Decimal>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                if allowed_types.contains("Decimal") {
+                                    if let Some(p) = guard.try_posit::<Decimal>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
-                                if let Some(p) = guard.try_posit::<i64>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                if allowed_types.contains("i64") {
+                                    if let Some(p) = guard.try_posit::<i64>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
-                                if let Some(p) = guard.try_posit::<Certainty>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                if allowed_types.contains("Certainty") {
+                                    if let Some(p) = guard.try_posit::<Certainty>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
-                                if let Some(p) = guard.try_posit::<Time>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                if allowed_types.contains("Time") {
+                                    if let Some(p) = guard.try_posit::<Time>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
                             }
                             // We've emitted based on exact candidates; skip identity-driven projection to avoid duplicates.
@@ -1535,16 +1558,84 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     posits |= &pids;
                                 }
                             }
-                            // Emit values/times for all collected posits (string-typed first; extend to other types later)
+                            // Emit values/times for all collected posits, restricted by their role->type partitions
                             let lk = self.database.posit_keeper();
                             let mut guard = lk.lock().unwrap();
                             for pid in posits.iter() {
-                                if let Some(p) = guard.try_posit::<String>(pid) {
-                                    match (want_value, want_time) {
-                                        (true, true) => println!("{}, {}", p.value(), p.time()),
-                                        (true, false) => println!("{}", p.value()),
-                                        (false, true) => println!("{}", p.time()),
-                                        _ => {}
+                                let roles = {
+                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                    let guard = lk.lock().unwrap();
+                                    guard.get(&pid).unwrap().roles()
+                                };
+                                let allowed_types = {
+                                    let lk = self.database.role_name_to_data_type_lookup();
+                                    let guard = lk.lock().unwrap();
+                                    guard.lookup(&roles).clone()
+                                };
+                                if allowed_types.contains("String") {
+                                    if let Some(p) = guard.try_posit::<String>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
+                                    }
+                                }
+                                if allowed_types.contains("JSON") {
+                                    if let Some(p) = guard.try_posit::<JSON>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
+                                    }
+                                }
+                                if allowed_types.contains("Decimal") {
+                                    if let Some(p) = guard.try_posit::<Decimal>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
+                                    }
+                                }
+                                if allowed_types.contains("i64") {
+                                    if let Some(p) = guard.try_posit::<i64>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
+                                    }
+                                }
+                                if allowed_types.contains("Certainty") {
+                                    if let Some(p) = guard.try_posit::<Certainty>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
+                                    }
+                                }
+                                if allowed_types.contains("Time") {
+                                    if let Some(p) = guard.try_posit::<Time>(pid) {
+                                        match (want_value, want_time) {
+                                            (true, true) => println!("{}, {}", p.value(), p.time()),
+                                            (true, false) => println!("{}", p.value()),
+                                            (false, true) => println!("{}", p.time()),
+                                            _ => {}
+                                        }
+                                        continue;
                                     }
                                 }
                             }
