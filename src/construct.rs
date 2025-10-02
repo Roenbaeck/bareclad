@@ -437,7 +437,8 @@ impl PositKeeper {
             previously_kept,
         )
     }
-    pub fn thing<V: 'static + DataType>(&mut self, posit: Arc<Posit<V>>) -> Thing {
+    /// Returns the Thing id for a kept posit, or None if not found in the keeper.
+    pub fn thing<V: 'static + DataType>(&mut self, posit: Arc<Posit<V>>) -> Option<Thing> {
         let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
             m
         } else {
@@ -445,9 +446,10 @@ impl PositKeeper {
                 .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
             self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
         };
-        *map.get_by_left(&posit).unwrap()
+        map.get_by_left(&posit).copied()
     }
-    pub fn posit<V: 'static + DataType>(&mut self, thing: Thing) -> Arc<Posit<V>> {
+    /// Returns the typed posit for a Thing id, or None if not a posit of type V.
+    pub fn posit<V: 'static + DataType>(&mut self, thing: Thing) -> Option<Arc<Posit<V>>> {
         let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
             m
         } else {
@@ -455,18 +457,7 @@ impl PositKeeper {
                 .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
             self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
         };
-        Arc::clone(map.get_by_right(&thing).unwrap())
-    }
-    /// Safe typed retrieval: returns None when the thing is not a posit of type V.
-    pub fn try_posit<V: 'static + DataType>(&mut self, thing: Thing) -> Option<Arc<Posit<V>>> {
-        let map = if let Some(m) = self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>() {
-            m
-        } else {
-            self.kept
-                .insert::<BiMap<Arc<Posit<V>>, Thing>>(BiMap::<Arc<Posit<V>>, Thing>::new());
-            self.kept.get_mut::<BiMap<Arc<Posit<V>>, Thing>>().unwrap()
-        };
-        map.get_by_right(&thing).cloned()
+        map.get_by_right(&thing).map(Arc::clone)
     }
     pub fn len(&self) -> usize {
         self.length

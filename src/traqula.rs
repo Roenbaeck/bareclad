@@ -1458,7 +1458,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 };
                                 // Try only the allowed types, in a stable order
                                 if allowed_types.contains("String") {
-                                    if let Some(p) = guard.try_posit::<String>(pid) {
+                                    if let Some(p) = guard.posit::<String>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1469,7 +1469,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("JSON") {
-                                    if let Some(p) = guard.try_posit::<JSON>(pid) {
+                                    if let Some(p) = guard.posit::<JSON>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1480,7 +1480,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("Decimal") {
-                                    if let Some(p) = guard.try_posit::<Decimal>(pid) {
+                                    if let Some(p) = guard.posit::<Decimal>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1491,7 +1491,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("i64") {
-                                    if let Some(p) = guard.try_posit::<i64>(pid) {
+                                    if let Some(p) = guard.posit::<i64>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1502,7 +1502,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("Certainty") {
-                                    if let Some(p) = guard.try_posit::<Certainty>(pid) {
+                                    if let Some(p) = guard.posit::<Certainty>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1513,7 +1513,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("Time") {
-                                    if let Some(p) = guard.try_posit::<Time>(pid) {
+                                    if let Some(p) = guard.posit::<Time>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1573,7 +1573,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     guard.lookup(&roles).clone()
                                 };
                                 if allowed_types.contains("String") {
-                                    if let Some(p) = guard.try_posit::<String>(pid) {
+                                    if let Some(p) = guard.posit::<String>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1584,7 +1584,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("JSON") {
-                                    if let Some(p) = guard.try_posit::<JSON>(pid) {
+                                    if let Some(p) = guard.posit::<JSON>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1595,7 +1595,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("Decimal") {
-                                    if let Some(p) = guard.try_posit::<Decimal>(pid) {
+                                    if let Some(p) = guard.posit::<Decimal>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1606,7 +1606,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("i64") {
-                                    if let Some(p) = guard.try_posit::<i64>(pid) {
+                                    if let Some(p) = guard.posit::<i64>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1617,7 +1617,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("Certainty") {
-                                    if let Some(p) = guard.try_posit::<Certainty>(pid) {
+                                    if let Some(p) = guard.posit::<Certainty>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
@@ -1628,7 +1628,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                     }
                                 }
                                 if allowed_types.contains("Time") {
-                                    if let Some(p) = guard.try_posit::<Time>(pid) {
+                                    if let Some(p) = guard.posit::<Time>(pid) {
                                         match (want_value, want_time) {
                                             (true, true) => println!("{}, {}", p.value(), p.time()),
                                             (true, false) => println!("{}", p.value()),
