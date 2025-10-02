@@ -5,6 +5,16 @@ Bareclad is an experimental database engine based on Transitional Modeling, desi
 - [Paper: Modeling Conflicting, Unreliable, and Varying Information (Transitional Modeling)](https://www.researchgate.net/publication/329352497_Modeling_Conflicting_Unreliable_and_Varying_Information)
 - [Background posts](https://www.anchormodeling.com/tag/transitional/)
 
+## Why Bareclad?
+
+Most databases assume a single, consistent truth. In reality, facts are messy: they conflict across sources, change over time, and sometimes carry uncertainty. Bareclad treats this as a first‑class concern:
+
+- Contradictions are preserved, not overwritten (assertions can be affirmed or negated with certainty).
+- Time is built into every posit, so “what was true when” is natural to ask.
+- Set‑based evaluation with roaring bitmaps keeps pattern matching fast without exploding joins.
+
+This makes Bareclad well‑suited for master data management, regulated domains, investigations/intel, and any workflow where evidence accumulates and is revised.
+
 <br/>
 
 <img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/Traqula.svg" width="175">
