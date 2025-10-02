@@ -38,3 +38,5 @@ Cargo.lock
 
 # These are SQLite database files
 *.db
+*.db-shm
+*.db-wal

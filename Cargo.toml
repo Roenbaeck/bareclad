@@ -26,6 +26,7 @@ roaring = "0.11"
 seahash = "4.1.0"
 # rusqlite for the persistence layer
 rusqlite = { version = "0.37", features = ["chrono", "bundled"] }
+# Connection pool for SQLite
 # for decimal numbers of arbitrary size
 bigdecimal = "0.4"
 # for JSON data type
