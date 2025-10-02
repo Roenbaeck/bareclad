@@ -57,4 +57,9 @@ search +p [{(*, wife), (+h, husband)}, "married", *],
 return
     n, t;
 
-
+/* Testing error handling: missing quotes around date */
+/*
+search [{(*, name)}, +n, 1972-02-13] # missing quotes
+return
+    n;
+*/

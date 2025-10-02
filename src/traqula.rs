@@ -481,6 +481,7 @@ fn parse_time_constant(value: &str) -> Option<Time> {
 }
 
 use pest::Parser;
+use pest::error::ErrorVariant;
 use pest::iterators::Pair;
 use pest_derive::Parser;
 
@@ -779,17 +780,21 @@ impl<'db, 'en> Engine<'db, 'en> {
     fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
         // Track variables referenced in this search command to guide projection
         let mut active_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Track candidate single-role posits (filtered by any time constraint) to drive return of value/time
-    let mut single_role_candidate_posits: Option<RoaringTreemap> = None;
+        // Track candidate single-role posits (filtered by any time constraint) to drive return of value/time
+        let mut single_role_candidate_posits: Option<RoaringTreemap> = None;
         // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
         let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
-    // Track candidate posits per bound value variable name (e.g., n, name_val)
-    let mut value_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
+        // Track candidate posits per bound value variable name (e.g., n, name_val)
+        let mut value_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
         // Parsed where conditions on time variables: var -> (comparator, Time)
         let mut where_time: Vec<(String, String, Time)> = Vec::new();
         // Track kinds of variables seen in this search (identity, value, time)
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        enum VarKind { Identity, Value, Time }
+        enum VarKind {
+            Identity,
+            Value,
+            Time,
+        }
         let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
         for clause in command.into_inner() {
             match clause.as_rule() {
@@ -856,7 +861,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             }
                                                             active_vars
                                                                 .insert(local_variable.to_string());
-                                                            variable_kinds.insert(local_variable.to_string(), VarKind::Identity);
+                                                            variable_kinds.insert(
+                                                                local_variable.to_string(),
+                                                                VarKind::Identity,
+                                                            );
                                                         }
                                                         Rule::wildcard => {
                                                             local_variables
@@ -878,8 +886,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                                 active_vars
                                                                     .insert((*v).to_string());
                                                             }
-                                                            if let Some(v) = local_variables.last() {
-                                                                variable_kinds.insert((*v).to_string(), VarKind::Identity);
+                                                            if let Some(v) = local_variables.last()
+                                                            {
+                                                                variable_kinds.insert(
+                                                                    (*v).to_string(),
+                                                                    VarKind::Identity,
+                                                                );
                                                             }
                                                         }
                                                         Rule::recall_union => {
@@ -905,8 +917,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                             local_variable_unions
                                                                 .push(Some(names.clone()));
                                                             for n in names {
-                                                                variable_kinds
-                                                                    .insert(n.clone(), VarKind::Identity);
+                                                                variable_kinds.insert(
+                                                                    n.clone(),
+                                                                    VarKind::Identity,
+                                                                );
                                                                 active_vars.insert(n);
                                                             }
                                                         }
@@ -934,7 +948,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         _value_as_variable = Some(local_variable);
                                                         active_vars
                                                             .insert(local_variable.to_string());
-                                                        variable_kinds.insert(local_variable.to_string(), VarKind::Value);
+                                                        variable_kinds.insert(
+                                                            local_variable.to_string(),
+                                                            VarKind::Value,
+                                                        );
                                                     }
                                                     Rule::wildcard => {
                                                         _value_is_wildcard = true;
@@ -1011,7 +1028,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         _time_as_variable = Some(local_variable);
                                                         active_vars
                                                             .insert(local_variable.to_string());
-                                                        variable_kinds.insert(local_variable.to_string(), VarKind::Time);
+                                                        variable_kinds.insert(
+                                                            local_variable.to_string(),
+                                                            VarKind::Time,
+                                                        );
                                                     }
                                                     Rule::wildcard => {
                                                         _time_is_wildcard = true;
@@ -1377,8 +1397,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                     // Generalized projection: build rows from requested variables using per-variable candidate sets when available.
                     if !returns.is_empty() {
                         // Preferred path: compute candidate posits from returned value/time variables
-                        let want_value = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
-                        let want_time = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
+                        let want_value = returns
+                            .iter()
+                            .any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
+                        let want_time = returns
+                            .iter()
+                            .any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
                         let mut selected: Option<RoaringTreemap> = None;
                         // Intersect candidates across returned value variables
                         for v in &returns {
@@ -1530,8 +1554,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                         // Determine driving identity set via ResultSet union (keeps Thing/Multi compactly)
                         let emit_row = |who: Thing| {
                             // Support returning value and/or time per identity based on return variable kinds
-                            let want_value = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
-                            let want_time = returns.iter().any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
+                            let want_value = returns
+                                .iter()
+                                .any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
+                            let want_time = returns
+                                .iter()
+                                .any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
                             if !want_value && !want_time {
                                 return;
                             }
@@ -1551,7 +1579,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 };
                                 for aset in asets.into_iter() {
                                     let pids: RoaringTreemap = {
-                                        let lk = self.database.appearance_set_to_posit_thing_lookup();
+                                        let lk =
+                                            self.database.appearance_set_to_posit_thing_lookup();
                                         let pos_guard = lk.lock().unwrap();
                                         pos_guard.lookup(&aset).clone()
                                     };
@@ -1664,7 +1693,28 @@ impl<'db, 'en> Engine<'db, 'en> {
     /// Parse and execute a Traqula script (one or more commands).
     pub fn execute(&self, traqula: &str) {
         let mut variables: Variables = Variables::default();
-        let traqula = TraqulaParser::parse(Rule::traqula, traqula.trim()).expect("Parsing error");
+        let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
+        let traqula = match parse_result {
+            Ok(pairs) => pairs,
+            Err(err) => {
+                // Print a helpful parse error with expected tokens and context
+                eprintln!("Traqula parse error:\n{}", err);
+                if let ErrorVariant::ParsingError {
+                    positives,
+                    negatives: _,
+                } = err.variant
+                {
+                    if !positives.is_empty() {
+                        let mut expected: Vec<&'static str> =
+                            positives.iter().map(|r| friendly_rule_name(*r)).collect();
+                        expected.sort();
+                        expected.dedup();
+                        eprintln!("Expected one of: {}", expected.join(", "));
+                    }
+                }
+                return;
+            }
+        };
         for command in traqula {
             match command.as_rule() {
                 Rule::add_role => self.add_role(command),
@@ -1677,6 +1727,41 @@ impl<'db, 'en> Engine<'db, 'en> {
         if cfg!(debug_assertions) {
             println!("Variables: {:?}", &variables);
         }
+    }
+}
+
+/// Map grammar rules to friendly names in error messages.
+fn friendly_rule_name(rule: Rule) -> &'static str {
+    match rule {
+        Rule::traqula => "Traqula script",
+        Rule::add_role => "add role",
+        Rule::add_posit => "add posit",
+        Rule::search => "search",
+        Rule::search_clause => "search clause",
+        Rule::where_clause => "where clause",
+        Rule::return_clause => "return clause",
+        Rule::appearance_set | Rule::appearance_set_search => "appearance set [{(...)}]",
+        Rule::appearance | Rule::appearance_search => "appearance (..., <role>)",
+        Rule::role => "role name",
+        Rule::insert => "+variable",
+        Rule::recall => "variable",
+        Rule::recall_union => "variable union (a|b)",
+        Rule::wildcard => "*",
+        Rule::appearing_value | Rule::appearing_value_search => "value",
+        // Expand time slot expectations to concrete options
+        Rule::appearance_time_search => {
+            "time literal (e.g., 'YYYY-MM-DD'), time constant (@NOW/@BOT/@EOT), +variable, variable, or *"
+        }
+        Rule::appearance_time => "time",
+        Rule::json => "JSON literal",
+        Rule::string => "string literal",
+        Rule::int => "integer literal",
+        Rule::decimal => "decimal literal",
+        Rule::certainty => "certainty (e.g., 100%)",
+        Rule::time => "time literal (e.g., 'YYYY-MM-DD')",
+        Rule::constant => "time constant (@NOW/@BOT/@EOT)",
+        Rule::comparator => "comparator (<, <=, >, >=, =, ==)",
+        _ => "token",
     }
 }
 
