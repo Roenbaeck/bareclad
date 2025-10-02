@@ -56,6 +56,21 @@ Values support multiple types (String, JSON, Decimal, i64, Certainty, Time). Tim
 
 WHERE supports comparisons on time variables: <, <=, >, >=, =, ==.
 
+### Data types and literals ("look‑alike" / WYSIWYG)
+
+Traqula aims for “what you see is what you get” typing: the way a literal looks determines how it’s parsed and stored.
+
+- String: "Alice" (double quotes). To embed a quote, double it: "" -> ".
+- JSON: { "street": "..." } or [1, 2, 3] parsed as JSON.
+- Decimal: 3.14159 parsed as arbitrary‑precision Decimal.
+- Integer: 42 parsed as i64.
+- Certainty: 100% or -100% parsed as Certainty.
+- Time:
+	- '1972' (year), '1972-02' (year‑month), '1972-02-13' (date), or '1972-02-13 12:34:56' (datetime)
+	- Special constants: @NOW, @BOT (beginning of time), @EOT (end of time)
+
+On insert, Bareclad records which value type is used for a given role set (role_name_to_data_type_lookup). The engine uses this to avoid mismatched types during reads and to keep projection fast.
+
 ### Example
 
 See traqula/example.traqula for a complete startup script. A few highlights:
@@ -90,7 +105,7 @@ return n;
 	- value variables: which posits contribute the values
 	- time variables: which posits carry the time
 - Applies WHERE by filtering time-variable candidate bitmaps with the comparator.
-- Projects in RETURN based on variable kinds inferred from the parser (Identity, Value, Time) and uses role->type partitions to avoid probing impossible types.
+- Projects in RETURN based on variable kinds inferred from the parser (Identity, Value, Time) and uses role to variable kind partitions to avoid probing impossible types.
 
 This is intentionally minimal but efficient; more expressive joins and aggregations can be layered on top.
 
