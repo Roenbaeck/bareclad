@@ -588,9 +588,9 @@ impl<'db> Database<'db> {
 
         // Reserve some roles that will be necessary for implementing features
         // commonly found in many other (including non-tradtional) databases.
-        database.create_role(String::from("posit"), false);
+        database.create_role(String::from("posit"), true);
         database.create_role(String::from("ascertains"), true);
-        database.create_role(String::from("thing"), false);
+        database.create_role(String::from("thing"), true);
         database.create_role(String::from("classification"), true);
 
         database

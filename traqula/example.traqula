@@ -44,12 +44,20 @@ where t <= '1999-12-31'
 return
     n;
 
-/* Marriage asserted and name at a specific time for either spouse (union) */
+/* Marriage asserted and name for either spouse (union) */
 search +p [{(+w, wife), (+h, husband)}, "married", *],
           [{(p, posit), (*, ascertains)}, *, *],
-          [{(w|h, name)}, +n, '2004-07-01']
+          [{(w|h, name)}, +n, +t]
+where t < '2004-07-01'
 return
-    n;
+    n, t;
+
+search +pos [{(+w, wife), (+h, husband)}, "married", *],
+          [{(pos, husband), (*, wife)}, *, *],
+          [{(w|h, name)}, +n, +t]
+where t < '2004-07-01'
+return
+    n, t;
 
 search +p [{(*, wife), (+h, husband)}, "married", *], 
           [{(p, posit), (*, ascertains)}, *, *], 

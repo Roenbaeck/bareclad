@@ -795,7 +795,9 @@ impl<'db, 'en> Engine<'db, 'en> {
             Value,
             Time,
         }
-        let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
+    let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
+    // Track whether any clause in this search failed (no candidates after constraints)
+    let mut any_clause_failed: bool = false;
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
@@ -1078,9 +1080,9 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             }
                                         });
                                     }
-                                    if let Some(cands) = candidates {
+                                    if let Some(cands_initial) = candidates {
                                         // Optional time filter for any role when a literal/constant time is provided
-                                        let mut cands = cands;
+                                        let mut cands = cands_initial;
                                         if let Some(ref t) = _time {
                                             let mut filtered = RoaringTreemap::new();
                                             let tk = self.database.posit_time_lookup();
@@ -1093,6 +1095,70 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                 }
                                             }
                                             cands = filtered;
+                                            if cands.is_empty() {
+                                                any_clause_failed = true;
+                                            }
+                                        }
+                                        // Apply local identity variable constraints to filter candidates (e.g., (w, name) restricts to bound wife)
+                                        if !local_variables.is_empty() && !cands.is_empty() {
+                                            let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                            let aset_guard = lk.lock().unwrap();
+                                            let mut filtered = RoaringTreemap::new();
+                                            'cand: for id in cands.iter() {
+                                                let appset = match aset_guard.get(&id) {
+                                                    Some(aset) => aset,
+                                                    None => continue,
+                                                };
+                                                for (i, token) in local_variables.iter().enumerate() {
+                                                    if *token == "*" { continue; }
+                                                    let role_name = roles[i];
+                                                    let bound_opt = appset
+                                                        .appearances()
+                                                        .iter()
+                                                        .find(|a| a.role().name() == role_name)
+                                                        .map(|a| a.thing());
+                                                    if let Some(bound_id) = bound_opt {
+                                                        // Determine if this bound_id satisfies existing variable bindings (support unions)
+                                                        let union_names = local_variable_unions.get(i).and_then(|u| u.as_ref());
+                                                        let satisfies = if let Some(names) = union_names {
+                                                            // If any union member is already bound and contains bound_id, accept; if none are bound, don't restrict
+                                                            let mut any_bound = false;
+                                                            let mut any_match = false;
+                                                            for name in names.iter() {
+                                                                if let Some(rs) = variables.get(name) {
+                                                                    any_bound = true;
+                                                                    match rs.mode {
+                                                                        ResultSetMode::Thing => { any_match |= rs.thing.unwrap() == bound_id; }
+                                                                        ResultSetMode::Multi => { any_match |= rs.multi.as_ref().unwrap().contains(bound_id); }
+                                                                        ResultSetMode::Empty => {}
+                                                                    }
+                                                                }
+                                                            }
+                                                            if any_bound { any_match } else { true }
+                                                        } else {
+                                                            let key = token.strip_prefix('+').unwrap_or(token);
+                                                            if let Some(rs) = variables.get(key) {
+                                                                match rs.mode {
+                                                                    ResultSetMode::Thing => rs.thing.unwrap() == bound_id,
+                                                                    ResultSetMode::Multi => rs.multi.as_ref().unwrap().contains(bound_id),
+                                                                    ResultSetMode::Empty => true,
+                                                                }
+                                                            } else {
+                                                                // Unbound variable – don't restrict
+                                                                true
+                                                            }
+                                                        };
+                                                        if !satisfies { continue 'cand; }
+                                                    } else {
+                                                        continue 'cand;
+                                                    }
+                                                }
+                                                filtered.insert(id);
+                                            }
+                                            cands = filtered;
+                                            if cands.is_empty() {
+                                                any_clause_failed = true;
+                                            }
                                         }
                                         // Remember candidate posits for projection when returning values/times
                                         if !cands.is_empty() && roles.len() == 1 {
@@ -1100,14 +1166,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         }
                                         // If the appearing value used a variable (e.g., +n or n), capture its candidates
                                         if let Some(vname) = _value_as_variable {
-                                            value_var_candidates
-                                                .insert(vname.to_string(), cands.clone());
+                                            value_var_candidates.insert(vname.to_string(), cands.clone());
                                             active_vars.insert(vname.to_string());
                                         }
                                         // If the time slot used a variable, capture its candidate posits under that variable name
                                         if let Some(varname) = _time_as_variable {
-                                            time_var_candidates
-                                                .insert(varname.to_string(), cands.clone());
+                                            time_var_candidates.insert(varname.to_string(), cands.clone());
                                             active_vars.insert(varname.to_string());
                                         }
                                         // Bind outer posit variable (e.g., +p)
@@ -1127,22 +1191,15 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         }
                                         // Bind local variables from appearance roles (e.g., +w with role "wife")
                                         if !local_variables.is_empty() {
-                                            // General positional binding (may be too permissive but OK for now)
                                             for id in cands.iter() {
                                                 let appset = {
-                                                    let lk = self
-                                                        .database
-                                                        .posit_thing_to_appearance_set_lookup();
+                                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
                                                     let guard = lk.lock().unwrap();
                                                     Arc::clone(guard.get(&id).unwrap())
                                                 };
-                                                for (i, token) in local_variables.iter().enumerate()
-                                                {
-                                                    if *token == "*" {
-                                                        continue;
-                                                    }
-                                                    let vname =
-                                                        token.strip_prefix('+').unwrap_or(token);
+                                                for (i, token) in local_variables.iter().enumerate() {
+                                                    if *token == "*" { continue; }
+                                                    let vname = token.strip_prefix('+').unwrap_or(token);
                                                     let role_name = roles[i];
                                                     if let Some(bound) = appset
                                                         .appearances()
@@ -1150,194 +1207,57 @@ impl<'db, 'en> Engine<'db, 'en> {
                                                         .find(|a| a.role().name() == role_name)
                                                         .map(|a| a.thing())
                                                     {
-                                                        // For inserted vars (+x): bind or intersect. For recalls (x): if unbound, bind; else leave as-is.
-                                                        let is_insert = token.starts_with('+');
-                                                        // Handle union variables like w|h by updating each member variable separately
-                                                        if let Some(Some(union_names)) =
-                                                            local_variable_unions.get(i)
-                                                        {
+                                                        // recall variables intersect as join filters; inserts also intersect
+                                                        if let Some(Some(union_names)) = local_variable_unions.get(i) {
                                                             for member in union_names {
                                                                 let key = member.to_string();
-                                                                if let Entry::Vacant(entry) =
-                                                                    variables.entry(key.clone())
-                                                                {
-                                                                    let mut rs = ResultSet::new();
-                                                                    rs.insert(bound);
-                                                                    entry.insert(rs);
-                                                                } else if is_insert {
-                                                                    if let Entry::Occupied(
-                                                                        mut entry,
-                                                                    ) = variables.entry(key)
-                                                                    {
+                                                                match variables.entry(key.clone()) {
+                                                                    Entry::Vacant(entry) => {
+                                                                        let mut rs = ResultSet::new();
+                                                                        rs.insert(bound);
+                                                                        entry.insert(rs);
+                                                                    }
+                                                                    Entry::Occupied(mut entry) => {
                                                                         let rs = entry.get_mut();
-                                                                        let mut narrowed =
-                                                                            ResultSet::new();
-                                                                        narrowed.insert(bound);
-                                                                        rs.intersect_with(
-                                                                            &narrowed,
-                                                                        );
+                                                                        if rs.mode == ResultSetMode::Empty {
+                                                                            rs.insert(bound);
+                                                                        } else {
+                                                                            let mut narrowed = ResultSet::new();
+                                                                            narrowed.insert(bound);
+                                                                            rs.intersect_with(&narrowed);
+                                                                        }
                                                                     }
                                                                 }
                                                             }
                                                         } else {
                                                             let key = vname.to_string();
-                                                            if let Entry::Vacant(entry) =
-                                                                variables.entry(key.clone())
-                                                            {
-                                                                // Bind when not present (insert or recall)
-                                                                let mut rs = ResultSet::new();
-                                                                rs.insert(bound);
-                                                                entry.insert(rs);
-                                                            } else if is_insert {
-                                                                // Intersect existing with this bound only for inserted variables
-                                                                if let Entry::Occupied(mut entry) =
-                                                                    variables.entry(key)
-                                                                {
+                                                            match variables.entry(key.clone()) {
+                                                                Entry::Vacant(entry) => {
+                                                                    // Bind when not present (insert or recall)
+                                                                    let mut rs = ResultSet::new();
+                                                                    rs.insert(bound);
+                                                                    entry.insert(rs);
+                                                                }
+                                                                Entry::Occupied(mut entry) => {
                                                                     let rs = entry.get_mut();
-                                                                    let mut narrowed =
-                                                                        ResultSet::new();
-                                                                    narrowed.insert(bound);
-                                                                    rs.intersect_with(&narrowed);
+                                                                    if rs.mode == ResultSetMode::Empty {
+                                                                        // Bind empty recall var
+                                                                        rs.insert(bound);
+                                                                    } else {
+                                                                        // Intersect existing with this bound only for inserted variables
+                                                                        let mut narrowed = ResultSet::new();
+                                                                        narrowed.insert(bound);
+                                                                        rs.intersect_with(&narrowed);
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-                                            // Explicit support for the example: if this clause asked for wife (+w), bind that from the wife role
-                                            if roles.contains(&"wife")
-                                                && local_variables.iter().any(|t| *t == "w")
-                                            {
-                                                for id in cands.iter() {
-                                                    let bound = {
-                                                        let lk = self
-                                                            .database
-                                                            .posit_thing_to_appearance_set_lookup();
-                                                        let guard = lk.lock().unwrap();
-                                                        let appset = guard.get(&id).unwrap();
-                                                        appset
-                                                            .appearances()
-                                                            .iter()
-                                                            .find(|a| a.role().name() == "wife")
-                                                            .map(|a| a.thing())
-                                                    };
-                                                    if let Some(b) = bound {
-                                                        match variables.entry("w".to_string()) {
-                                                            Entry::Vacant(entry) => {
-                                                                let mut rs = ResultSet::new();
-                                                                rs.insert(b);
-                                                                entry.insert(rs);
-                                                            }
-                                                            Entry::Occupied(mut entry) => {
-                                                                entry.get_mut().insert(b);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            // Explicit support for the example: if this clause asked for husband (h), bind that from the husband role
-                                            if roles.contains(&"husband")
-                                                && local_variables.iter().any(|t| *t == "h")
-                                            {
-                                                for id in cands.iter() {
-                                                    let bound = {
-                                                        let lk = self
-                                                            .database
-                                                            .posit_thing_to_appearance_set_lookup();
-                                                        let guard = lk.lock().unwrap();
-                                                        let appset = guard.get(&id).unwrap();
-                                                        appset
-                                                            .appearances()
-                                                            .iter()
-                                                            .find(|a| a.role().name() == "husband")
-                                                            .map(|a| a.thing())
-                                                    };
-                                                    if let Some(b) = bound {
-                                                        match variables.entry("h".to_string()) {
-                                                            Entry::Vacant(entry) => {
-                                                                let mut rs = ResultSet::new();
-                                                                rs.insert(b);
-                                                                entry.insert(rs);
-                                                            }
-                                                            Entry::Occupied(mut entry) => {
-                                                                entry.get_mut().insert(b);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                            // All identity variables are handled generically; no role-specific special-cases here.
                                         }
-                                        // Special-case filter: if roles == {"posit","ascertains"}, keep only p with an ascertains referencing it
-                                        if roles.len() == 2
-                                            && roles.contains(&"posit")
-                                            && roles.contains(&"ascertains")
-                                        {
-                                            if let Some(rs) = variables.get("p") {
-                                                // Candidate ascertains posits
-                                                let mut asc_cands: Option<RoaringTreemap> = None;
-                                                for r in ["posit", "ascertains"].iter() {
-                                                    let rt = {
-                                                        let rk = self.database.role_keeper();
-                                                        let rk_guard = rk.lock().unwrap();
-                                                        rk_guard.get(r).role()
-                                                    };
-                                                    let bm_clone = {
-                                                        let lk = self
-                                                            .database
-                                                            .role_to_posit_thing_lookup();
-                                                        let guard = lk.lock().unwrap();
-                                                        guard.lookup(&rt).clone()
-                                                    };
-                                                    asc_cands = Some(match asc_cands {
-                                                        None => bm_clone,
-                                                        Some(mut acc) => {
-                                                            acc &= &bm_clone;
-                                                            acc
-                                                        }
-                                                    });
-                                                }
-                                                let asc =
-                                                    asc_cands.unwrap_or_else(RoaringTreemap::new);
-                                                // Build filtered p-set
-                                                let mut new_p = ResultSet::new();
-                                                let mut each_p = |p_id: Thing| {
-                                                    let mut ok = false;
-                                                    for a_id in asc.iter() {
-                                                        let aset = {
-                                                            let lk = self.database.posit_thing_to_appearance_set_lookup();
-                                                            let guard = lk.lock().unwrap();
-                                                            Arc::clone(guard.get(&a_id).unwrap())
-                                                        };
-                                                        if aset.appearances().iter().any(|ap| {
-                                                            ap.role().name() == "posit"
-                                                                && ap.thing() == p_id
-                                                        }) {
-                                                            ok = true;
-                                                            break;
-                                                        }
-                                                    }
-                                                    if ok {
-                                                        new_p.insert(p_id);
-                                                    }
-                                                };
-                                                match rs.mode {
-                                                    ResultSetMode::Thing => {
-                                                        each_p(rs.thing.unwrap())
-                                                    }
-                                                    ResultSetMode::Multi => {
-                                                        for p in rs.multi.as_ref().unwrap().iter() {
-                                                            each_p(p);
-                                                        }
-                                                    }
-                                                    ResultSetMode::Empty => {}
-                                                }
-                                                if let Entry::Occupied(mut e) =
-                                                    variables.entry("p".to_string())
-                                                {
-                                                    *e.get_mut() = new_p;
-                                                }
-                                            }
-                                        }
+                                        // No role-specific special-case filters; recall variables act as join filters generically.
                                     }
                                 }
                             }
@@ -1393,6 +1313,10 @@ impl<'db, 'en> Engine<'db, 'en> {
                             }
                             _ => println!("Unknown return structure: {:?}", structure),
                         }
+                    }
+                    // If any clause failed, emit nothing for this search (sequential filter semantics)
+                    if any_clause_failed {
+                        return;
                     }
                     // Generalized projection: build rows from requested variables using per-variable candidate sets when available.
                     if !returns.is_empty() {
@@ -1669,9 +1593,12 @@ impl<'db, 'en> Engine<'db, 'en> {
                                 }
                             }
                         };
+                        // Drive emission from all identity variables referenced in this search
                         let mut driving = ResultSet::new();
-                        for candidate in ["w", "h", "idw", "idh"].iter() {
-                            if let Some(rs) = variables.get(*candidate) {
+                        for (name, rs) in variables.iter() {
+                            if active_vars.contains(name)
+                                && variable_kinds.get(name) == Some(&VarKind::Identity)
+                            {
                                 driving |= rs;
                             }
                         }
