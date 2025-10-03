@@ -27,6 +27,7 @@ All constructs follow a keeper pattern for canonical storage and deduplication u
 - Run: prefer `cargo run` (binary reads `bareclad.json`).
 - Config (`bareclad.json`):
 	- `database_file_and_path`: SQLite file path (or create if missing).
+	- `enable_persistence`: `true|false` to enable/disable file-based persistence at runtime. When false, no writes occur.
 	- `recreate_database_on_startup`: `true|false` to remove the DB file at startup.
 	- `traqula_file_to_run_on_startup`: path to a Traqula script executed on boot.
 - Debug: in debug builds the binary prints construct counts and role→datatype partitions after running the startup script.

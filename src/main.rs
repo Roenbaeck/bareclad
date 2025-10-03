@@ -21,6 +21,10 @@ fn main() {
     let settings_lookup: HashMap<String, String> =
         temp.into_iter().map(|(k, v)| (k, v.to_string())).collect();
     let database_file_and_path = settings_lookup.get("database_file_and_path").unwrap();
+    let enable_persistence = settings_lookup
+        .get("enable_persistence")
+        .map(|v| v == "true")
+        .unwrap_or(true);
     let recreate_database_on_startup =
         settings_lookup.get("recreate_database_on_startup").unwrap() == "true";
     if recreate_database_on_startup {
@@ -34,12 +38,17 @@ fn main() {
             }
         }
     }
-    let sqlite = Connection::open(database_file_and_path).unwrap();
-    println!(
-        "The path to the database file is '{}'.",
-        sqlite.path().unwrap()
-    );
-    let persistor = Persistor::new(&sqlite);
+    let persistor = if enable_persistence {
+        let sqlite = Connection::open(database_file_and_path).unwrap();
+        println!(
+            "The path to the database file is '{}'.",
+            sqlite.path().unwrap()
+        );
+        Persistor::new(&sqlite)
+    } else {
+        println!("Persistence disabled (no SQLite file will be used).");
+        Persistor::new_no_persistence()
+    };
     let bareclad = Database::new(persistor);
     // Wrap database in Arc so it can be shared with the threaded interface
     let db = Arc::new(bareclad);

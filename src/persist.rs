@@ -109,6 +109,76 @@ impl Persistor {
         Persistor { db_path, seen_data_types: Vec::new() }
     }
 
+    /// Create a file-backed persistor given a filesystem path; opens a connection to initialize schema and records the path for later calls.
+    pub fn new_from_file(path: &str) -> Persistor {
+        let conn = Connection::open(path).unwrap();
+        // Enable WAL for better concurrency on file-backed DBs
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
+        conn
+            .execute_batch(
+                "
+            create table if not exists Thing (
+                Thing_Identity integer not null, 
+                constraint unique_and_referenceable_Thing_Identity primary key (
+                    Thing_Identity
+                )
+            ) STRICT;
+            create table if not exists Role (
+                Role_Identity integer not null,
+                Role text not null,
+                Reserved integer not null,
+                constraint Role_is_Thing foreign key (
+                    Role_Identity
+                ) references Thing(Thing_Identity),
+                constraint referenceable_Role_Identity primary key (
+                    Role_Identity
+                ),
+                constraint unique_Role unique (
+                    Role
+                )
+            ) STRICT;
+            create table if not exists DataType (
+                DataType_Identity integer not null,
+                DataType text not null,
+                constraint referenceable_DataType_Identity primary key (
+                    DataType_Identity
+                ),
+                constraint unique_DataType unique (
+                    DataType
+                )
+            ) STRICT;
+            create table if not exists Posit (
+                Posit_Identity integer not null,
+                AppearanceSet text not null,
+                AppearingValue any null, 
+                ValueType_Identity integer not null, 
+                AppearanceTime any null,
+                constraint Posit_is_Thing foreign key (
+                    Posit_Identity
+                ) references Thing(Thing_Identity),
+                constraint ValueType_is_DataType foreign key (
+                    ValueType_Identity
+                ) references DataType(DataType_Identity),
+                constraint referenceable_Posit_Identity primary key (
+                    Posit_Identity
+                ),
+                constraint unique_Posit unique (
+                    AppearanceSet,
+                    AppearingValue,
+                    AppearanceTime
+                )
+            ) STRICT;
+            ",
+            )
+            .unwrap();
+        Persistor { db_path: Some(path.to_string()), seen_data_types: Vec::new() }
+    }
+
+    /// Create a persistor that performs no persistence at runtime (no file I/O).
+    pub fn new_no_persistence() -> Persistor {
+        Persistor { db_path: None, seen_data_types: Vec::new() }
+    }
+
     /// Helper: run an operation with a Connection. For file-backed databases, opens a fresh
     /// connection per call to avoid sharing Connection across threads. For in-memory, falls back
     /// to the primary connection created by the caller.
