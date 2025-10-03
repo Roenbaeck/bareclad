@@ -55,6 +55,11 @@ All constructs follow a keeper pattern for canonical storage and deduplication u
 - AppearanceSets are serialized as pipe-separated `thing_id,role_id` pairs in natural order.
 - SQLite tables use `STRICT` mode; WAL is enabled when file-backed.
 
+### Operational persistence behavior
+- Startup: The SQLite database is read once to (re)hydrate the in-memory `Database` (keepers, lookups, generator). After this, the in-memory engine is the source of truth for reads.
+- Writes: Persistence writes occur only on "add" operations for previously unseen constructs (roles, posits). Updates are idempotent and effectively serialized.
+- Concurrency stance: Because writes are logically serialized and reads are served from memory, it is acceptable (and simpler) to keep the `Persistor` serialized behind a single owner/lock instead of making it fully `Send + Sync`.
+
 ### DataType maintenance
 When adding a new `DataType` implementation:
 - Pick a stable, unused numeric `UID` and name string.
@@ -69,8 +74,11 @@ When adding a new `DataType` implementation:
 - Avoid premature allocation by relying on `ResultSetMode` and in-place roaring operations.
 
 ## Concurrency and Interface
-- `interface.rs` provides a simple thread-per-query `QueryInterface` with cooperative cancellation and optional streaming via channels.
-- `Persistor` opens a fresh SQLite connection per call for file-backed DBs to avoid sharing a `Connection` across threads; in-memory uses the primary connection.
+- `interface.rs` provides a minimal query interface with cooperative cancellation and optional streaming via channels.
+- Recommended deployment: a single worker thread that owns the `Database` and serializes query execution. REST or other frontends enqueue scripts to this worker and optionally receive streamed results.
+	- Rationale: writes are serialized anyway and reads are in-memory, so a single owner avoids `Send/Sync` requirements on the SQLite connection while preserving correctness.
+- For file-backed DBs, the `Persistor` can open a fresh SQLite connection per call (WAL enabled) when needed, but with a single worker most writes still occur sequentially.
+- For in-memory DBs, use the primary connection owned by the worker.
 - Engine cancellation is coarse (between commands); long-running commands may not be interruptible yet.
 
 ## Error Handling

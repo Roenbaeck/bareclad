@@ -29,26 +29,21 @@
 //! could propagate a domain error type instead.
 // used for persistence
 use rusqlite::{Connection, Error, params};
-use std::marker::PhantomData;
 
 // our own stuff
 use crate::construct::{Appearance, AppearanceSet, Database, Posit, Role, Thing};
 use crate::datatype::{DataType, Decimal, JSON, Time};
 
 // ------------- Persistence -------------
-pub struct Persistor<'db> {
-    /// File path of the SQLite database, if file-backed. If None, using in-memory.
+pub struct Persistor {
+    /// File path of the SQLite database, if file-backed. If None, using in-memory (runtime writes/restores are no-ops).
     db_path: Option<String>,
-    /// Primary connection used for setup and for in-memory mode.
-    primary: &'db Connection,
     /// Cache of data type identifiers already inserted into `DataType`.
     seen_data_types: Vec<u8>,
-    /// Marker to keep prior lifetime parameter in type signatures using Persistor<'db>.
-    _phantom: PhantomData<&'db ()>,
 }
-impl<'db> Persistor<'db> {
+impl Persistor {
     /// Creates (and if needed migrates) the underlying schema.
-    pub fn new<'connection>(connection: &'connection Connection) -> Persistor<'connection> {
+    pub fn new(connection: &Connection) -> Persistor {
         // Enable WAL for better concurrency on file-backed DBs (ignored if in-memory)
         let _ = connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         connection
@@ -111,27 +106,28 @@ impl<'db> Persistor<'db> {
 
         // Record the database path (if any) for opening per-call connections safely.
         let db_path = connection.path().map(|p| p.to_string());
-        Persistor { db_path, primary: connection, seen_data_types: Vec::new(), _phantom: PhantomData }
+        Persistor { db_path, seen_data_types: Vec::new() }
     }
 
     /// Helper: run an operation with a Connection. For file-backed databases, opens a fresh
     /// connection per call to avoid sharing Connection across threads. For in-memory, falls back
     /// to the primary connection created by the caller.
-    fn with_conn<T>(&self, mut op: impl FnMut(&Connection) -> T) -> T {
+    fn with_conn<T>(&self, mut op: impl FnMut(&Connection) -> T) -> Option<T> {
         if let Some(ref path) = self.db_path {
             let conn = Connection::open(path).unwrap();
             // Busy timeout helps under concurrent writes
             let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
-            op(&conn)
+            Some(op(&conn))
         } else {
-            op(self.primary)
+            // In-memory mode: no shared path to reopen; treat persistence as a no-op at runtime
+            None
         }
     }
     /// Persist a thing identity if not already present.
     /// Returns true if the record already existed.
     pub fn persist_thing(&mut self, thing: &Thing) -> bool {
         let mut existing = false;
-        self.with_conn(|conn| {
+        let _ = self.with_conn(|conn| {
             match conn
             .prepare("select Thing_Identity from Thing where Thing_Identity = ?")
             .unwrap()
@@ -159,7 +155,7 @@ impl<'db> Persistor<'db> {
     /// Persist a role row by unique role name. Returns true if already present.
     pub fn persist_role(&mut self, role: &Role) -> bool {
         let mut existing = false;
-        self.with_conn(|conn| {
+        let _ = self.with_conn(|conn| {
             match conn
             .prepare("select Role_Identity from Role where Role = ?")
             .unwrap()
@@ -197,7 +193,7 @@ impl<'db> Persistor<'db> {
         let apperance_set_as_text = appearances.join("|");
         let mut existing = false;
         // Existence check
-        self.with_conn(|conn| {
+        let _ = self.with_conn(|conn| {
             match conn
             .prepare("select Posit_Identity from Posit where AppearanceSet = ? and AppearingValue = ? and AppearanceTime = ?")
             .unwrap()
@@ -227,7 +223,7 @@ impl<'db> Persistor<'db> {
                 self.seen_data_types.push(posit.time().identifier());
             }
             // Perform inserts
-            self.with_conn(|conn| {
+            let _ = self.with_conn(|conn| {
                 if need_value_dt {
                     conn.prepare("insert or ignore into DataType (DataType_Identity, DataType) values (?, ?)")
                         .unwrap()
@@ -250,27 +246,35 @@ impl<'db> Persistor<'db> {
     }
     /// Rehydrate all thing identities into the in-memory generator.
     pub fn restore_things(&mut self, db: &Database) {
-        let mut stmt = self.primary.prepare("select Thing_Identity from Thing").unwrap();
-        let rows = stmt.query_map([], |row| Ok(row.get::<_, Thing>(0).unwrap())).unwrap();
-        for thing in rows {
-            db.thing_generator().lock().unwrap().retain(thing.unwrap());
+        if let Some(ref path) = self.db_path {
+            let conn = Connection::open(path).unwrap();
+            let mut stmt = conn.prepare("select Thing_Identity from Thing").unwrap();
+            let rows = stmt.query_map([], |row| Ok(row.get::<_, Thing>(0).unwrap())).unwrap();
+            for thing in rows {
+                db.thing_generator().lock().unwrap().retain(thing.unwrap());
+            }
         }
     }
     /// Rehydrate all roles into the in-memory keeper.
     pub fn restore_roles(&mut self, db: &Database) {
-        let mut stmt = self.primary.prepare("select Role_Identity, Role, Reserved from Role").unwrap();
-        let rows = stmt
-            .query_map([], |row| Ok(Role::new(row.get(0).unwrap(), row.get(1).unwrap(), row.get(2).unwrap())))
-            .unwrap();
-        for role in rows {
-            db.keep_role(role.unwrap());
+        if let Some(ref path) = self.db_path {
+            let conn = Connection::open(path).unwrap();
+            let mut stmt = conn.prepare("select Role_Identity, Role, Reserved from Role").unwrap();
+            let rows = stmt
+                .query_map([], |row| Ok(Role::new(row.get(0).unwrap(), row.get(1).unwrap(), row.get(2).unwrap())))
+                .unwrap();
+            for role in rows {
+                db.keep_role(role.unwrap());
+            }
         }
     }
     /// Rehydrate all posits (including nested appearance sets) into memory.
     ///
     /// Appearance sets are parsed from their serialized pipe-separated form.
     pub fn restore_posits(&mut self, db: &Database) {
-        let mut stmt = self.primary
+        if self.db_path.is_none() { return; }
+        let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
+        let mut stmt = conn
             .prepare(
                 "select p.Posit_Identity, p.AppearanceSet, p.AppearingValue, v.DataType as ValueType, p.AppearanceTime from Posit p join DataType v on v.DataType_Identity = p.ValueType_Identity",
             )

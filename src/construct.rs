@@ -512,7 +512,7 @@ impl<K: Eq + Hash, H: BuildHasher + Default> ThingLookup<K, H> {
 
 // ------------- Database -------------
 // This sets up the database with the necessary structures
-pub struct Database<'db> {
+pub struct Database {
     // owns a thing generator
     pub thing_generator: Arc<Mutex<ThingGenerator>>,
     // owns keepers for the available constructs
@@ -535,11 +535,11 @@ pub struct Database<'db> {
     /// Type-erased index: posit thing -> its time (for generic time filtering)
     pub posit_time_lookup: Arc<Mutex<HashMap<Thing, Time, ThingHasher>>>,
     // responsible for the the persistence layer
-    pub persistor: Arc<Mutex<Persistor<'db>>>,
+    pub persistor: Arc<Mutex<Persistor>>,
 }
 
-impl<'db> Database<'db> {
-    pub fn new<'p>(persistor: Persistor<'p>) -> Database<'p> {
+impl Database {
+    pub fn new(persistor: Persistor) -> Database {
         // Create all the stuff that goes into a database engine
         let thing_generator = ThingGenerator::new();
         let role_keeper = RoleKeeper::new();
@@ -558,7 +558,7 @@ impl<'db> Database<'db> {
         let persistor = persistor;
 
         // Create the database so that we can prime it before returning it
-        let database = Database {
+    let database = Database {
             thing_generator: Arc::new(Mutex::new(thing_generator)),
             role_keeper: Arc::new(Mutex::new(role_keeper)),
             appearance_keeper: Arc::new(Mutex::new(appearance_keeper)),

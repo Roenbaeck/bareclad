@@ -53,7 +53,9 @@ fn main() {
     );
     let traqula_content = read_to_string(traqula_file_to_run_on_startup).unwrap();
     // Use the interface submission method (currently executes synchronously under the hood)
-    let _handle = interface.start_query(traqula_content, QueryOptions { stream_results: false, timeout: None });
+    let handle = interface.start_query(traqula_content, QueryOptions { stream_results: false, timeout: None });
+    // Wait for the startup script to finish before printing diagnostics
+    handle.join();
     if cfg!(debug_assertions) {
         println!(
             "Kept roles: {}",

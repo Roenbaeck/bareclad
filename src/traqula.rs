@@ -490,12 +490,12 @@ use pest_derive::Parser;
 struct TraqulaParser;
 
 /// Execution engine binding a parsed Traqula script to a concrete database.
-pub struct Engine<'db, 'en> {
-    database: &'en Database<'db>,
+pub struct Engine<'en> {
+    database: &'en Database,
 }
-impl<'db, 'en> Engine<'db, 'en> {
+impl<'en> Engine<'en> {
     /// Create a new engine borrowing the provided database.
-    pub fn new(database: &'en Database<'db>) -> Self {
+    pub fn new(database: &'en Database) -> Self {
         Self { database }
     }
     /// Handle an `add role` command.
@@ -1213,7 +1213,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                         // Bind local variables from appearance roles (e.g., +w with role "wife")
                                         if !local_variables.is_empty() {
                                             for id in cands.iter() {
-                                                let appset = {
+                                                let appset: Arc<crate::construct::AppearanceSet> = {
                                                     let lk = self.database.posit_thing_to_appearance_set_lookup();
                                                     let guard = lk.lock().unwrap();
                                                     Arc::clone(guard.get(&id).unwrap())

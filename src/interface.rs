@@ -62,14 +62,14 @@ impl Default for QueryOptions {
 }
 
 /// Registry managing query lifecycles.
-pub struct QueryInterface<'db> {
-    db: Arc<Database<'db>>, // shared database
+pub struct QueryInterface {
+    db: Arc<Database>, // shared database
     next_id: Mutex<u64>,
     active: Mutex<HashMap<QueryId, CancelToken>>, // for external cancellation
 }
 
-impl<'db> QueryInterface<'db> {
-    pub fn new(db: Arc<Database<'db>>) -> Self {
+impl QueryInterface {
+    pub fn new(db: Arc<Database>) -> Self {
         Self { db, next_id: Mutex::new(0), active: Mutex::new(HashMap::new()) }
     }
 
@@ -89,29 +89,30 @@ impl<'db> QueryInterface<'db> {
             .insert(id, cancel.clone());
 
         // Optional results channel (not currently used by Engine which prints directly)
-        let (_tx, rx) = if options.stream_results {
+        let (tx, rx) = if options.stream_results {
             let (tx, rx) = mpsc::channel();
             (Some(tx), Some(rx))
         } else {
             (None, None)
         };
 
-        // Execute synchronously to avoid threading constraints with SQLite connections.
-        let engine = Engine::new(&self.db);
-        let started = Instant::now();
-        // Cooperative cancel/timeout are no-ops here since Engine::execute is currently monolithic
-        // but keep the structure for future integration.
-        if let Some(dur) = options.timeout {
-            if dur.is_zero() {
-                // immediate timeout -> skip
-            } else {
-                engine.execute(&script);
+        // Execute on a background thread; Persistor performs serialized writes internally.
+        let db = Arc::clone(&self.db);
+        let cancel_for_thread = cancel.clone();
+        let timeout = options.timeout;
+        let join = std::thread::spawn(move || {
+            let engine = Engine::new(&db);
+            // For now, execute monolithically; cancellation checked pre/post.
+            if let Some(d) = timeout {
+                if d.is_zero() || cancel_for_thread.is_cancelled() {
+                    return;
+                }
             }
-        } else {
             engine.execute(&script);
-        }
+            let _ = tx; // placeholder to avoid unused warning when not streaming
+        });
 
-        QueryHandle { id, cancel, started, join: None, results: rx }
+        QueryHandle { id, cancel, started: Instant::now(), join: Some(join), results: rx }
     }
 
     /// Run a Traqula script synchronously on the current thread.
