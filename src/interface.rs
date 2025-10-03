@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::thread::{self, JoinHandle};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use std::sync::mpsc::{self, Sender, Receiver};
+use std::sync::mpsc::{self, Receiver};
 
 use crate::construct::Database;
 use crate::traqula::Engine;
@@ -83,37 +83,45 @@ impl<'db> QueryInterface<'db> {
     pub fn start_query(&self, script: String, options: QueryOptions) -> QueryHandle {
         let id = self.allocate_id();
         let cancel = CancelToken::new();
-        let cancel_for_registry = cancel.clone();
-        self.active.lock().unwrap().insert(id, cancel_for_registry);
+        self.active
+            .lock()
+            .unwrap()
+            .insert(id, cancel.clone());
 
-        let (tx, rx) = if options.stream_results { let (tx, rx) = mpsc::channel(); (Some(tx), Some(rx)) } else { (None, None) };
+        // Optional results channel (not currently used by Engine which prints directly)
+        let (_tx, rx) = if options.stream_results {
+            let (tx, rx) = mpsc::channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
 
-        let db = Arc::clone(&self.db);
-        let cancel_for_thread = cancel.clone();
-        let timeout = options.timeout;
-        let join = thread::spawn(move || {
-            let engine = Engine::new(&db);
-            // Simple cooperative cancel by timeout
-            let started = Instant::now();
-            // Output adapter: either send to channel or print
-            struct Sink { tx: Option<Sender<Row>> }
-            impl Sink { fn emit(&self, s: String) { if let Some(ref tx) = self.tx { let _ = tx.send(Row(s)); } else { println!("{}", s); } } }
-            let sink = Sink { tx };
-
-            // For now we don't thread cancellation through Engine; as a stopgap, we split the script
-            // and execute linearly, checking timeout in-between commands.
-            let parts = script.split(';');
-            for part in parts {
-                let p = part.trim();
-                if p.is_empty() { continue; }
-                if cancel_for_thread.is_cancelled() { break; }
-                if let Some(d) = timeout { if started.elapsed() > d { break; } }
-                // Execute one command chunk
-                engine.execute(p);
+        // Execute synchronously to avoid threading constraints with SQLite connections.
+        let engine = Engine::new(&self.db);
+        let started = Instant::now();
+        // Cooperative cancel/timeout are no-ops here since Engine::execute is currently monolithic
+        // but keep the structure for future integration.
+        if let Some(dur) = options.timeout {
+            if dur.is_zero() {
+                // immediate timeout -> skip
+            } else {
+                engine.execute(&script);
             }
-        });
+        } else {
+            engine.execute(&script);
+        }
 
-        QueryHandle { id, cancel, started: Instant::now(), join: Some(join), results: rx }
+        QueryHandle { id, cancel, started, join: None, results: rx }
+    }
+
+    /// Run a Traqula script synchronously on the current thread.
+    ///
+    /// This avoids any `Send`/`Sync` constraints on the underlying database/persistence
+    /// and is appropriate for one-off startup scripts or environments using in-memory
+    /// SQLite where cross-thread connections are not viable.
+    pub fn run_sync(&self, script: &str) {
+        let engine = Engine::new(&self.db);
+        engine.execute(script);
     }
 
     /// Cancel a query by id.

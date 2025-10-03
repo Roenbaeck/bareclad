@@ -8,7 +8,8 @@ use std::fs::{read_to_string, remove_file};
 
 use bareclad::construct::Database;
 use bareclad::persist::Persistor;
-use bareclad::traqula::Engine;
+use bareclad::interface::{QueryInterface, QueryOptions};
+use std::sync::Arc;
 use rusqlite::Connection;
 
 fn main() {
@@ -40,7 +41,9 @@ fn main() {
     );
     let persistor = Persistor::new(&sqlite);
     let bareclad = Database::new(persistor);
-    let engine = Engine::new(&bareclad);
+    // Wrap database in Arc so it can be shared with the threaded interface
+    let db = Arc::new(bareclad);
+    let interface = QueryInterface::new(Arc::clone(&db));
     let traqula_file_to_run_on_startup = settings_lookup
         .get("traqula_file_to_run_on_startup")
         .unwrap();
@@ -49,27 +52,28 @@ fn main() {
         traqula_file_to_run_on_startup
     );
     let traqula_content = read_to_string(traqula_file_to_run_on_startup).unwrap();
-    engine.execute(&traqula_content);
+    // Use the interface submission method (currently executes synchronously under the hood)
+    let _handle = interface.start_query(traqula_content, QueryOptions { stream_results: false, timeout: None });
     if cfg!(debug_assertions) {
         println!(
             "Kept roles: {}",
-            bareclad.role_keeper().lock().unwrap().len()
+            db.role_keeper().lock().unwrap().len()
         );
         println!(
             "Kept appearances: {}",
-            bareclad.appearance_keeper().lock().unwrap().len()
+            db.appearance_keeper().lock().unwrap().len()
         );
         println!(
             "Kept appearance sets: {}",
-            bareclad.appearance_set_keeper().lock().unwrap().len()
+            db.appearance_set_keeper().lock().unwrap().len()
         );
         println!(
             "Kept posits: {}",
-            bareclad.posit_keeper().lock().unwrap().len()
+            db.posit_keeper().lock().unwrap().len()
         );
         println!(
             "Role->data type partitions: {:?}",
-            bareclad.role_name_to_data_type_lookup().lock().unwrap()
+            db.role_name_to_data_type_lookup().lock().unwrap()
         );
     }
 }
