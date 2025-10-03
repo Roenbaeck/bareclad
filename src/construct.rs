@@ -51,7 +51,8 @@ use std::sync::{Arc, Mutex};
 /// Internal heterogeneous map keyed by `TypeId` used for storing per-value
 /// type bimap indices for posits.
 struct TypeMap {
-    map: HashMap<TypeId, Box<dyn Any>>,
+    // Stored values must be Send + Sync so keepers using TypeMap can be shared across threads safely.
+    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl TypeMap {
@@ -61,13 +62,13 @@ impl TypeMap {
         }
     }
 
-    pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
+    pub fn get_mut<T: 'static + Send + Sync>(&mut self) -> Option<&mut T> {
         self.map
             .get_mut(&TypeId::of::<T>())
             .and_then(|b| b.downcast_mut::<T>())
     }
 
-    pub fn insert<T: 'static>(&mut self, value: T) {
+    pub fn insert<T: 'static + Send + Sync>(&mut self, value: T) {
         self.map.insert(TypeId::of::<T>(), Box::new(value));
     }
 }
