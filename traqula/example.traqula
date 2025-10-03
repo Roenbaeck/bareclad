@@ -60,10 +60,10 @@ return
     n, t;
 
 search +p [{(*, wife), (+h, husband)}, "married", *], 
-          [{(p, posit), (*, ascertains)}, *, *], 
+          [{(p, posit), (*, ascertains)}, +c, +at], 
           [{(h, name)}, +n, +t]
 return
-    n, t;
+    n, t, c, at;
 
 /* Testing error handling: missing quotes around date */
 /*

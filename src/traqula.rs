@@ -36,7 +36,7 @@
 //! NOTE: The search functionality is still evolving; many captured variables
 //! are currently parsed but not yet materialized into final query outputs.
 //! Debug logging is gated behind `cfg(debug_assertions)` where appropriate.
-use crate::construct::{Appearance, AppearanceSet, Database, OtherHasher, Thing};
+use crate::construct::{Database, OtherHasher, Thing};
 use crate::datatype::{Certainty, Decimal, JSON, Time};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -780,8 +780,6 @@ impl<'db, 'en> Engine<'db, 'en> {
     fn search(&self, command: Pair<Rule>, variables: &mut Variables) {
         // Track variables referenced in this search command to guide projection
         let mut active_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
-        // Track candidate single-role posits (filtered by any time constraint) to drive return of value/time
-        let mut single_role_candidate_posits: Option<RoaringTreemap> = None;
         // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
         let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
         // Track candidate posits per bound value variable name (e.g., n, name_val)
@@ -795,6 +793,29 @@ impl<'db, 'en> Engine<'db, 'en> {
             Value,
             Time,
         }
+        // A single binding row under construction during pattern expansion.
+        // For now this is a scaffold; integration will replace current projection logic.
+        #[derive(Debug, Clone)]
+        #[allow(dead_code)]
+        struct Binding {
+            identities: HashMap<String, Thing>,
+            posit_vars: HashMap<String, Thing>, // posit identity variables (e.g. p)
+            value_slots: HashMap<String, (Thing /* posit id */, VarKind)>, // maps var -> (posit providing it, kind)
+        }
+        impl Binding {
+            #[allow(dead_code)]
+            fn new() -> Self {
+                Binding {
+                    identities: HashMap::new(),
+                    posit_vars: HashMap::new(),
+                    value_slots: HashMap::new(),
+                }
+            }
+        }
+    // All accumulated bindings (multiplicity preserving).
+    let mut bindings: Vec<Binding> = Vec::new();
+    #[allow(unused_mut)]
+    let mut enumeration_started = false; // tracks if bindings vector has been seeded
     let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
     // Track whether any clause in this search failed (no candidates after constraints)
     let mut any_clause_failed: bool = false;
@@ -835,6 +856,8 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             if let Some(v) = &variable {
                                                 active_vars
                                                     .insert(v.trim_start_matches('+').to_string());
+                                                // Treat posit variables as identity-like so they can be returned
+                                                variable_kinds.insert(v.trim_start_matches('+').to_string(), VarKind::Identity);
                                             }
                                             //println!("Insert: {}", &variable.as_ref().unwrap());
                                         }
@@ -1161,9 +1184,7 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             }
                                         }
                                         // Remember candidate posits for projection when returning values/times
-                                        if !cands.is_empty() && roles.len() == 1 {
-                                            single_role_candidate_posits = Some(cands.clone());
-                                        }
+                                        // (legacy single-role candidate capture removed)
                                         // If the appearing value used a variable (e.g., +n or n), capture its candidates
                                         if let Some(vname) = _value_as_variable {
                                             value_var_candidates.insert(vname.to_string(), cands.clone());
@@ -1258,6 +1279,85 @@ impl<'db, 'en> Engine<'db, 'en> {
                                             // All identity variables are handled generically; no role-specific special-cases here.
                                         }
                                         // No role-specific special-case filters; recall variables act as join filters generically.
+                                        // ---------------- Binding enumeration (multiplicity preservation) ----------------
+                                        if !cands.is_empty() {
+                                            // Collect identity variable assignments for each candidate posit
+                                            let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
+                                            let aset_guard = aset_lookup.lock().unwrap();
+                                            let mut candidate_info: Vec<(Thing, HashMap<String, Thing>)> = Vec::new();
+                                            for pid in cands.iter() {
+                                                if let Some(appset) = aset_guard.get(&pid) {
+                                                    // First collect per-variable identity maps; union variables may yield multiple maps (one per union member)
+                                                    let mut pending_maps: Vec<HashMap<String, Thing>> = vec![HashMap::new()];
+                                                    for (i, token) in local_variables.iter().enumerate() {
+                                                        if *token == "*" { continue; }
+                                                        let role_name = roles[i];
+                                                        if let Some(thing) = appset.appearances().iter().find(|a| a.role().name() == role_name).map(|a| a.thing()) {
+                                                            if let Some(Some(union_names)) = local_variable_unions.get(i) {
+                                                                // For a union, branch the maps: each union member may independently match this thing.
+                                                                let mut branched: Vec<HashMap<String, Thing>> = Vec::with_capacity(pending_maps.len() * union_names.len());
+                                                                for uname in union_names.iter() {
+                                                                    for existing in pending_maps.iter() {
+                                                                        let mut cloned = existing.clone();
+                                                                        cloned.insert(uname.clone(), thing);
+                                                                        branched.push(cloned);
+                                                                    }
+                                                                }
+                                                                pending_maps = branched;
+                                                            } else {
+                                                                // Skip synthetic union token like "w|h"; only insert real variable names
+                                                                if token.contains('|') { continue; }
+                                                                let vname = token.strip_prefix('+').unwrap_or(token).to_string();
+                                                                for m in pending_maps.iter_mut() { m.insert(vname.clone(), thing); }
+                                                            }
+                                                        }
+                                                    }
+                                                    for id_map in pending_maps.into_iter() { candidate_info.push((pid, id_map)); }
+                                                }
+                                            }
+                                            // Names for value/time/posit variables (strip plus)
+                                            let posit_var_name = variable.as_ref().map(|v| v.strip_prefix('+').unwrap_or(v).to_string());
+                                            let value_var_name = _value_as_variable.map(|v| v.strip_prefix('+').unwrap_or(v).to_string());
+                                            let time_var_name = _time_as_variable.map(|v| v.strip_prefix('+').unwrap_or(v).to_string());
+                                            if !enumeration_started {
+                                                for (pid, id_map) in candidate_info.iter() {
+                                                    let mut b = Binding::new();
+                                                    b.identities.extend(id_map.iter().map(|(k,v)| (k.clone(), *v)));
+                                                    if let Some(ref pn) = posit_var_name { b.posit_vars.insert(pn.clone(), *pid); }
+                                                    if let Some(ref vn) = value_var_name { b.value_slots.insert(vn.clone(), (*pid, VarKind::Value)); }
+                                                    if let Some(ref tn) = time_var_name { b.value_slots.insert(tn.clone(), (*pid, VarKind::Time)); }
+                                                    bindings.push(b);
+                                                }
+                                                enumeration_started = true;
+                                            } else {
+                                                let mut new_bindings: Vec<Binding> = Vec::new();
+                                                for existing in bindings.iter() {
+                                                    for (pid, id_map) in candidate_info.iter() {
+                                                        // Identity compatibility
+                                                        let mut ok = true;
+                                                        for (k, v) in id_map.iter() {
+                                                            if let Some(prev) = existing.identities.get(k) { if prev != v { ok = false; break; } }
+                                                        }
+                                                        if !ok { continue; }
+                                                        // Posit variable compatibility
+                                                        if let Some(ref pn) = posit_var_name { if let Some(prev) = existing.posit_vars.get(pn) { if prev != pid { continue; } } }
+                                                        // Value variable compatibility
+                                                        if let Some(ref vn) = value_var_name { if let Some((prev_pid, _)) = existing.value_slots.get(vn) { if prev_pid != pid { continue; } } }
+                                                        // Time variable compatibility
+                                                        if let Some(ref tn) = time_var_name { if let Some((prev_pid, _)) = existing.value_slots.get(tn) { if prev_pid != pid { continue; } } }
+                                                        // Merge
+                                                        let mut merged = existing.clone();
+                                                        for (k, v) in id_map.iter() { merged.identities.entry(k.clone()).or_insert(*v); }
+                                                        if let Some(ref pn) = posit_var_name { merged.posit_vars.entry(pn.clone()).or_insert(*pid); }
+                                                        if let Some(ref vn) = value_var_name { merged.value_slots.entry(vn.clone()).or_insert((*pid, VarKind::Value)); }
+                                                        if let Some(ref tn) = time_var_name { merged.value_slots.entry(tn.clone()).or_insert((*pid, VarKind::Time)); }
+                                                        new_bindings.push(merged);
+                                                    }
+                                                }
+                                                bindings = new_bindings;
+                                                if bindings.is_empty() { any_clause_failed = true; }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1301,316 +1401,63 @@ impl<'db, 'en> Engine<'db, 'en> {
                 }
                 Rule::return_clause => {
                     let mut returns: Vec<String> = Vec::new();
-                    for structure in clause.into_inner() {
-                        match structure.as_rule() {
-                            Rule::recall => {
-                                if cfg!(debug_assertions) {
-                                    println!("Return recall: {}", structure.as_str());
-                                }
-                                returns.push(
-                                    structure.into_inner().next().unwrap().as_str().to_string(),
-                                );
-                            }
-                            _ => println!("Unknown return structure: {:?}", structure),
-                        }
-                    }
-                    // If any clause failed, emit nothing for this search (sequential filter semantics)
-                    if any_clause_failed {
-                        return;
-                    }
-                    // Generalized projection: build rows from requested variables using per-variable candidate sets when available.
-                    if !returns.is_empty() {
-                        // Preferred path: compute candidate posits from returned value/time variables
-                        let want_value = returns
-                            .iter()
-                            .any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
-                        let want_time = returns
-                            .iter()
-                            .any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
-                        let mut selected: Option<RoaringTreemap> = None;
-                        // Intersect candidates across returned value variables
-                        for v in &returns {
-                            if variable_kinds.get(v) == Some(&VarKind::Value) {
-                                if let Some(bm) = value_var_candidates.get(v) {
-                                    selected = Some(match selected {
-                                        None => bm.clone(),
-                                        Some(mut acc) => {
-                                            acc &= bm;
-                                            acc
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                        // Intersect candidates across returned time variables
-                        for v in &returns {
-                            if variable_kinds.get(v) == Some(&VarKind::Time) {
-                                if let Some(bm) = time_var_candidates.get(v) {
-                                    selected = Some(match selected {
-                                        None => bm.clone(),
-                                        Some(mut acc) => {
-                                            acc &= bm;
-                                            acc
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                        // If nothing selected yet but we do request value/time, fall back to single-role candidates when present
-                        if selected.is_none() && (want_value || want_time) {
-                            if let Some(ref sr) = single_role_candidate_posits {
-                                selected = Some(sr.clone());
-                            }
-                        }
-                        // If we have any selected candidates, apply where filters and emit
-                        if let Some(mut cands) = selected {
-                            if !where_time.is_empty() {
-                                let tk = self.database.posit_time_lookup();
-                                let guard = tk.lock().unwrap();
+                    for structure in clause.into_inner() { if structure.as_rule() == Rule::recall { returns.push(structure.into_inner().next().unwrap().as_str().to_string()); } }
+                    if any_clause_failed { return; }
+                    if enumeration_started {
+                        if !where_time.is_empty() {
+                            let tk = self.database.posit_time_lookup();
+                            let guard_time = tk.lock().unwrap();
+                            bindings.retain(|b| {
                                 for (v, op, tcmp) in &where_time {
-                                    if let Some(var_bitmap) = time_var_candidates.get(v) {
-                                        // Filter that variable's candidates by comparator and intersect with current cands
-                                        let mut filtered = RoaringTreemap::new();
-                                        for pid in var_bitmap.iter() {
-                                            if let Some(pt) = guard.get(&pid) {
-                                                let ok = match op.as_str() {
-                                                    "<" => pt < tcmp,
-                                                    "<=" => pt <= tcmp,
-                                                    ">" => pt > tcmp,
-                                                    ">=" => pt >= tcmp,
-                                                    "==" | "=" => pt == tcmp,
-                                                    _ => false,
-                                                };
-                                                if ok {
-                                                    filtered.insert(pid);
-                                                }
-                                            }
-                                        }
-                                        cands &= &filtered;
-                                    }
+                                    if let Some((pid, VarKind::Time)) = b.value_slots.get(v) {
+                                        if let Some(pt) = guard_time.get(pid) {
+                                            let ok = match op.as_str() { "<" => pt < tcmp, "<=" => pt <= tcmp, ">" => pt > tcmp, ">=" => pt >= tcmp, "==" | "=" => pt == tcmp, _ => false };
+                                            if !ok { return false; }
+                                        } else { return false; }
+                                    } else { return false; }
                                 }
-                            }
-                            let lk = self.database.posit_keeper();
-                            let mut guard = lk.lock().unwrap();
-                            for pid in cands.iter() {
-                                // Narrow type probing using role->data type partitions for this posit's appearance set
-                                let roles = {
-                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
-                                    let guard = lk.lock().unwrap();
-                                    guard.get(&pid).unwrap().roles()
-                                };
-                                let allowed_types = {
-                                    let lk = self.database.role_name_to_data_type_lookup();
-                                    let guard = lk.lock().unwrap();
-                                    guard.lookup(&roles).clone()
-                                };
-                                // Try only the allowed types, in a stable order
-                                if allowed_types.contains("String") {
-                                    if let Some(p) = guard.posit::<String>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("JSON") {
-                                    if let Some(p) = guard.posit::<JSON>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("Decimal") {
-                                    if let Some(p) = guard.posit::<Decimal>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("i64") {
-                                    if let Some(p) = guard.posit::<i64>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("Certainty") {
-                                    if let Some(p) = guard.posit::<Certainty>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("Time") {
-                                    if let Some(p) = guard.posit::<Time>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                            }
-                            // We've emitted based on exact candidates; skip identity-driven projection to avoid duplicates.
-                            continue;
+                                true
+                            });
                         }
-                        // Determine driving identity set via ResultSet union (keeps Thing/Multi compactly)
-                        let emit_row = |who: Thing| {
-                            // Support returning value and/or time per identity based on return variable kinds
-                            let want_value = returns
-                                .iter()
-                                .any(|v| variable_kinds.get(v) == Some(&VarKind::Value));
-                            let want_time = returns
-                                .iter()
-                                .any(|v| variable_kinds.get(v) == Some(&VarKind::Time));
-                            if !want_value && !want_time {
-                                return;
-                            }
-                            // For generic roles: iterate all posits involving this identity and print their values/times
-                            let mut posits = RoaringTreemap::new();
-                            // Collect all appearance sets where this identity appears
-                            let apps: Vec<Arc<Appearance>> = {
-                                let lk = self.database.thing_to_appearance_lookup();
-                                let app_guard = lk.lock().unwrap();
-                                app_guard.lookup(&who).iter().cloned().collect()
-                            };
-                            for ap in apps.into_iter() {
-                                let asets: Vec<Arc<AppearanceSet>> = {
-                                    let lk = self.database.appearance_to_appearance_set_lookup();
-                                    let aset_guard = lk.lock().unwrap();
-                                    aset_guard.lookup(&ap).iter().cloned().collect()
-                                };
-                                for aset in asets.into_iter() {
-                                    let pids: RoaringTreemap = {
-                                        let lk =
-                                            self.database.appearance_set_to_posit_thing_lookup();
-                                        let pos_guard = lk.lock().unwrap();
-                                        pos_guard.lookup(&aset).clone()
-                                    };
-                                    posits |= &pids;
-                                }
-                            }
-                            // Emit values/times for all collected posits, restricted by their role->type partitions
-                            let lk = self.database.posit_keeper();
-                            let mut guard = lk.lock().unwrap();
-                            for pid in posits.iter() {
-                                let roles = {
-                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
-                                    let guard = lk.lock().unwrap();
-                                    guard.get(&pid).unwrap().roles()
-                                };
-                                let allowed_types = {
-                                    let lk = self.database.role_name_to_data_type_lookup();
-                                    let guard = lk.lock().unwrap();
-                                    guard.lookup(&roles).clone()
-                                };
-                                if allowed_types.contains("String") {
-                                    if let Some(p) = guard.posit::<String>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
+                        if bindings.is_empty() { return; }
+                        let posit_keeper = self.database.posit_keeper();
+                        let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
+                        let type_partitions = self.database.role_name_to_data_type_lookup();
+                        let mut pk_guard = posit_keeper.lock().unwrap();
+                        let aset_guard = aset_lookup.lock().unwrap();
+                        let tp_guard = type_partitions.lock().unwrap();
+                        for b in bindings.iter() {
+                            let mut row: Vec<String> = Vec::with_capacity(returns.len());
+                            let mut row_ok = true;
+                            for rv in &returns {
+                                match variable_kinds.get(rv) {
+                                    Some(VarKind::Identity) => {
+                                        if let Some(idt) = b.identities.get(rv) { row.push(format!("{}", idt)); }
+                                        else if let Some(pid) = b.posit_vars.get(rv) { row.push(format!("{}", pid)); }
+                                        else { row_ok = false; break; }
                                     }
-                                }
-                                if allowed_types.contains("JSON") {
-                                    if let Some(p) = guard.posit::<JSON>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
+                                    Some(VarKind::Value) | Some(VarKind::Time) => {
+                                        if let Some((pid, kind)) = b.value_slots.get(rv) {
+                                            if let Some(appset) = aset_guard.get(pid) {
+                                                let roles = appset.roles();
+                                                let allowed = tp_guard.lookup(&roles).clone();
+                                                let mut captured: Option<String> = None;
+                                                if allowed.contains("String") { if let Some(p) = pk_guard.posit::<String>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
+                                                if captured.is_none() && allowed.contains("JSON") { if let Some(p) = pk_guard.posit::<JSON>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
+                                                if captured.is_none() && allowed.contains("Decimal") { if let Some(p) = pk_guard.posit::<Decimal>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
+                                                if captured.is_none() && allowed.contains("i64") { if let Some(p) = pk_guard.posit::<i64>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
+                                                if captured.is_none() && allowed.contains("Certainty") { if let Some(p) = pk_guard.posit::<Certainty>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
+                                                if captured.is_none() && allowed.contains("Time") { if let Some(p) = pk_guard.posit::<Time>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
+                                                if let Some(cell) = captured { row.push(cell); } else { row_ok = false; break; }
+                                            } else { row_ok = false; break; }
+                                        } else { row_ok = false; break; }
                                     }
-                                }
-                                if allowed_types.contains("Decimal") {
-                                    if let Some(p) = guard.posit::<Decimal>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("i64") {
-                                    if let Some(p) = guard.posit::<i64>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("Certainty") {
-                                    if let Some(p) = guard.posit::<Certainty>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
-                                }
-                                if allowed_types.contains("Time") {
-                                    if let Some(p) = guard.posit::<Time>(pid) {
-                                        match (want_value, want_time) {
-                                            (true, true) => println!("{}, {}", p.value(), p.time()),
-                                            (true, false) => println!("{}", p.value()),
-                                            (false, true) => println!("{}", p.time()),
-                                            _ => {}
-                                        }
-                                        continue;
-                                    }
+                                    _ => { row_ok = false; break; }
                                 }
                             }
-                        };
-                        // Drive emission from all identity variables referenced in this search
-                        let mut driving = ResultSet::new();
-                        for (name, rs) in variables.iter() {
-                            if active_vars.contains(name)
-                                && variable_kinds.get(name) == Some(&VarKind::Identity)
-                            {
-                                driving |= rs;
-                            }
+                            if row_ok { println!("{}", row.join(", ")); }
                         }
-                        match driving.mode {
-                            ResultSetMode::Empty => {}
-                            ResultSetMode::Thing => emit_row(driving.thing.unwrap()),
-                            ResultSetMode::Multi => {
-                                for who in driving.multi.as_ref().unwrap().iter() {
-                                    emit_row(who);
-                                }
-                            }
-                        }
+                        return;
                     }
                 }
                 _ => println!("Unknown clause: {:?}", clause),
