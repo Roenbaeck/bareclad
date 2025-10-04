@@ -842,6 +842,8 @@ impl<'en> Engine<'en> {
                         let mut roles = Vec::new();
                         match structure.as_rule() {
                             Rule::posit_search => {
+                                // Track optional per-clause 'as of' time
+                                let mut _as_of_time: Option<Time> = None;
                                 for component in structure.into_inner() {
                                     match component.as_rule() {
                                         Rule::insert => {
@@ -1077,6 +1079,16 @@ impl<'en> Engine<'en> {
                                                 }
                                             }
                                         }
+                                        Rule::as_of_clause => {
+                                            // Parse: as of <constant|time>
+                                            for part in component.into_inner() {
+                                                match part.as_rule() {
+                                                    Rule::constant => { _as_of_time = parse_time_constant(part.as_str()); }
+                                                    Rule::time => { _as_of_time = parse_time(part.as_str()); }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
                                         _ => println!("Unknown component: {:?}", component),
                                     }
                                 }
@@ -1122,6 +1134,7 @@ impl<'en> Engine<'en> {
                                                 any_clause_failed = true;
                                             }
                                         }
+                                        // (as-of moved to after local identity constraints)
                                         // Apply local identity variable constraints to filter candidates (e.g., (w, name) restricts to bound wife)
                                         if !local_variables.is_empty() && !cands.is_empty() {
                                             let lk = self.database.posit_thing_to_appearance_set_lookup();
@@ -1181,6 +1194,38 @@ impl<'en> Engine<'en> {
                                             cands = filtered;
                                             if cands.is_empty() {
                                                 any_clause_failed = true;
+                                            }
+                                        }
+                                        // Optional per-clause 'as of' reduction: keep latest time <= as_of for each appearance set
+                                        if let Some(ref as_of) = _as_of_time {
+                                            if !cands.is_empty() {
+                                                let time_lk = self.database.posit_time_lookup();
+                                                let time_guard = time_lk.lock().unwrap();
+                                                let aset_lk = self.database.posit_thing_to_appearance_set_lookup();
+                                                let aset_guard = aset_lk.lock().unwrap();
+                                                // Map: appearance set ptr address -> (best_time, Vec<Thing>) to keep all ties
+                                                use std::collections::HashMap as StdHashMap;
+                                                let mut best: StdHashMap<usize, (Time, Vec<Thing>)> = StdHashMap::new();
+                                                for pid in cands.iter() {
+                                                    if let Some(pt) = time_guard.get(&pid) {
+                                                        if pt <= as_of {
+                                                            if let Some(aset) = aset_guard.get(&pid) {
+                                                                let key = Arc::as_ptr(aset) as usize;
+                                                                match best.get_mut(&key) {
+                                                                    Some((bt, ids)) => {
+                                                                        if pt > bt { *bt = pt.clone(); ids.clear(); ids.push(pid); }
+                                                                        else if pt == bt { ids.push(pid); }
+                                                                    }
+                                                                    None => { best.insert(key, (pt.clone(), vec![pid])); }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                let mut reduced = RoaringTreemap::new();
+                                                for (_k, (_bt, ids)) in best.into_iter() { for id in ids { reduced.insert(id); } }
+                                                cands = reduced;
+                                                if cands.is_empty() { any_clause_failed = true; }
                                             }
                                         }
                                         // Remember candidate posits for projection when returning values/times
@@ -1534,6 +1579,7 @@ fn friendly_rule_name(rule: Rule) -> &'static str {
         Rule::certainty => "certainty (e.g., 100%)",
         Rule::time => "time literal (e.g., 'YYYY-MM-DD')",
         Rule::constant => "time constant (@NOW/@BOT/@EOT)",
+        Rule::as_of_clause => "as of <time>",
         Rule::comparator => "comparator (<, <=, >, >=, =, ==)",
         _ => "token",
     }

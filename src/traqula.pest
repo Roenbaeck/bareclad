@@ -43,7 +43,7 @@ appearing_value_search = { (wildcard | insert | recall | constant | json | strin
 appearance_time_search = { (wildcard | insert | recall | constant | time) }
 posit_search = { 
     insert? ~ 
-    "[" ~ appearance_set_search ~ "," ~ appearing_value_search ~ "," ~ appearance_time_search ~ "]" 
+    "[" ~ appearance_set_search ~ "," ~ appearing_value_search ~ "," ~ appearance_time_search ~ "]" ~ as_of_clause?
 }
 return_clause = { ^"return" ~ (recall ~ ","?)+ }
 search_clause = { ^"search" ~ (posit_search ~ ","?)+ }
@@ -52,3 +52,6 @@ comparator = { "<=" | ">=" | "<" | ">" | "==" | "=" }
 condition = { recall ~ comparator ~ (constant | time) }
 where_clause = { ^"where" ~ condition ~ ("and" ~ condition)* }
 search = { search_clause ~ where_clause? ~ return_clause ~ ";" }
+
+// Optional per-pattern 'as of' clause
+as_of_clause = { "as of" ~ (constant | time) }

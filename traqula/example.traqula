@@ -24,6 +24,7 @@ add posit [{(p1, posit), (idh, ascertains)}, 100%, @NOW],
           [{(p2, posit), (idh, ascertains)}, -100%, @NOW];
 
 add posit [{(idw, name)}, 42, '2030-12-01'];  
+add posit [{(+new, name)}, "Arfle Barfle Gloop", '2025-12-01'];  
 
 /* From all married couples, that have been ascertained, give me the name values of the wives and 
    the time since when they had that name */
@@ -64,6 +65,21 @@ search +p [{(*, wife), (+h, husband)}, "married", *],
           [{(h, name)}, +n, +t]
 return
     n, t, c, at;
+
+/* As-of variants (latest per pattern at given cut points) */
+search +p [{(+w, wife), (+h, husband)}, "married", *] as of '2012-12-12',
+          [{(p, posit), (*, ascertains)}, +c, +at] as of @NOW,
+          [{(w, name)}, +n, +t] as of @NOW
+return
+    n, t, c, at;
+
+search    [{(+h, name)}, +hn, *],
+          [{(+w, name)}, +wn, *],
+       +p [{(w, wife), (h, husband)}, +s, +t], 
+          [{(p, posit), (*, ascertains)}, *, *] 
+return
+    h, hn, w, wn, s, t;
+
 
 /* Testing error handling: missing quotes around date */
 /*
