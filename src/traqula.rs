@@ -786,6 +786,8 @@ impl<'en> Engine<'en> {
         let mut value_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
         // Parsed where conditions on time variables: var -> (comparator, Time)
         let mut where_time: Vec<(String, String, Time)> = Vec::new();
+        // Parsed where conditions between time variables: (var1, comparator, var2)
+        let mut where_time_var: Vec<(String, String, String)> = Vec::new();
         // Track kinds of variables seen in this search (identity, value, time)
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum VarKind {
@@ -1080,11 +1082,20 @@ impl<'en> Engine<'en> {
                                             }
                                         }
                                         Rule::as_of_clause => {
-                                            // Parse: as of <constant|time>
+                                            // Parse: as of <constant|time|recall>
                                             for part in component.into_inner() {
                                                 match part.as_rule() {
                                                     Rule::constant => { _as_of_time = parse_time_constant(part.as_str()); }
                                                     Rule::time => { _as_of_time = parse_time(part.as_str()); }
+                                                    Rule::recall => {
+                                                        // Variable as_of: treat as where condition on this pattern's time var <= var
+                                                        if let Some(time_var) = _time_as_variable {
+                                                            where_time_var.push((time_var.to_string(), "<=".to_string(), part.as_str().to_string()));
+                                                        } else {
+                                                            // TODO: handle case where no time var, perhaps error
+                                                            println!("Warning: as of variable requires time variable in pattern");
+                                                        }
+                                                    }
                                                     _ => {}
                                                 }
                                             }
@@ -1464,6 +1475,21 @@ impl<'en> Engine<'en> {
                                 true
                             });
                         }
+                        if !where_time_var.is_empty() {
+                            let tk = self.database.posit_time_lookup();
+                            let guard_time = tk.lock().unwrap();
+                            bindings.retain(|b| {
+                                for (v1, op, v2) in &where_time_var {
+                                    if let (Some((pid1, VarKind::Time)), Some((pid2, VarKind::Time))) = (b.value_slots.get(v1), b.value_slots.get(v2)) {
+                                        if let (Some(pt1), Some(pt2)) = (guard_time.get(pid1), guard_time.get(pid2)) {
+                                            let ok = match op.as_str() { "<" => pt1 < pt2, "<=" => pt1 <= pt2, ">" => pt1 > pt2, ">=" => pt1 >= pt2, "==" | "=" => pt1 == pt2, _ => false };
+                                            if !ok { return false; }
+                                        } else { return false; }
+                                    } else { return false; }
+                                }
+                                true
+                            });
+                        }
                         if bindings.is_empty() { return; }
                         let posit_keeper = self.database.posit_keeper();
                         let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
@@ -1579,7 +1605,7 @@ fn friendly_rule_name(rule: Rule) -> &'static str {
         Rule::certainty => "certainty (e.g., 100%)",
         Rule::time => "time literal (e.g., 'YYYY-MM-DD')",
         Rule::constant => "time constant (@NOW/@BOT/@EOT)",
-        Rule::as_of_clause => "as of <time>",
+        Rule::as_of_clause => "as of <time> or <variable>",
         Rule::comparator => "comparator (<, <=, >, >=, =, ==)",
         _ => "token",
     }

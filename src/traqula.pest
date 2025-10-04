@@ -54,4 +54,4 @@ where_clause = { ^"where" ~ condition ~ ("and" ~ condition)* }
 search = { search_clause ~ where_clause? ~ return_clause ~ ";" }
 
 // Optional per-pattern 'as of' clause
-as_of_clause = { "as of" ~ (constant | time) }
+as_of_clause = { "as of" ~ (constant | time | recall) }
