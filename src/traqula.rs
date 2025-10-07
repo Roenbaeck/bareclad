@@ -523,12 +523,13 @@ pub struct Engine<'en> {
 }
 /// Simple sink trait for capturing projected result rows.
 pub trait RowSink {
-    fn push(&mut self, row: Vec<String>);
+    fn push(&mut self, row: Vec<String>, types: Vec<String>);
 }
 #[derive(Debug)]
 pub struct CollectedResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
+    pub row_types: Vec<Vec<String>>,
     pub row_count: usize,
     pub limited: bool,
 }
@@ -739,9 +740,7 @@ impl<'en> Engine<'en> {
                                 time.clone().unwrap(),
                             );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) {
-                                println!("Posit: {}", kept_posit);
-                            }
+                            // debug posit creation suppressed for clean startup output
                         } else if value_as_string.is_some() {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
@@ -749,9 +748,7 @@ impl<'en> Engine<'en> {
                                 time.clone().unwrap(),
                             );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) {
-                                println!("Posit: {}", kept_posit);
-                            }
+                            // debug posit creation suppressed
                         } else if value_as_time.is_some() {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
@@ -759,9 +756,7 @@ impl<'en> Engine<'en> {
                                 time.clone().unwrap(),
                             );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) {
-                                println!("Posit: {}", kept_posit);
-                            }
+                            // debug posit creation suppressed
                         } else if value_as_certainty.is_some() {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
@@ -769,9 +764,7 @@ impl<'en> Engine<'en> {
                                 time.clone().unwrap(),
                             );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) {
-                                println!("Posit: {}", kept_posit);
-                            }
+                            // debug posit creation suppressed
                         } else if value_as_decimal.is_some() {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
@@ -779,9 +772,7 @@ impl<'en> Engine<'en> {
                                 time.clone().unwrap(),
                             );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) {
-                                println!("Posit: {}", kept_posit);
-                            }
+                            // debug posit creation suppressed
                         } else if value_as_i64.is_some() {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
@@ -789,9 +780,7 @@ impl<'en> Engine<'en> {
                                 time.clone().unwrap(),
                             );
                             posits.push(kept_posit.posit());
-                            if cfg!(debug_assertions) {
-                                println!("Posit: {}", kept_posit);
-                            }
+                            // debug posit creation suppressed
                         }
                     }
                 }
@@ -1661,9 +1650,7 @@ impl<'en> Engine<'en> {
                             }
                             _ => println!("Unknown posit structure: {:?}", structure),
                         }
-                        if cfg!(debug_assertions) {
-                            println!("Local variables: {:?}", local_variables);
-                        }
+                        // local variable debug output suppressed
                     }
                 }
                 Rule::where_clause => {
@@ -1778,20 +1765,27 @@ impl<'en> Engine<'en> {
                         let posit_keeper = self.database.posit_keeper();
                         let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
                         let type_partitions = self.database.role_name_to_data_type_lookup();
+                        let time_lookup = self.database.posit_time_lookup();
                         let mut pk_guard = posit_keeper.lock().unwrap();
                         let aset_guard = aset_lookup.lock().unwrap();
                         let tp_guard = type_partitions.lock().unwrap();
+                        let time_guard = time_lookup.lock().unwrap();
+
+                        // Column-level inference removed; we now collect a per-row types vector.
                         let mut emitted: usize = 0;
                         for b in bindings.iter() {
                             let mut row: Vec<String> = Vec::with_capacity(returns.len());
+                            let mut types_row: Vec<String> = Vec::with_capacity(returns.len());
                             let mut row_ok = true;
                             for rv in &returns {
                                 match variable_kinds.get(rv) {
                                     Some(VarKind::Identity) => {
                                         if let Some(idt) = b.identities.get(rv) {
                                             row.push(format!("{}", idt));
+                                            types_row.push("Thing".into());
                                         } else if let Some(pid) = b.posit_vars.get(rv) {
                                             row.push(format!("{}", pid));
+                                            types_row.push("Thing".into());
                                         } else {
                                             row_ok = false;
                                             break;
@@ -1803,106 +1797,38 @@ impl<'en> Engine<'en> {
                                                 let roles = appset.roles();
                                                 let allowed = tp_guard.lookup(&roles).clone();
                                                 let mut captured: Option<String> = None;
-                                                if allowed.contains("String") {
-                                                    if let Some(p) = pk_guard.posit::<String>(*pid)
-                                                    {
-                                                        captured = Some(match kind {
-                                                            VarKind::Value => {
-                                                                format!("{}", p.value())
-                                                            }
-                                                            VarKind::Time => {
-                                                                format!("{}", p.time())
-                                                            }
-                                                            _ => String::new(),
-                                                        });
+                                                if *kind == VarKind::Time {
+                                                    if let Some(pt) = time_guard.get(pid) {
+                                                        captured = Some(format!("{}", pt));
+                                                        types_row.push("Time".into());
+                                                    } else {
+                                                        row_ok = false; // missing time (should not happen)
+                                                        break;
                                                     }
-                                                }
-                                                if captured.is_none() && allowed.contains("JSON") {
-                                                    if let Some(p) = pk_guard.posit::<JSON>(*pid) {
-                                                        captured = Some(match kind {
-                                                            VarKind::Value => {
-                                                                format!("{}", p.value())
-                                                            }
-                                                            VarKind::Time => {
-                                                                format!("{}", p.time())
-                                                            }
-                                                            _ => String::new(),
-                                                        });
-                                                    }
-                                                }
-                                                if captured.is_none() && allowed.contains("Decimal")
-                                                {
-                                                    if let Some(p) = pk_guard.posit::<Decimal>(*pid)
-                                                    {
-                                                        captured = Some(match kind {
-                                                            VarKind::Value => {
-                                                                format!("{}", p.value())
-                                                            }
-                                                            VarKind::Time => {
-                                                                format!("{}", p.time())
-                                                            }
-                                                            _ => String::new(),
-                                                        });
-                                                    }
-                                                }
-                                                if captured.is_none() && allowed.contains("i64") {
-                                                    if let Some(p) = pk_guard.posit::<i64>(*pid) {
-                                                        captured = Some(match kind {
-                                                            VarKind::Value => {
-                                                                format!("{}", p.value())
-                                                            }
-                                                            VarKind::Time => {
-                                                                format!("{}", p.time())
-                                                            }
-                                                            _ => String::new(),
-                                                        });
-                                                    }
-                                                }
-                                                if captured.is_none()
-                                                    && allowed.contains("Certainty")
-                                                {
-                                                    if let Some(p) =
-                                                        pk_guard.posit::<Certainty>(*pid)
-                                                    {
-                                                        captured = Some(match kind {
-                                                            VarKind::Value => {
-                                                                format!("{}", p.value())
-                                                            }
-                                                            VarKind::Time => {
-                                                                format!("{}", p.time())
-                                                            }
-                                                            _ => String::new(),
-                                                        });
-                                                    }
-                                                }
-                                                if captured.is_none() && allowed.contains("Time") {
-                                                    if let Some(p) = pk_guard.posit::<Time>(*pid) {
-                                                        captured = Some(match kind {
-                                                            VarKind::Value => {
-                                                                format!("{}", p.value())
-                                                            }
-                                                            VarKind::Time => {
-                                                                format!("{}", p.time())
-                                                            }
-                                                            _ => String::new(),
-                                                        });
-                                                    }
+                                                } else {
+                                                    if allowed.contains("String") { if let Some(p) = pk_guard.posit::<String>(*pid) { captured = Some(format!("{}", p.value())); types_row.push("String".into()); } }
+                                                    if captured.is_none() && allowed.contains("JSON") { if let Some(p) = pk_guard.posit::<JSON>(*pid) { captured = Some(format!("{}", p.value())); types_row.push("JSON".into()); } }
+                                                    if captured.is_none() && allowed.contains("Decimal") { if let Some(p) = pk_guard.posit::<Decimal>(*pid) { captured = Some(format!("{}", p.value())); types_row.push("Decimal".into()); } }
+                                                    if captured.is_none() && allowed.contains("i64") { if let Some(p) = pk_guard.posit::<i64>(*pid) { captured = Some(format!("{}", p.value())); types_row.push("i64".into()); } }
+                                                    if captured.is_none() && allowed.contains("Certainty") { if let Some(p) = pk_guard.posit::<Certainty>(*pid) { captured = Some(format!("{}", p.value())); types_row.push("Certainty".into()); } }
+                                                    if captured.is_none() && allowed.contains("Time") { if let Some(p) = pk_guard.posit::<Time>(*pid) { captured = Some(format!("{}", p.value())); types_row.push("Time".into()); } }
                                                 }
                                                 if let Some(cell) = captured {
                                                     row.push(cell);
+                                                    if types_row.len() < row.len() { types_row.push("Unknown".into()); }
                                                 } else {
                                                     row_ok = false;
                                                     break;
                                                 }
-                                            } else {
+                                            } else { // aset_guard.get(pid) None
                                                 row_ok = false;
                                                 break;
                                             }
-                                        } else {
+                                        } else { // b.value_slots.get(rv) None
                                             row_ok = false;
                                             break;
                                         }
-                                    }
+                                    } // Value | Time
                                     _ => {
                                         row_ok = false;
                                         break;
@@ -1911,7 +1837,7 @@ impl<'en> Engine<'en> {
                             }
                             if row_ok {
                                 if let Some(s) = sink.as_deref_mut() {
-                                    s.push(row);
+                                    s.push(row, types_row);
                                 } else {
                                     println!("{}", row.join(", "));
                                 }
@@ -1970,19 +1896,17 @@ impl<'en> Engine<'en> {
                 _ => println!("Unknown command: {:?}", command),
             }
         }
-        if cfg!(debug_assertions) {
-            println!("Variables: {:?}", &variables);
-        }
+        // suppressed variable dump in release/normal runs
     }
 
     /// Execute a script and collect printed row outputs (one Vec<String> per returned row).
     /// This is a stop-gap until the search pipeline is refactored to emit structured rows directly.
     pub fn execute_collect(&self, traqula: &str) -> Result<CollectedResult, crate::error::BarecladError> {
         let mut variables: Variables = Variables::default();
-        struct CollectSink { rows: Vec<Vec<String>> }
-        impl RowSink for CollectSink { fn push(&mut self, row: Vec<String>) { self.rows.push(row); } }
-        let mut collector = CollectSink { rows: Vec::new() };
-        let mut return_columns: Option<Vec<String>> = None;
+        struct CollectSink { rows: Vec<Vec<String>>, types: Vec<Vec<String>> }
+        impl RowSink for CollectSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
+        let mut collector = CollectSink { rows: Vec::new(), types: Vec::new() };
+    let mut return_columns: Option<Vec<String>> = None;
     let limit: Option<usize> = None;
         // grammar now supports optional limit clause; parse directly
         let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
@@ -2012,7 +1936,7 @@ impl<'en> Engine<'en> {
         let cols = return_columns.unwrap_or_default();
         let row_count = collector.rows.len();
         let limited = limit.map(|l| row_count >= l).unwrap_or(false);
-        Ok(CollectedResult { columns: cols, rows: collector.rows, row_count, limited })
+        Ok(CollectedResult { columns: cols, rows: collector.rows, row_types: collector.types, row_count, limited })
     }
 }
 

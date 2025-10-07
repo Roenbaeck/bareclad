@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::fs::{read_to_string, remove_file};
 
 use bareclad::construct::{Database, PersistenceMode};
-use bareclad::interface::{QueryInterface, QueryOptions};
+use bareclad::interface::QueryInterface;
+use bareclad::traqula::Engine;
 use bareclad::error::{BarecladError, Result};
 use std::sync::Arc;
 
@@ -76,36 +77,20 @@ async fn real_main() -> Result<()> {
     );
     let traqula_content = read_to_string(traqula_file_to_run_on_startup)
         .map_err(|e| BarecladError::Config(format!("Could not read traqula file: {e}")))?;
-    // Use the interface submission method (currently executes synchronously under the hood)
-    let handle = interface.start_query(
-        traqula_content,
-        QueryOptions {
-            stream_results: false,
-            timeout: None,
-        },
-    );
-    // Wait for the startup script to finish before printing diagnostics
-    handle.join();
-    if cfg!(debug_assertions) {
-        if let Ok(rk) = db.role_keeper().lock() {
-            println!("Kept roles: {}", rk.len());
-        }
-        if let Ok(ak) = db.appearance_keeper().lock() {
-            println!("Kept appearances: {}", ak.len());
-        }
-        if let Ok(ask) = db.appearance_set_keeper().lock() {
-            println!("Kept appearance sets: {}", ask.len());
-        }
-        if let Ok(pk) = db.posit_keeper().lock() {
-            println!("Kept posits: {}", pk.len());
-        }
-        if let Ok(parts) = db.role_name_to_data_type_lookup().lock() {
-            println!("Role->data type partitions: {:?}", parts);
-        }
-        if let Ok(p) = db.persistor.lock() {
-            if let Some((head, count)) = p.current_superhash() {
-                println!("Integrity ledger head: {} ({} posits)", head, count);
+    // Quietly execute the startup script (suppressing any search result row printing)
+    {
+        let engine = Engine::new(db.as_ref());
+        match engine.execute_collect(&traqula_content) {
+            Ok(_) => {},
+            Err(e) => {
+                tracing::warn!(error=%e, "Startup script execution error");
             }
+        }
+    }
+    // Minimal informational output (always show integrity ledger head if available)
+    if let Ok(p) = db.persistor.lock() {
+        if let Some((head, count)) = p.current_superhash() {
+            println!("Integrity ledger head: {} ({} posits)", head, count);
         }
     }
     // Start HTTP server (simple /v1/query endpoint)
