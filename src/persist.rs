@@ -31,6 +31,9 @@
 use rusqlite::{Connection, Error, params};
 use blake3;
 
+/// 64 zero hex string representing the genesis (no previous) hash in the integrity chain.
+const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
 // our own stuff
 use crate::construct::{Appearance, AppearanceSet, Database, Posit, Role, Thing};
 use crate::datatype::{DataType, Decimal, JSON, Time};
@@ -358,8 +361,8 @@ impl Persistor {
                     if let Some(row) = rows.next().unwrap() {
                         row.get::<_, String>(0).unwrap()
                     } else {
-                        // 64 zeros (BLAKE3 hex length)
-                        "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+                        // Genesis hash (no previous posit)
+                        GENESIS_HASH.to_string()
                     }
                 };
                 let input = format!(
@@ -515,27 +518,30 @@ impl Persistor {
         let backfill = |conn: &Connection| {
             let tx = conn.unchecked_transaction().unwrap();
             tx.execute("delete from PositHash", []).unwrap();
-            let mut stmt = tx
-                .prepare("select Posit_Identity, AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit order by Posit_Identity asc")
-                .unwrap();
-            let mut rows = stmt.query([]).unwrap();
-            let mut prev = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+            let mut prev = GENESIS_HASH.to_string();
             let mut last = prev.clone();
-            while let Some(row) = rows.next().unwrap() {
-                let thing: i64 = row.get_unwrap(0);
-                let aset: String = row.get_unwrap(1);
-                let aval: String = row.get_unwrap(2);
-                let vtid: i64 = row.get_unwrap(3);
-                let atime: String = row.get_unwrap(4);
-                let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
-                let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
-                tx.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
-                    .unwrap()
-                    .execute(params![&thing, &prev, &hash_hex])
+            {
+                // Scope to ensure stmt & rows are dropped before committing the transaction (avoids E0505 borrow error)
+                let mut stmt = tx
+                    .prepare("select Posit_Identity, AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit order by Posit_Identity asc")
                     .unwrap();
-                prev = hash_hex.clone();
-                last = hash_hex;
-            }
+                let mut rows = stmt.query([]).unwrap();
+                while let Some(row) = rows.next().unwrap() {
+                    let thing: i64 = row.get_unwrap(0);
+                    let aset: String = row.get_unwrap(1);
+                    let aval: String = row.get_unwrap(2);
+                    let vtid: i64 = row.get_unwrap(3);
+                    let atime: String = row.get_unwrap(4);
+                    let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
+                    let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
+                    tx.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
+                        .unwrap()
+                        .execute(params![&thing, &prev, &hash_hex])
+                        .unwrap();
+                    prev = hash_hex.clone();
+                    last = hash_hex;
+                }
+            } // stmt, rows dropped here
             tx.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
                 .unwrap()
                 .execute(params![&last, &posit_count])
@@ -555,7 +561,7 @@ impl Persistor {
             .prepare("select p.Posit_Identity, p.AppearanceSet, cast(p.AppearingValue as text), p.ValueType_Identity, p.AppearanceTime, h.Hash from Posit p join PositHash h on h.Posit_Identity = p.Posit_Identity order by p.Posit_Identity asc")
             .unwrap();
         let mut rows = stmt.query([]).unwrap();
-        let mut prev = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    let mut prev = GENESIS_HASH.to_string();
         let mut mismatches = 0usize;
         let mut first_bad: Option<i64> = None;
         let mut last_hash = prev.clone();

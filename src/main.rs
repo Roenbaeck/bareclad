@@ -86,7 +86,7 @@ fn main() {
             "Role->data type partitions: {:?}",
             db.role_name_to_data_type_lookup().lock().unwrap()
         );
-        if let Some((head, count)) = db.persistor().lock().unwrap().current_superhash() {
+    if let Some((head, count)) = db.persistor.lock().unwrap().current_superhash() {
             println!("Integrity ledger head: {} ({} posits)", head, count);
         }
     }
