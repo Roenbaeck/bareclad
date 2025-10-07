@@ -52,14 +52,19 @@ pub fn router(interface: Arc<QueryInterface>) -> Router {
             match rows_result {
                 Ok(result) => {
                     info!(ms=total_elapsed.as_millis(), rows=result.row_count, limited=result.limited, "query complete");
-                    Ok::<_, (StatusCode, &'static str)>(Json(QueryResponse { id: 0, status: "ok".into(), elapsed_ms: total_elapsed.as_millis(), columns: Some(result.columns), row_count: Some(result.row_count), limited: Some(result.limited), rows: Some(result.rows), error: None }))
+                    let body = QueryResponse { id: 0, status: "ok".into(), elapsed_ms: total_elapsed.as_millis(), columns: Some(result.columns), row_count: Some(result.row_count), limited: Some(result.limited), rows: Some(result.rows), error: None };
+                    Ok::<_, (StatusCode, &'static str)>((StatusCode::OK, Json(body)))
                 }
                 Err(e) => {
                     let is_parse = matches!(e, crate::error::BarecladError::Parse { .. });
                     let status = if is_parse { StatusCode::BAD_REQUEST } else { StatusCode::INTERNAL_SERVER_ERROR };
                     let msg = format!("{e}");
-                    warn!(%msg, "query error");
-                    return Err((status, "query failed"));
+                    warn!(%msg, code=%status.as_u16(), "query error");
+                    let body = QueryResponse { id: 0, status: "error".into(), elapsed_ms: total_elapsed.as_millis(), columns: None, row_count: None, limited: None, rows: None, error: Some(msg) };
+                    let json = Json(body);
+                    // Axum requires returning Err(status, msg). We'll serialize JSON manually on error by responding with Ok and mapping status via IntoResponse
+                    // Simpler: build a tuple (StatusCode, Json<_>) which implements IntoResponse.
+                    return Ok::<_, (StatusCode, &'static str)>((status, json));
                 }
             }
         }
