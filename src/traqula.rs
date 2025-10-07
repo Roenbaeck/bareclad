@@ -22,9 +22,13 @@
 //!
 //! # Example (executing Traqula)
 //! ```
-//! use bareclad::construct::{Database, PersistenceMode};
+//! use rusqlite::Connection;
+//! use bareclad::persist::Persistor;
+//! use bareclad::construct::Database;
 //! use bareclad::traqula::Engine;
-//! let db = Database::new(PersistenceMode::InMemory);
+//! let conn = Connection::open_in_memory().unwrap();
+//! let persistor = Persistor::new(&conn);
+//! let db = Database::new(persistor);
 //! let engine = Engine::new(&db);
 //! engine.execute("add role person; add posit [{(+a, person)}, \"Alice\", @NOW];");
 //! ```
@@ -34,8 +38,9 @@
 //! Debug logging is gated behind `cfg(debug_assertions)` where appropriate.
 use crate::construct::{Database, OtherHasher, Thing};
 use crate::datatype::{Certainty, Decimal, JSON, Time};
-use lazy_static::lazy_static;
-use regex::Regex;
+use chrono::NaiveDateTime; // needed for defensive datetime validation in parse_time
+// (regex-based time parsing removed in favor of direct parsing)
+use chrono::NaiveDate;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -443,29 +448,60 @@ fn parse_json_constant(_value: &str) -> Option<JSON> {
 }
 /// Parse a time literal or constant used in Traqula.
 pub fn parse_time(value: &str) -> Option<Time> {
-    let stripped = value.replace("'", "");
-    let time = "'".to_owned() + &stripped + "'";
-    // MAINTENANCE: The section below needs to be extended when new data types are added
-    lazy_static! {
-        static ref RE_DATETIME: Regex =
-            Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9].+'"#).unwrap();
-        static ref RE_DATE: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]-[0-3][0-9]'"#).unwrap();
-        static ref RE_YEAR_MONTH: Regex = Regex::new(r#"'\-?[0-9]{4,8}-[0-2][0-9]'"#).unwrap();
-        static ref RE_YEAR: Regex = Regex::new(r#"'\-?[0-9]{4,8}'"#).unwrap();
+    // 1. Fast path for constants (@NOW etc.)
+    if let Some(t) = parse_time_constant(value) {
+        return Some(t);
     }
-    if RE_DATETIME.is_match(&time) {
-        return Some(Time::new_datetime_from(&stripped));
+
+    // 2. Sanitize: trim whitespace & trailing syntax punctuation, remove surrounding single quotes if any
+    let mut stripped = value
+        .trim()
+        .trim_end_matches(|c: char| matches!(c, ',' | ';' | ']' | ')'))
+        .trim()
+        .to_string();
+    if stripped.starts_with('\'') && stripped.ends_with('\'') && stripped.len() >= 2 {
+        stripped = stripped[1..stripped.len() - 1].to_string();
     }
-    if RE_DATE.is_match(&time) {
-        return Some(Time::new_date_from(&stripped));
+
+    // 3. Attempt high‑precision datetime parse directly (chrono supports fractional seconds up to 9 digits)
+    if stripped.contains(':') && stripped.contains('-') && stripped.contains(' ') {
+        if let Ok(dt) = stripped.parse::<NaiveDateTime>() {
+            return Some(Time::from_naive_datetime(dt));
+        }
     }
-    if RE_YEAR_MONTH.is_match(&time) {
-        return Some(Time::new_year_month_from(&stripped));
+
+    // 4. Date (YYYY-MM-DD)
+    if stripped.len() >= 8 && stripped.matches('-').count() == 2 && !stripped.contains(':') {
+        if stripped.parse::<NaiveDate>().is_ok() {
+            return Some(Time::new_date_from(&stripped));
+        }
     }
-    if RE_YEAR.is_match(&time) {
+
+    // 5. Year-month (YYYY-MM)
+    if stripped.matches('-').count() == 1 && stripped.len() >= 6 && !stripped.contains(':') {
+        // basic shape check: split and ensure month 1-12
+        if let Some((y, m)) = stripped.split_once('-') {
+            if y.chars().all(|c| c == '-' || c.is_ascii_digit())
+                && m.chars().all(|c| c.is_ascii_digit())
+            {
+                if m.parse::<u8>()
+                    .ok()
+                    .filter(|mm| (1..=12).contains(mm))
+                    .is_some()
+                {
+                    return Some(Time::new_year_month_from(&stripped));
+                }
+            }
+        }
+    }
+
+    // 6. Year only
+    if stripped.chars().all(|c| c == '-' || c.is_ascii_digit()) && (4..=8).contains(&stripped.len())
+    {
         return Some(Time::new_year_from(&stripped));
     }
-    parse_time_constant(value)
+
+    None
 }
 fn parse_time_constant(value: &str) -> Option<Time> {
     match value.replace("@", "").as_str() {
@@ -810,13 +846,13 @@ impl<'en> Engine<'en> {
                 }
             }
         }
-    // All accumulated bindings (multiplicity preserving).
-    let mut bindings: Vec<Binding> = Vec::new();
-    #[allow(unused_mut)]
-    let mut enumeration_started = false; // tracks if bindings vector has been seeded
-    let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
-    // Track whether any clause in this search failed (no candidates after constraints)
-    let mut any_clause_failed: bool = false;
+        // All accumulated bindings (multiplicity preserving).
+        let mut bindings: Vec<Binding> = Vec::new();
+        #[allow(unused_mut)]
+        let mut enumeration_started = false; // tracks if bindings vector has been seeded
+        let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
+        // Track whether any clause in this search failed (no candidates after constraints)
+        let mut any_clause_failed: bool = false;
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
@@ -857,7 +893,10 @@ impl<'en> Engine<'en> {
                                                 active_vars
                                                     .insert(v.trim_start_matches('+').to_string());
                                                 // Treat posit variables as identity-like so they can be returned
-                                                variable_kinds.insert(v.trim_start_matches('+').to_string(), VarKind::Identity);
+                                                variable_kinds.insert(
+                                                    v.trim_start_matches('+').to_string(),
+                                                    VarKind::Identity,
+                                                );
                                             }
                                             //println!("Insert: {}", &variable.as_ref().unwrap());
                                         }
@@ -1081,15 +1120,26 @@ impl<'en> Engine<'en> {
                                             // Parse: as of <constant|time|recall>
                                             for part in component.into_inner() {
                                                 match part.as_rule() {
-                                                    Rule::constant => { _as_of_time = parse_time_constant(part.as_str()); }
-                                                    Rule::time => { _as_of_time = parse_time(part.as_str()); }
+                                                    Rule::constant => {
+                                                        _as_of_time =
+                                                            parse_time_constant(part.as_str());
+                                                    }
+                                                    Rule::time => {
+                                                        _as_of_time = parse_time(part.as_str());
+                                                    }
                                                     Rule::recall => {
                                                         // Variable as_of: treat as where condition on this pattern's time var <= var
                                                         if let Some(time_var) = _time_as_variable {
-                                                            where_time_var.push((time_var.to_string(), "<=".to_string(), part.as_str().to_string()));
+                                                            where_time_var.push((
+                                                                time_var.to_string(),
+                                                                "<=".to_string(),
+                                                                part.as_str().to_string(),
+                                                            ));
                                                         } else {
                                                             // TODO: handle case where no time var, perhaps error
-                                                            println!("Warning: as of variable requires time variable in pattern");
+                                                            println!(
+                                                                "Warning: as of variable requires time variable in pattern"
+                                                            );
                                                         }
                                                     }
                                                     _ => {}
@@ -1144,7 +1194,9 @@ impl<'en> Engine<'en> {
                                         // (as-of moved to after local identity constraints)
                                         // Apply local identity variable constraints to filter candidates (e.g., (w, name) restricts to bound wife)
                                         if !local_variables.is_empty() && !cands.is_empty() {
-                                            let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                            let lk = self
+                                                .database
+                                                .posit_thing_to_appearance_set_lookup();
                                             let aset_guard = lk.lock().unwrap();
                                             let mut filtered = RoaringTreemap::new();
                                             'cand: for id in cands.iter() {
@@ -1152,8 +1204,11 @@ impl<'en> Engine<'en> {
                                                     Some(aset) => aset,
                                                     None => continue,
                                                 };
-                                                for (i, token) in local_variables.iter().enumerate() {
-                                                    if *token == "*" { continue; }
+                                                for (i, token) in local_variables.iter().enumerate()
+                                                {
+                                                    if *token == "*" {
+                                                        continue;
+                                                    }
                                                     let role_name = roles[i];
                                                     let bound_opt = appset
                                                         .appearances()
@@ -1162,28 +1217,53 @@ impl<'en> Engine<'en> {
                                                         .map(|a| a.thing());
                                                     if let Some(bound_id) = bound_opt {
                                                         // Determine if this bound_id satisfies existing variable bindings (support unions)
-                                                        let union_names = local_variable_unions.get(i).and_then(|u| u.as_ref());
-                                                        let satisfies = if let Some(names) = union_names {
+                                                        let union_names = local_variable_unions
+                                                            .get(i)
+                                                            .and_then(|u| u.as_ref());
+                                                        let satisfies = if let Some(names) =
+                                                            union_names
+                                                        {
                                                             // If any union member is already bound and contains bound_id, accept; if none are bound, don't restrict
                                                             let mut any_bound = false;
                                                             let mut any_match = false;
                                                             for name in names.iter() {
-                                                                if let Some(rs) = variables.get(name) {
+                                                                if let Some(rs) =
+                                                                    variables.get(name)
+                                                                {
                                                                     any_bound = true;
                                                                     match rs.mode {
-                                                                        ResultSetMode::Thing => { any_match |= rs.thing.unwrap() == bound_id; }
-                                                                        ResultSetMode::Multi => { any_match |= rs.multi.as_ref().unwrap().contains(bound_id); }
+                                                                        ResultSetMode::Thing => {
+                                                                            any_match |=
+                                                                                rs.thing.unwrap()
+                                                                                    == bound_id;
+                                                                        }
+                                                                        ResultSetMode::Multi => {
+                                                                            any_match |= rs
+                                                                                .multi
+                                                                                .as_ref()
+                                                                                .unwrap()
+                                                                                .contains(bound_id);
+                                                                        }
                                                                         ResultSetMode::Empty => {}
                                                                     }
                                                                 }
                                                             }
                                                             if any_bound { any_match } else { true }
                                                         } else {
-                                                            let key = token.strip_prefix('+').unwrap_or(token);
+                                                            let key = token
+                                                                .strip_prefix('+')
+                                                                .unwrap_or(token);
                                                             if let Some(rs) = variables.get(key) {
                                                                 match rs.mode {
-                                                                    ResultSetMode::Thing => rs.thing.unwrap() == bound_id,
-                                                                    ResultSetMode::Multi => rs.multi.as_ref().unwrap().contains(bound_id),
+                                                                    ResultSetMode::Thing => {
+                                                                        rs.thing.unwrap()
+                                                                            == bound_id
+                                                                    }
+                                                                    ResultSetMode::Multi => rs
+                                                                        .multi
+                                                                        .as_ref()
+                                                                        .unwrap()
+                                                                        .contains(bound_id),
                                                                     ResultSetMode::Empty => true,
                                                                 }
                                                             } else {
@@ -1191,7 +1271,9 @@ impl<'en> Engine<'en> {
                                                                 true
                                                             }
                                                         };
-                                                        if !satisfies { continue 'cand; }
+                                                        if !satisfies {
+                                                            continue 'cand;
+                                                        }
                                                     } else {
                                                         continue 'cand;
                                                     }
@@ -1208,43 +1290,68 @@ impl<'en> Engine<'en> {
                                             if !cands.is_empty() {
                                                 let time_lk = self.database.posit_time_lookup();
                                                 let time_guard = time_lk.lock().unwrap();
-                                                let aset_lk = self.database.posit_thing_to_appearance_set_lookup();
+                                                let aset_lk = self
+                                                    .database
+                                                    .posit_thing_to_appearance_set_lookup();
                                                 let aset_guard = aset_lk.lock().unwrap();
                                                 // Map: appearance set ptr address -> (best_time, Vec<Thing>) to keep all ties
                                                 use std::collections::HashMap as StdHashMap;
-                                                let mut best: StdHashMap<usize, (Time, Vec<Thing>)> = StdHashMap::new();
+                                                let mut best: StdHashMap<
+                                                    usize,
+                                                    (Time, Vec<Thing>),
+                                                > = StdHashMap::new();
                                                 for pid in cands.iter() {
                                                     if let Some(pt) = time_guard.get(&pid) {
                                                         if pt <= as_of {
-                                                            if let Some(aset) = aset_guard.get(&pid) {
-                                                                let key = Arc::as_ptr(aset) as usize;
+                                                            if let Some(aset) = aset_guard.get(&pid)
+                                                            {
+                                                                let key =
+                                                                    Arc::as_ptr(aset) as usize;
                                                                 match best.get_mut(&key) {
                                                                     Some((bt, ids)) => {
-                                                                        if pt > bt { *bt = pt.clone(); ids.clear(); ids.push(pid); }
-                                                                        else if pt == bt { ids.push(pid); }
+                                                                        if pt > bt {
+                                                                            *bt = pt.clone();
+                                                                            ids.clear();
+                                                                            ids.push(pid);
+                                                                        } else if pt == bt {
+                                                                            ids.push(pid);
+                                                                        }
                                                                     }
-                                                                    None => { best.insert(key, (pt.clone(), vec![pid])); }
+                                                                    None => {
+                                                                        best.insert(
+                                                                            key,
+                                                                            (pt.clone(), vec![pid]),
+                                                                        );
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
                                                 }
                                                 let mut reduced = RoaringTreemap::new();
-                                                for (_k, (_bt, ids)) in best.into_iter() { for id in ids { reduced.insert(id); } }
+                                                for (_k, (_bt, ids)) in best.into_iter() {
+                                                    for id in ids {
+                                                        reduced.insert(id);
+                                                    }
+                                                }
                                                 cands = reduced;
-                                                if cands.is_empty() { any_clause_failed = true; }
+                                                if cands.is_empty() {
+                                                    any_clause_failed = true;
+                                                }
                                             }
                                         }
                                         // Remember candidate posits for projection when returning values/times
                                         // (legacy single-role candidate capture removed)
                                         // If the appearing value used a variable (e.g., +n or n), capture its candidates
                                         if let Some(vname) = _value_as_variable {
-                                            value_var_candidates.insert(vname.to_string(), cands.clone());
+                                            value_var_candidates
+                                                .insert(vname.to_string(), cands.clone());
                                             active_vars.insert(vname.to_string());
                                         }
                                         // If the time slot used a variable, capture its candidate posits under that variable name
                                         if let Some(varname) = _time_as_variable {
-                                            time_var_candidates.insert(varname.to_string(), cands.clone());
+                                            time_var_candidates
+                                                .insert(varname.to_string(), cands.clone());
                                             active_vars.insert(varname.to_string());
                                         }
                                         // Bind outer posit variable (e.g., +p)
@@ -1266,13 +1373,19 @@ impl<'en> Engine<'en> {
                                         if !local_variables.is_empty() {
                                             for id in cands.iter() {
                                                 let appset: Arc<crate::construct::AppearanceSet> = {
-                                                    let lk = self.database.posit_thing_to_appearance_set_lookup();
+                                                    let lk = self
+                                                        .database
+                                                        .posit_thing_to_appearance_set_lookup();
                                                     let guard = lk.lock().unwrap();
                                                     Arc::clone(guard.get(&id).unwrap())
                                                 };
-                                                for (i, token) in local_variables.iter().enumerate() {
-                                                    if *token == "*" { continue; }
-                                                    let vname = token.strip_prefix('+').unwrap_or(token);
+                                                for (i, token) in local_variables.iter().enumerate()
+                                                {
+                                                    if *token == "*" {
+                                                        continue;
+                                                    }
+                                                    let vname =
+                                                        token.strip_prefix('+').unwrap_or(token);
                                                     let role_name = roles[i];
                                                     if let Some(bound) = appset
                                                         .appearances()
@@ -1281,23 +1394,31 @@ impl<'en> Engine<'en> {
                                                         .map(|a| a.thing())
                                                     {
                                                         // recall variables intersect as join filters; inserts also intersect
-                                                        if let Some(Some(union_names)) = local_variable_unions.get(i) {
+                                                        if let Some(Some(union_names)) =
+                                                            local_variable_unions.get(i)
+                                                        {
                                                             for member in union_names {
                                                                 let key = member.to_string();
                                                                 match variables.entry(key.clone()) {
                                                                     Entry::Vacant(entry) => {
-                                                                        let mut rs = ResultSet::new();
+                                                                        let mut rs =
+                                                                            ResultSet::new();
                                                                         rs.insert(bound);
                                                                         entry.insert(rs);
                                                                     }
                                                                     Entry::Occupied(mut entry) => {
                                                                         let rs = entry.get_mut();
-                                                                        if rs.mode == ResultSetMode::Empty {
+                                                                        if rs.mode
+                                                                            == ResultSetMode::Empty
+                                                                        {
                                                                             rs.insert(bound);
                                                                         } else {
-                                                                            let mut narrowed = ResultSet::new();
+                                                                            let mut narrowed =
+                                                                                ResultSet::new();
                                                                             narrowed.insert(bound);
-                                                                            rs.intersect_with(&narrowed);
+                                                                            rs.intersect_with(
+                                                                                &narrowed,
+                                                                            );
                                                                         }
                                                                     }
                                                                 }
@@ -1313,14 +1434,19 @@ impl<'en> Engine<'en> {
                                                                 }
                                                                 Entry::Occupied(mut entry) => {
                                                                     let rs = entry.get_mut();
-                                                                    if rs.mode == ResultSetMode::Empty {
+                                                                    if rs.mode
+                                                                        == ResultSetMode::Empty
+                                                                    {
                                                                         // Bind empty recall var
                                                                         rs.insert(bound);
                                                                     } else {
                                                                         // Intersect existing with this bound only for inserted variables
-                                                                        let mut narrowed = ResultSet::new();
+                                                                        let mut narrowed =
+                                                                            ResultSet::new();
                                                                         narrowed.insert(bound);
-                                                                        rs.intersect_with(&narrowed);
+                                                                        rs.intersect_with(
+                                                                            &narrowed,
+                                                                        );
                                                                     }
                                                                 }
                                                             }
@@ -1334,50 +1460,108 @@ impl<'en> Engine<'en> {
                                         // ---------------- Binding enumeration (multiplicity preservation) ----------------
                                         if !cands.is_empty() {
                                             // Collect identity variable assignments for each candidate posit
-                                            let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
+                                            let aset_lookup = self
+                                                .database
+                                                .posit_thing_to_appearance_set_lookup();
                                             let aset_guard = aset_lookup.lock().unwrap();
-                                            let mut candidate_info: Vec<(Thing, HashMap<String, Thing>)> = Vec::new();
+                                            let mut candidate_info: Vec<(
+                                                Thing,
+                                                HashMap<String, Thing>,
+                                            )> = Vec::new();
                                             for pid in cands.iter() {
                                                 if let Some(appset) = aset_guard.get(&pid) {
                                                     // First collect per-variable identity maps; union variables may yield multiple maps (one per union member)
-                                                    let mut pending_maps: Vec<HashMap<String, Thing>> = vec![HashMap::new()];
-                                                    for (i, token) in local_variables.iter().enumerate() {
-                                                        if *token == "*" { continue; }
+                                                    let mut pending_maps: Vec<
+                                                        HashMap<String, Thing>,
+                                                    > = vec![HashMap::new()];
+                                                    for (i, token) in
+                                                        local_variables.iter().enumerate()
+                                                    {
+                                                        if *token == "*" {
+                                                            continue;
+                                                        }
                                                         let role_name = roles[i];
-                                                        if let Some(thing) = appset.appearances().iter().find(|a| a.role().name() == role_name).map(|a| a.thing()) {
-                                                            if let Some(Some(union_names)) = local_variable_unions.get(i) {
+                                                        if let Some(thing) = appset
+                                                            .appearances()
+                                                            .iter()
+                                                            .find(|a| a.role().name() == role_name)
+                                                            .map(|a| a.thing())
+                                                        {
+                                                            if let Some(Some(union_names)) =
+                                                                local_variable_unions.get(i)
+                                                            {
                                                                 // For a union, branch the maps: each union member may independently match this thing.
-                                                                let mut branched: Vec<HashMap<String, Thing>> = Vec::with_capacity(pending_maps.len() * union_names.len());
+                                                                let mut branched: Vec<
+                                                                    HashMap<String, Thing>,
+                                                                > = Vec::with_capacity(
+                                                                    pending_maps.len()
+                                                                        * union_names.len(),
+                                                                );
                                                                 for uname in union_names.iter() {
-                                                                    for existing in pending_maps.iter() {
-                                                                        let mut cloned = existing.clone();
-                                                                        cloned.insert(uname.clone(), thing);
+                                                                    for existing in
+                                                                        pending_maps.iter()
+                                                                    {
+                                                                        let mut cloned =
+                                                                            existing.clone();
+                                                                        cloned.insert(
+                                                                            uname.clone(),
+                                                                            thing,
+                                                                        );
                                                                         branched.push(cloned);
                                                                     }
                                                                 }
                                                                 pending_maps = branched;
                                                             } else {
                                                                 // Skip synthetic union token like "w|h"; only insert real variable names
-                                                                if token.contains('|') { continue; }
-                                                                let vname = token.strip_prefix('+').unwrap_or(token).to_string();
-                                                                for m in pending_maps.iter_mut() { m.insert(vname.clone(), thing); }
+                                                                if token.contains('|') {
+                                                                    continue;
+                                                                }
+                                                                let vname = token
+                                                                    .strip_prefix('+')
+                                                                    .unwrap_or(token)
+                                                                    .to_string();
+                                                                for m in pending_maps.iter_mut() {
+                                                                    m.insert(vname.clone(), thing);
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                    for id_map in pending_maps.into_iter() { candidate_info.push((pid, id_map)); }
+                                                    for id_map in pending_maps.into_iter() {
+                                                        candidate_info.push((pid, id_map));
+                                                    }
                                                 }
                                             }
                                             // Names for value/time/posit variables (strip plus)
-                                            let posit_var_name = variable.as_ref().map(|v| v.strip_prefix('+').unwrap_or(v).to_string());
-                                            let value_var_name = _value_as_variable.map(|v| v.strip_prefix('+').unwrap_or(v).to_string());
-                                            let time_var_name = _time_as_variable.map(|v| v.strip_prefix('+').unwrap_or(v).to_string());
+                                            let posit_var_name = variable.as_ref().map(|v| {
+                                                v.strip_prefix('+').unwrap_or(v).to_string()
+                                            });
+                                            let value_var_name = _value_as_variable.map(|v| {
+                                                v.strip_prefix('+').unwrap_or(v).to_string()
+                                            });
+                                            let time_var_name = _time_as_variable.map(|v| {
+                                                v.strip_prefix('+').unwrap_or(v).to_string()
+                                            });
                                             if !enumeration_started {
                                                 for (pid, id_map) in candidate_info.iter() {
                                                     let mut b = Binding::new();
-                                                    b.identities.extend(id_map.iter().map(|(k,v)| (k.clone(), *v)));
-                                                    if let Some(ref pn) = posit_var_name { b.posit_vars.insert(pn.clone(), *pid); }
-                                                    if let Some(ref vn) = value_var_name { b.value_slots.insert(vn.clone(), (*pid, VarKind::Value)); }
-                                                    if let Some(ref tn) = time_var_name { b.value_slots.insert(tn.clone(), (*pid, VarKind::Time)); }
+                                                    b.identities.extend(
+                                                        id_map.iter().map(|(k, v)| (k.clone(), *v)),
+                                                    );
+                                                    if let Some(ref pn) = posit_var_name {
+                                                        b.posit_vars.insert(pn.clone(), *pid);
+                                                    }
+                                                    if let Some(ref vn) = value_var_name {
+                                                        b.value_slots.insert(
+                                                            vn.clone(),
+                                                            (*pid, VarKind::Value),
+                                                        );
+                                                    }
+                                                    if let Some(ref tn) = time_var_name {
+                                                        b.value_slots.insert(
+                                                            tn.clone(),
+                                                            (*pid, VarKind::Time),
+                                                        );
+                                                    }
                                                     bindings.push(b);
                                                 }
                                                 enumeration_started = true;
@@ -1388,26 +1572,81 @@ impl<'en> Engine<'en> {
                                                         // Identity compatibility
                                                         let mut ok = true;
                                                         for (k, v) in id_map.iter() {
-                                                            if let Some(prev) = existing.identities.get(k) { if prev != v { ok = false; break; } }
+                                                            if let Some(prev) =
+                                                                existing.identities.get(k)
+                                                            {
+                                                                if prev != v {
+                                                                    ok = false;
+                                                                    break;
+                                                                }
+                                                            }
                                                         }
-                                                        if !ok { continue; }
+                                                        if !ok {
+                                                            continue;
+                                                        }
                                                         // Posit variable compatibility
-                                                        if let Some(ref pn) = posit_var_name { if let Some(prev) = existing.posit_vars.get(pn) { if prev != pid { continue; } } }
+                                                        if let Some(ref pn) = posit_var_name {
+                                                            if let Some(prev) =
+                                                                existing.posit_vars.get(pn)
+                                                            {
+                                                                if prev != pid {
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        }
                                                         // Value variable compatibility
-                                                        if let Some(ref vn) = value_var_name { if let Some((prev_pid, _)) = existing.value_slots.get(vn) { if prev_pid != pid { continue; } } }
+                                                        if let Some(ref vn) = value_var_name {
+                                                            if let Some((prev_pid, _)) =
+                                                                existing.value_slots.get(vn)
+                                                            {
+                                                                if prev_pid != pid {
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        }
                                                         // Time variable compatibility
-                                                        if let Some(ref tn) = time_var_name { if let Some((prev_pid, _)) = existing.value_slots.get(tn) { if prev_pid != pid { continue; } } }
+                                                        if let Some(ref tn) = time_var_name {
+                                                            if let Some((prev_pid, _)) =
+                                                                existing.value_slots.get(tn)
+                                                            {
+                                                                if prev_pid != pid {
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        }
                                                         // Merge
                                                         let mut merged = existing.clone();
-                                                        for (k, v) in id_map.iter() { merged.identities.entry(k.clone()).or_insert(*v); }
-                                                        if let Some(ref pn) = posit_var_name { merged.posit_vars.entry(pn.clone()).or_insert(*pid); }
-                                                        if let Some(ref vn) = value_var_name { merged.value_slots.entry(vn.clone()).or_insert((*pid, VarKind::Value)); }
-                                                        if let Some(ref tn) = time_var_name { merged.value_slots.entry(tn.clone()).or_insert((*pid, VarKind::Time)); }
+                                                        for (k, v) in id_map.iter() {
+                                                            merged
+                                                                .identities
+                                                                .entry(k.clone())
+                                                                .or_insert(*v);
+                                                        }
+                                                        if let Some(ref pn) = posit_var_name {
+                                                            merged
+                                                                .posit_vars
+                                                                .entry(pn.clone())
+                                                                .or_insert(*pid);
+                                                        }
+                                                        if let Some(ref vn) = value_var_name {
+                                                            merged
+                                                                .value_slots
+                                                                .entry(vn.clone())
+                                                                .or_insert((*pid, VarKind::Value));
+                                                        }
+                                                        if let Some(ref tn) = time_var_name {
+                                                            merged
+                                                                .value_slots
+                                                                .entry(tn.clone())
+                                                                .or_insert((*pid, VarKind::Time));
+                                                        }
                                                         new_bindings.push(merged);
                                                     }
                                                 }
                                                 bindings = new_bindings;
-                                                if bindings.is_empty() { any_clause_failed = true; }
+                                                if bindings.is_empty() {
+                                                    any_clause_failed = true;
+                                                }
                                             }
                                         }
                                     }
@@ -1453,8 +1692,15 @@ impl<'en> Engine<'en> {
                 }
                 Rule::return_clause => {
                     let mut returns: Vec<String> = Vec::new();
-                    for structure in clause.into_inner() { if structure.as_rule() == Rule::recall { returns.push(structure.into_inner().next().unwrap().as_str().to_string()); } }
-                    if any_clause_failed { return; }
+                    for structure in clause.into_inner() {
+                        if structure.as_rule() == Rule::recall {
+                            returns
+                                .push(structure.into_inner().next().unwrap().as_str().to_string());
+                        }
+                    }
+                    if any_clause_failed {
+                        return;
+                    }
                     if enumeration_started {
                         if !where_time.is_empty() {
                             let tk = self.database.posit_time_lookup();
@@ -1463,10 +1709,23 @@ impl<'en> Engine<'en> {
                                 for (v, op, tcmp) in &where_time {
                                     if let Some((pid, VarKind::Time)) = b.value_slots.get(v) {
                                         if let Some(pt) = guard_time.get(pid) {
-                                            let ok = match op.as_str() { "<" => pt < tcmp, "<=" => pt <= tcmp, ">" => pt > tcmp, ">=" => pt >= tcmp, "==" | "=" => pt == tcmp, _ => false };
-                                            if !ok { return false; }
-                                        } else { return false; }
-                                    } else { return false; }
+                                            let ok = match op.as_str() {
+                                                "<" => pt < tcmp,
+                                                "<=" => pt <= tcmp,
+                                                ">" => pt > tcmp,
+                                                ">=" => pt >= tcmp,
+                                                "==" | "=" => pt == tcmp,
+                                                _ => false,
+                                            };
+                                            if !ok {
+                                                return false;
+                                            }
+                                        } else {
+                                            return false;
+                                        }
+                                    } else {
+                                        return false;
+                                    }
                                 }
                                 true
                             });
@@ -1476,17 +1735,38 @@ impl<'en> Engine<'en> {
                             let guard_time = tk.lock().unwrap();
                             bindings.retain(|b| {
                                 for (v1, op, v2) in &where_time_var {
-                                    if let (Some((pid1, VarKind::Time)), Some((pid2, VarKind::Time))) = (b.value_slots.get(v1), b.value_slots.get(v2)) {
-                                        if let (Some(pt1), Some(pt2)) = (guard_time.get(pid1), guard_time.get(pid2)) {
-                                            let ok = match op.as_str() { "<" => pt1 < pt2, "<=" => pt1 <= pt2, ">" => pt1 > pt2, ">=" => pt1 >= pt2, "==" | "=" => pt1 == pt2, _ => false };
-                                            if !ok { return false; }
-                                        } else { return false; }
-                                    } else { return false; }
+                                    if let (
+                                        Some((pid1, VarKind::Time)),
+                                        Some((pid2, VarKind::Time)),
+                                    ) = (b.value_slots.get(v1), b.value_slots.get(v2))
+                                    {
+                                        if let (Some(pt1), Some(pt2)) =
+                                            (guard_time.get(pid1), guard_time.get(pid2))
+                                        {
+                                            let ok = match op.as_str() {
+                                                "<" => pt1 < pt2,
+                                                "<=" => pt1 <= pt2,
+                                                ">" => pt1 > pt2,
+                                                ">=" => pt1 >= pt2,
+                                                "==" | "=" => pt1 == pt2,
+                                                _ => false,
+                                            };
+                                            if !ok {
+                                                return false;
+                                            }
+                                        } else {
+                                            return false;
+                                        }
+                                    } else {
+                                        return false;
+                                    }
                                 }
                                 true
                             });
                         }
-                        if bindings.is_empty() { return; }
+                        if bindings.is_empty() {
+                            return;
+                        }
                         let posit_keeper = self.database.posit_keeper();
                         let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
                         let type_partitions = self.database.role_name_to_data_type_lookup();
@@ -1499,9 +1779,14 @@ impl<'en> Engine<'en> {
                             for rv in &returns {
                                 match variable_kinds.get(rv) {
                                     Some(VarKind::Identity) => {
-                                        if let Some(idt) = b.identities.get(rv) { row.push(format!("{}", idt)); }
-                                        else if let Some(pid) = b.posit_vars.get(rv) { row.push(format!("{}", pid)); }
-                                        else { row_ok = false; break; }
+                                        if let Some(idt) = b.identities.get(rv) {
+                                            row.push(format!("{}", idt));
+                                        } else if let Some(pid) = b.posit_vars.get(rv) {
+                                            row.push(format!("{}", pid));
+                                        } else {
+                                            row_ok = false;
+                                            break;
+                                        }
                                     }
                                     Some(VarKind::Value) | Some(VarKind::Time) => {
                                         if let Some((pid, kind)) = b.value_slots.get(rv) {
@@ -1509,20 +1794,115 @@ impl<'en> Engine<'en> {
                                                 let roles = appset.roles();
                                                 let allowed = tp_guard.lookup(&roles).clone();
                                                 let mut captured: Option<String> = None;
-                                                if allowed.contains("String") { if let Some(p) = pk_guard.posit::<String>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
-                                                if captured.is_none() && allowed.contains("JSON") { if let Some(p) = pk_guard.posit::<JSON>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
-                                                if captured.is_none() && allowed.contains("Decimal") { if let Some(p) = pk_guard.posit::<Decimal>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
-                                                if captured.is_none() && allowed.contains("i64") { if let Some(p) = pk_guard.posit::<i64>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
-                                                if captured.is_none() && allowed.contains("Certainty") { if let Some(p) = pk_guard.posit::<Certainty>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
-                                                if captured.is_none() && allowed.contains("Time") { if let Some(p) = pk_guard.posit::<Time>(*pid) { captured = Some(match kind { VarKind::Value => format!("{}", p.value()), VarKind::Time => format!("{}", p.time()), _ => String::new() }); } }
-                                                if let Some(cell) = captured { row.push(cell); } else { row_ok = false; break; }
-                                            } else { row_ok = false; break; }
-                                        } else { row_ok = false; break; }
+                                                if allowed.contains("String") {
+                                                    if let Some(p) = pk_guard.posit::<String>(*pid)
+                                                    {
+                                                        captured = Some(match kind {
+                                                            VarKind::Value => {
+                                                                format!("{}", p.value())
+                                                            }
+                                                            VarKind::Time => {
+                                                                format!("{}", p.time())
+                                                            }
+                                                            _ => String::new(),
+                                                        });
+                                                    }
+                                                }
+                                                if captured.is_none() && allowed.contains("JSON") {
+                                                    if let Some(p) = pk_guard.posit::<JSON>(*pid) {
+                                                        captured = Some(match kind {
+                                                            VarKind::Value => {
+                                                                format!("{}", p.value())
+                                                            }
+                                                            VarKind::Time => {
+                                                                format!("{}", p.time())
+                                                            }
+                                                            _ => String::new(),
+                                                        });
+                                                    }
+                                                }
+                                                if captured.is_none() && allowed.contains("Decimal")
+                                                {
+                                                    if let Some(p) = pk_guard.posit::<Decimal>(*pid)
+                                                    {
+                                                        captured = Some(match kind {
+                                                            VarKind::Value => {
+                                                                format!("{}", p.value())
+                                                            }
+                                                            VarKind::Time => {
+                                                                format!("{}", p.time())
+                                                            }
+                                                            _ => String::new(),
+                                                        });
+                                                    }
+                                                }
+                                                if captured.is_none() && allowed.contains("i64") {
+                                                    if let Some(p) = pk_guard.posit::<i64>(*pid) {
+                                                        captured = Some(match kind {
+                                                            VarKind::Value => {
+                                                                format!("{}", p.value())
+                                                            }
+                                                            VarKind::Time => {
+                                                                format!("{}", p.time())
+                                                            }
+                                                            _ => String::new(),
+                                                        });
+                                                    }
+                                                }
+                                                if captured.is_none()
+                                                    && allowed.contains("Certainty")
+                                                {
+                                                    if let Some(p) =
+                                                        pk_guard.posit::<Certainty>(*pid)
+                                                    {
+                                                        captured = Some(match kind {
+                                                            VarKind::Value => {
+                                                                format!("{}", p.value())
+                                                            }
+                                                            VarKind::Time => {
+                                                                format!("{}", p.time())
+                                                            }
+                                                            _ => String::new(),
+                                                        });
+                                                    }
+                                                }
+                                                if captured.is_none() && allowed.contains("Time") {
+                                                    if let Some(p) = pk_guard.posit::<Time>(*pid) {
+                                                        captured = Some(match kind {
+                                                            VarKind::Value => {
+                                                                format!("{}", p.value())
+                                                            }
+                                                            VarKind::Time => {
+                                                                format!("{}", p.time())
+                                                            }
+                                                            _ => String::new(),
+                                                        });
+                                                    }
+                                                }
+                                                if let Some(cell) = captured {
+                                                    row.push(cell);
+                                                } else {
+                                                    row_ok = false;
+                                                    break;
+                                                }
+                                            } else {
+                                                row_ok = false;
+                                                break;
+                                            }
+                                        } else {
+                                            row_ok = false;
+                                            break;
+                                        }
                                     }
-                                    _ => { row_ok = false; break; }
+                                    _ => {
+                                        row_ok = false;
+                                        break;
+                                    }
                                 }
                             }
-                            if row_ok { println!("{}", row.join(", ")); }
+                            if row_ok {
+                                println!("{}", row.join(", "));
+                            }
                         }
                         return;
                     }

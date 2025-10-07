@@ -1,0 +1,61 @@
+/* From all married couples, that have been ascertained, give me the name values of the wives and 
+   the time since when they had that name */
+search +p [{(+w, wife), (*, husband)}, "married", *], 
+          [{(p, posit), (*, ascertains)}, *, *], 
+          [{(w, name)}, +n, +t]
+return
+    n, t;
+
+/* For everything that has a name, give me all name values that became valid on 1972-02-13 */
+search [{(*, name)}, +n, '1972-02-13']
+return
+    n;
+
+/* For everything that has a name, give me all name values that were valid on or before 1999-12-31 */
+search [{(*, name)}, +n, +t]
+where t <= '1999-12-31'
+return
+    n;
+
+/* Marriage asserted and name for either spouse (union) */
+search +p [{(+w, wife), (+h, husband)}, "married", *],
+          [{(p, posit), (*, ascertains)}, *, *],
+          [{(w|h, name)}, +n, +t]
+where t < '2004-07-01'
+return
+    n, t;
+
+search +pos [{(+w, wife), (+h, husband)}, "married", *],
+          [{(pos, husband), (*, wife)}, *, *],
+          [{(w|h, name)}, +n, +t]
+where t < '2004-07-01'
+return
+    n, t;
+
+search +p [{(*, wife), (+h, husband)}, "married", *], 
+          [{(p, posit), (*, ascertains)}, +c, +at], 
+          [{(h, name)}, +n, +t]
+return
+    n, t, c, at;
+
+/* As-of variants (latest per pattern at given cut points) */
+search +p [{(+w, wife), (+h, husband)}, "married", *] as of '2012-12-12',
+          [{(p, posit), (*, ascertains)}, +c, +at] as of @NOW,
+          [{(w, name)}, +n, +t] as of @NOW
+return
+    n, t, c, at;
+
+search    [{(+h, name)}, +hn, *],
+          [{(+w, name)}, +wn, *],
+       +p [{(w, wife), (h, husband)}, +s, +t], 
+          [{(p, posit), (*, ascertains)}, *, *] 
+return
+    h, hn, w, wn, s, t;
+
+
+/* As-of using recalled time variables (temporally dependent join) */
+search +p [{(+w, wife), (+h, husband)}, "married", +t1] as of '2012-12-12',
+          [{(p, posit), (*, ascertains)}, +c, +at] as of @NOW,
+          [{(h, name)}, +n, +t] as of t1
+return
+    n, t, c, at;

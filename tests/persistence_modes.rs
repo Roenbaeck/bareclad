@@ -27,7 +27,10 @@ fn file_mode_persists_and_has_ledger() {
     let time = bareclad::datatype::Time::new();
     let _posit = db.create_posit(aset, "ok".to_string(), time);
     let head = db.persistor.lock().unwrap().current_superhash();
-    assert!(head.is_some(), "expected ledger head after posit insertion in file-backed mode");
+    assert!(
+        head.is_some(),
+        "expected ledger head after posit insertion in file-backed mode"
+    );
     // Clean up
     let _ = std::fs::remove_file(&path);
 }

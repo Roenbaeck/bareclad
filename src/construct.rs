@@ -522,7 +522,11 @@ impl PersistenceMode {
     /// Helper to derive a persistence mode from a flag + path string.
     /// If `enable` is false, returns InMemory regardless of path contents.
     pub fn from_config(enable: bool, path: impl Into<String>) -> Self {
-        if enable { PersistenceMode::File(path.into()) } else { PersistenceMode::InMemory }
+        if enable {
+            PersistenceMode::File(path.into())
+        } else {
+            PersistenceMode::InMemory
+        }
     }
 }
 
@@ -576,7 +580,7 @@ impl Database {
         let persistor = persistor;
 
         // Create the database so that we can prime it before returning it
-    let database = Database {
+        let database = Database {
             thing_generator: Arc::new(Mutex::new(thing_generator)),
             role_keeper: Arc::new(Mutex::new(role_keeper)),
             appearance_keeper: Arc::new(Mutex::new(appearance_keeper)),
@@ -603,8 +607,8 @@ impl Database {
         database.persistor.lock().unwrap().restore_things(&database);
         database.persistor.lock().unwrap().restore_roles(&database);
         database.persistor.lock().unwrap().restore_posits(&database);
-    // Verify/backfill integrity chain (file-backed only)
-    database.persistor.lock().unwrap().verify_and_backfill_integrity();
+        // Verify integrity chain (file-backed only)
+        database.persistor.lock().unwrap().verify_integrity();
 
         // Reserve some roles that will be necessary for implementing features
         // commonly found in many other (including non-tradtional) databases.

@@ -37,7 +37,10 @@ fn main() {
         }
     }
     let mode = if enable_persistence {
-        println!("Using file-backed persistence at '{}'.", database_file_and_path);
+        println!(
+            "Using file-backed persistence at '{}'.",
+            database_file_and_path
+        );
         PersistenceMode::File(database_file_and_path.clone())
     } else {
         println!("Persistence disabled (ephemeral in-memory engine).");
@@ -56,14 +59,17 @@ fn main() {
     );
     let traqula_content = read_to_string(traqula_file_to_run_on_startup).unwrap();
     // Use the interface submission method (currently executes synchronously under the hood)
-    let handle = interface.start_query(traqula_content, QueryOptions { stream_results: false, timeout: None });
+    let handle = interface.start_query(
+        traqula_content,
+        QueryOptions {
+            stream_results: false,
+            timeout: None,
+        },
+    );
     // Wait for the startup script to finish before printing diagnostics
     handle.join();
     if cfg!(debug_assertions) {
-        println!(
-            "Kept roles: {}",
-            db.role_keeper().lock().unwrap().len()
-        );
+        println!("Kept roles: {}", db.role_keeper().lock().unwrap().len());
         println!(
             "Kept appearances: {}",
             db.appearance_keeper().lock().unwrap().len()
@@ -72,15 +78,12 @@ fn main() {
             "Kept appearance sets: {}",
             db.appearance_set_keeper().lock().unwrap().len()
         );
-        println!(
-            "Kept posits: {}",
-            db.posit_keeper().lock().unwrap().len()
-        );
+        println!("Kept posits: {}", db.posit_keeper().lock().unwrap().len());
         println!(
             "Role->data type partitions: {:?}",
             db.role_name_to_data_type_lookup().lock().unwrap()
         );
-    if let Some((head, count)) = db.persistor.lock().unwrap().current_superhash() {
+        if let Some((head, count)) = db.persistor.lock().unwrap().current_superhash() {
             println!("Integrity ledger head: {} ({} posits)", head, count);
         }
     }

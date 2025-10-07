@@ -28,15 +28,15 @@
 //! Current implementation panics on unexpected SQLite errors. A future revision
 //! could propagate a domain error type instead.
 // used for persistence
-use rusqlite::{Connection, Error, params};
 use blake3;
+use rusqlite::{Connection, Error, params};
 
 /// 64 zero hex string representing the genesis (no previous) hash in the integrity chain.
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 // our own stuff
 use crate::construct::{Appearance, AppearanceSet, Database, Posit, Role, Thing};
-use crate::datatype::{DataType, Decimal, JSON, Time};
+use crate::datatype::{Certainty, DataType, Decimal, JSON, Time};
 
 // ------------- Persistence -------------
 pub struct Persistor {
@@ -46,100 +46,13 @@ pub struct Persistor {
     seen_data_types: Vec<u8>,
 }
 impl Persistor {
-    /// Creates (and if needed migrates) the underlying schema.
-    pub fn new(connection: &Connection) -> Persistor {
-        // Enable WAL for better concurrency on file-backed DBs (ignored if in-memory)
-        let _ = connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
-        connection
-            .execute_batch(
-                "
-            create table if not exists Thing (
-                Thing_Identity integer not null, 
-                constraint unique_and_referenceable_Thing_Identity primary key (
-                    Thing_Identity
-                )
-            ) STRICT;
-            create table if not exists Role (
-                Role_Identity integer not null,
-                Role text not null,
-                Reserved integer not null,
-                constraint Role_is_Thing foreign key (
-                    Role_Identity
-                ) references Thing(Thing_Identity),
-                constraint referenceable_Role_Identity primary key (
-                    Role_Identity
-                ),
-                constraint unique_Role unique (
-                    Role
-                )
-            ) STRICT;
-            create table if not exists DataType (
-                DataType_Identity integer not null,
-                DataType text not null,
-                constraint referenceable_DataType_Identity primary key (
-                    DataType_Identity
-                ),
-                constraint unique_DataType unique (
-                    DataType
-                )
-            ) STRICT;
-            create table if not exists Posit (
-                Posit_Identity integer not null,
-                AppearanceSet text not null,
-                AppearingValue any null, 
-                ValueType_Identity integer not null, 
-                AppearanceTime any null,
-                constraint Posit_is_Thing foreign key (
-                    Posit_Identity
-                ) references Thing(Thing_Identity),
-                constraint ValueType_is_DataType foreign key (
-                    ValueType_Identity
-                ) references DataType(DataType_Identity),
-                constraint referenceable_Posit_Identity primary key (
-                    Posit_Identity
-                ),
-                constraint unique_Posit unique (
-                    AppearanceSet,
-                    AppearingValue,
-                    AppearanceTime
-                )
-            ) STRICT;
-            create table if not exists PositHash (
-                Posit_Identity integer not null,
-                PrevHash text not null,
-                Hash text not null,
-                constraint PositHash_is_Posit foreign key (
-                    Posit_Identity
-                ) references Posit(Posit_Identity),
-                constraint referenceable_PositHash_Identity primary key (
-                    Posit_Identity
-                )
-            ) STRICT;
-            create table if not exists LedgerHead (
-                Name text not null,
-                HeadHash text not null,
-                Count integer not null,
-                constraint referenceable_LedgerHead_Name primary key (
-                    Name
-                )
-            ) STRICT;
-            ",
-            )
-            .unwrap();
-
-        // Record the database path (if any) for opening per-call connections safely.
-        let db_path = connection.path().map(|p| p.to_string());
-        Persistor { db_path, seen_data_types: Vec::new() }
-    }
-
     /// Create a file-backed persistor given a filesystem path; opens a connection to initialize schema and records the path for later calls.
     pub fn new_from_file(path: &str) -> Persistor {
         let conn = Connection::open(path).unwrap();
         // Enable WAL for better concurrency on file-backed DBs
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
-        conn
-            .execute_batch(
-                "
+        conn.execute_batch(
+            "
             create table if not exists Thing (
                 Thing_Identity integer not null, 
                 constraint unique_and_referenceable_Thing_Identity primary key (
@@ -211,14 +124,20 @@ impl Persistor {
                 )
             ) STRICT;
             ",
-            )
-            .unwrap();
-        Persistor { db_path: Some(path.to_string()), seen_data_types: Vec::new() }
+        )
+        .unwrap();
+        Persistor {
+            db_path: Some(path.to_string()),
+            seen_data_types: Vec::new(),
+        }
     }
 
     /// Create a persistor that performs no persistence at runtime (no file I/O).
     pub fn new_no_persistence() -> Persistor {
-        Persistor { db_path: None, seen_data_types: Vec::new() }
+        Persistor {
+            db_path: None,
+            seen_data_types: Vec::new(),
+        }
     }
 
     /// Helper: run an operation with a Connection. For file-backed databases, opens a fresh
@@ -241,9 +160,9 @@ impl Persistor {
         let mut existing = false;
         let _ = self.with_conn(|conn| {
             match conn
-            .prepare("select Thing_Identity from Thing where Thing_Identity = ?")
-            .unwrap()
-            .query_row::<usize, _, _>(params![&thing], |r| r.get(0))
+                .prepare("select Thing_Identity from Thing where Thing_Identity = ?")
+                .unwrap()
+                .query_row::<usize, _, _>(params![&thing], |r| r.get(0))
             {
                 Ok(_) => {
                     existing = true;
@@ -269,18 +188,20 @@ impl Persistor {
         let mut existing = false;
         let _ = self.with_conn(|conn| {
             match conn
-            .prepare("select Role_Identity from Role where Role = ?")
-            .unwrap()
-            .query_row::<usize, _, _>(params![&role.name()], |r| r.get(0))
+                .prepare("select Role_Identity from Role where Role = ?")
+                .unwrap()
+                .query_row::<usize, _, _>(params![&role.name()], |r| r.get(0))
             {
                 Ok(_) => {
                     existing = true;
                 }
                 Err(Error::QueryReturnedNoRows) => {
-                    conn.prepare("insert into Role (Role_Identity, Role, Reserved) values (?, ?, ?)")
-                        .unwrap()
-                        .execute(params![&role.role(), &role.name(), &role.reserved()])
-                        .unwrap();
+                    conn.prepare(
+                        "insert into Role (Role_Identity, Role, Reserved) values (?, ?, ?)",
+                    )
+                    .unwrap()
+                    .execute(params![&role.role(), &role.name(), &role.reserved()])
+                    .unwrap();
                 }
                 Err(err) => {
                     panic!(
@@ -353,42 +274,37 @@ impl Persistor {
                     .execute(params![&posit.posit(), &apperance_set_as_text, &posit.value(), &posit.value().identifier(), &posit.time()])
                     .unwrap();
 
-                // Integrity ledger: append BLAKE3 hash for this posit
-                // Previous hash = latest in PositHash (or GENESIS if none)
+                // Integrity ledger (canonical hash):
+                // Fetch previous hash first, then re-select the just inserted row using CAST for a stable textual form
                 let prev_hash: String = {
                     let mut stmt = conn.prepare("select Hash from PositHash order by Posit_Identity desc limit 1").unwrap();
                     let mut rows = stmt.query([]).unwrap();
-                    if let Some(row) = rows.next().unwrap() {
-                        row.get::<_, String>(0).unwrap()
-                    } else {
-                        // Genesis hash (no previous posit)
-                        GENESIS_HASH.to_string()
-                    }
+                    if let Some(row) = rows.next().unwrap() { row.get::<_, String>(0).unwrap() } else { GENESIS_HASH.to_string() }
                 };
-                let input = format!(
-                    "{}|{}|{}|{}|{}|prev={}",
-                    &posit.posit(),
-                    &apperance_set_as_text,
-                    &posit.value().identifier(),
-                    &posit.value().to_string(),
-                    &posit.time().to_string(),
-                    &prev_hash
-                );
-                let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
-                conn.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
-                    .unwrap()
-                    .execute(params![&posit.posit(), &prev_hash, &hash_hex])
-                    .unwrap();
-                // Update ledger head
-                let count: i64 = conn
-                    .prepare("select count(1) from PositHash")
-                    .unwrap()
-                    .query_row([], |r| r.get(0))
-                    .unwrap();
-                conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
-                    .unwrap()
-                    .execute(params![&hash_hex, &count])
-                    .unwrap();
+                let mut stmt = conn.prepare("select AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit where Posit_Identity = ?").unwrap();
+                let mut rows = stmt.query(params![&posit.posit()]).unwrap();
+                if let Some(r) = rows.next().unwrap() {
+                    let aset_text: String = r.get_unwrap(0);
+                    let value_text: String = r.get_unwrap(1);
+                    let vtid: i64 = r.get_unwrap(2);
+                    let atime_text: String = r.get_unwrap(3);
+                    let input = format!("{}|{}|{}|{}|{}|prev={}", &posit.posit(), aset_text, vtid, value_text, atime_text, prev_hash);
+                    let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
+                    conn.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
+                        .unwrap()
+                        .execute(params![&posit.posit(), &prev_hash, &hash_hex])
+                        .unwrap();
+                    // Update ledger head
+                    let count: i64 = conn
+                        .prepare("select count(1) from PositHash")
+                        .unwrap()
+                        .query_row([], |r| r.get(0))
+                        .unwrap();
+                    conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
+                        .unwrap()
+                        .execute(params![&hash_hex, &count])
+                        .unwrap();
+                }
             });
         }
         existing
@@ -398,7 +314,9 @@ impl Persistor {
         if let Some(ref path) = self.db_path {
             let conn = Connection::open(path).unwrap();
             let mut stmt = conn.prepare("select Thing_Identity from Thing").unwrap();
-            let rows = stmt.query_map([], |row| Ok(row.get::<_, Thing>(0).unwrap())).unwrap();
+            let rows = stmt
+                .query_map([], |row| Ok(row.get::<_, Thing>(0).unwrap()))
+                .unwrap();
             for thing in rows {
                 db.thing_generator().lock().unwrap().retain(thing.unwrap());
             }
@@ -408,9 +326,17 @@ impl Persistor {
     pub fn restore_roles(&mut self, db: &Database) {
         if let Some(ref path) = self.db_path {
             let conn = Connection::open(path).unwrap();
-            let mut stmt = conn.prepare("select Role_Identity, Role, Reserved from Role").unwrap();
+            let mut stmt = conn
+                .prepare("select Role_Identity, Role, Reserved from Role")
+                .unwrap();
             let rows = stmt
-                .query_map([], |row| Ok(Role::new(row.get(0).unwrap(), row.get(1).unwrap(), row.get(2).unwrap())))
+                .query_map([], |row| {
+                    Ok(Role::new(
+                        row.get(0).unwrap(),
+                        row.get(1).unwrap(),
+                        row.get(2).unwrap(),
+                    ))
+                })
                 .unwrap();
             for role in rows {
                 db.keep_role(role.unwrap());
@@ -421,7 +347,9 @@ impl Persistor {
     ///
     /// Appearance sets are parsed from their serialized pipe-separated form.
     pub fn restore_posits(&mut self, db: &Database) {
-        if self.db_path.is_none() { return; }
+        if self.db_path.is_none() {
+            return;
+        }
         let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
         let mut stmt = conn
             .prepare(
@@ -491,15 +419,25 @@ impl Persistor {
                         Time::convert(&row.get_ref_unwrap(4)),
                     ));
                 }
+                Certainty::DATA_TYPE => {
+                    db.keep_posit(Posit::new(
+                        thing,
+                        kept_appearance_set,
+                        <Certainty as DataType>::convert(&row.get_ref_unwrap(2)),
+                        Time::convert(&row.get_ref_unwrap(4)),
+                    ));
+                }
                 _ => (),
             }
         }
     }
 
-    /// Verify the integrity chain of posits; if the chain data is missing (fresh upgrade), backfill it.
-    /// Logs integrity violations to stderr but does not attempt to "fix" mismatches (besides backfilling when empty).
-    pub fn verify_and_backfill_integrity(&mut self) {
-        if self.db_path.is_none() { return; }
+    /// Verify the integrity chain of posits (no auto backfill / rebuild).
+    /// Emits warnings if ledger missing or hashes mismatch.
+    pub fn verify_integrity(&mut self) {
+        if self.db_path.is_none() {
+            return;
+        }
         let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
         // Quick counts
         let posit_count: i64 = conn
@@ -507,61 +445,27 @@ impl Persistor {
             .unwrap()
             .query_row([], |r| r.get(0))
             .unwrap();
+        if posit_count == 0 {
+            return;
+        }
         let hash_count: i64 = conn
             .prepare("select count(1) from PositHash")
             .unwrap()
             .query_row([], |r| r.get(0))
             .unwrap();
-        if posit_count == 0 { return; }
-
-        // Helper to compute chain from scratch and write PositHash + LedgerHead
-        let backfill = |conn: &Connection| {
-            let tx = conn.unchecked_transaction().unwrap();
-            tx.execute("delete from PositHash", []).unwrap();
-            let mut prev = GENESIS_HASH.to_string();
-            let mut last = prev.clone();
-            {
-                // Scope to ensure stmt & rows are dropped before committing the transaction (avoids E0505 borrow error)
-                let mut stmt = tx
-                    .prepare("select Posit_Identity, AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit order by Posit_Identity asc")
-                    .unwrap();
-                let mut rows = stmt.query([]).unwrap();
-                while let Some(row) = rows.next().unwrap() {
-                    let thing: i64 = row.get_unwrap(0);
-                    let aset: String = row.get_unwrap(1);
-                    let aval: String = row.get_unwrap(2);
-                    let vtid: i64 = row.get_unwrap(3);
-                    let atime: String = row.get_unwrap(4);
-                    let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
-                    let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
-                    tx.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
-                        .unwrap()
-                        .execute(params![&thing, &prev, &hash_hex])
-                        .unwrap();
-                    prev = hash_hex.clone();
-                    last = hash_hex;
-                }
-            } // stmt, rows dropped here
-            tx.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
-                .unwrap()
-                .execute(params![&last, &posit_count])
-                .unwrap();
-            tx.commit().unwrap();
-        };
-
         if hash_count == 0 {
-            // Fresh upgrade path: build the entire chain
-            backfill(&conn);
-            eprintln!("[bareclad] Integrity chain backfilled for {} posits.", posit_count);
+            eprintln!(
+                "[bareclad] INTEGRITY WARNING: ledger missing ({} posits).",
+                posit_count
+            );
             return;
         }
-
-        // Verify existing chain
+        // Verify existing chain (no repair)
         let mut stmt = conn
             .prepare("select p.Posit_Identity, p.AppearanceSet, cast(p.AppearingValue as text), p.ValueType_Identity, p.AppearanceTime, h.Hash from Posit p join PositHash h on h.Posit_Identity = p.Posit_Identity order by p.Posit_Identity asc")
             .unwrap();
         let mut rows = stmt.query([]).unwrap();
-    let mut prev = GENESIS_HASH.to_string();
+        let mut prev = GENESIS_HASH.to_string();
         let mut mismatches = 0usize;
         let mut first_bad: Option<i64> = None;
         let mut last_hash = prev.clone();
@@ -572,11 +476,16 @@ impl Persistor {
             let vtid: i64 = row.get_unwrap(3);
             let atime: String = row.get_unwrap(4);
             let stored_hash: String = row.get_unwrap(5);
-            let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
+            let input = format!(
+                "{}|{}|{}|{}|{}|prev={}",
+                thing, aset, vtid, aval, atime, prev
+            );
             let calc = blake3::hash(input.as_bytes()).to_hex().to_string();
             if calc != stored_hash {
                 mismatches += 1;
-                if first_bad.is_none() { first_bad = Some(thing); }
+                if first_bad.is_none() {
+                    first_bad = Some(thing);
+                }
             }
             prev = stored_hash.clone();
             last_hash = stored_hash;
@@ -589,7 +498,7 @@ impl Persistor {
 
         if mismatches > 0 {
             eprintln!(
-                "[bareclad] INTEGRITY VIOLATION: {} mismatched hashes (first at Posit_Identity={}). Chain has been left unchanged.",
+                "[bareclad] INTEGRITY VIOLATION: {} mismatched hashes (first at Posit_Identity={}). (No auto repair)",
                 mismatches,
                 first_bad.unwrap_or(-1)
             );
@@ -598,7 +507,9 @@ impl Persistor {
 
     /// Returns the current integrity ledger head hash and count, when persistence is enabled and the ledger exists.
     pub fn current_superhash(&self) -> Option<(String, i64)> {
-        if self.db_path.is_none() { return None; }
+        if self.db_path.is_none() {
+            return None;
+        }
         let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
         let mut stmt = conn
             .prepare("select HeadHash, Count from LedgerHead where Name = 'PositLedger'")

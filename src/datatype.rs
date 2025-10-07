@@ -88,58 +88,98 @@ impl DataType for Certainty {
     const UID: u8 = 1;
     const DATA_TYPE: &'static str = "Certainty";
     fn convert(value: &ValueRef) -> Certainty {
-        Certainty {
-            alpha: i8::try_from(value.as_i64().unwrap()).unwrap(),
-        }
+        let raw_i64 = value.as_i64().unwrap_or_else(|e| {
+            panic!("[bareclad][restore] Expected integer for Certainty, got error: {e:?}")
+        });
+        let alpha = i8::try_from(raw_i64).unwrap_or_else(|e| {
+            panic!("[bareclad][restore] Certainty value out of i8 range (raw={raw_i64}) -> {e:?}")
+        });
+        Certainty { alpha }
     }
 }
 impl DataType for String {
     const UID: u8 = 2;
     const DATA_TYPE: &'static str = "String";
     fn convert(value: &ValueRef) -> String {
-        String::from(value.as_str().unwrap())
+        match value.as_str() {
+            Ok(s) => s.to_string(),
+            Err(e) => panic!("[bareclad][restore] Failed to read persisted String value: {e:?}"),
+        }
     }
 }
 impl DataType for NaiveDateTime {
     const UID: u8 = 3;
     const DATA_TYPE: &'static str = "NaiveDateTime";
     fn convert(value: &ValueRef) -> NaiveDateTime {
-        NaiveDateTime::from_str(value.as_str().unwrap()).unwrap()
+        let raw = value.as_str().unwrap_or_else(|e| {
+            panic!("[bareclad][restore] NaiveDateTime not stored as text: {e:?}")
+        });
+        NaiveDateTime::from_str(raw).unwrap_or_else(|e| {
+            panic!("[bareclad][restore] Failed to parse NaiveDateTime from '{raw}': {e:?}")
+        })
     }
 }
 impl DataType for NaiveDate {
     const UID: u8 = 4;
     const DATA_TYPE: &'static str = "NaiveDate";
     fn convert(value: &ValueRef) -> NaiveDate {
-        NaiveDate::from_str(value.as_str().unwrap()).unwrap()
+        let raw = value
+            .as_str()
+            .unwrap_or_else(|e| panic!("[bareclad][restore] NaiveDate not stored as text: {e:?}"));
+        NaiveDate::from_str(raw).unwrap_or_else(|e| {
+            panic!("[bareclad][restore] Failed to parse NaiveDate from '{raw}': {e:?}")
+        })
     }
 }
 impl DataType for i64 {
     const UID: u8 = 5;
     const DATA_TYPE: &'static str = "i64";
     fn convert(value: &ValueRef) -> i64 {
-        value.as_i64().unwrap()
+        value
+            .as_i64()
+            .unwrap_or_else(|e| panic!("[bareclad][restore] Failed to read i64 value: {e:?}"))
     }
 }
 impl DataType for Decimal {
     const UID: u8 = 6;
     const DATA_TYPE: &'static str = "Decimal";
     fn convert(value: &ValueRef) -> Decimal {
-        Decimal(BigDecimal::from_str(value.as_str().unwrap()).unwrap())
+        let raw = value
+            .as_str()
+            .unwrap_or_else(|e| panic!("[bareclad][restore] Decimal not stored as text: {e:?}"));
+        match BigDecimal::from_str(raw) {
+            Ok(d) => Decimal(d),
+            Err(e) => panic!("[bareclad][restore] Failed to parse Decimal from '{raw}': {e:?}"),
+        }
     }
 }
 impl DataType for JSON {
     const UID: u8 = 7;
     const DATA_TYPE: &'static str = "JSON";
     fn convert(value: &ValueRef) -> JSON {
-        JSON(Json::from_str(value.as_str().unwrap()).unwrap())
+        let raw = value
+            .as_str()
+            .unwrap_or_else(|e| panic!("[bareclad][restore] JSON not stored as text: {e:?}"));
+        match Json::from_str(raw) {
+            Ok(j) => JSON(j),
+            Err(e) => panic!("[bareclad][restore] Failed to parse JSON from '{raw}': {e:?}"),
+        }
     }
 }
 impl DataType for Time {
     const UID: u8 = 8;
     const DATA_TYPE: &'static str = "Time";
     fn convert(value: &ValueRef) -> Time {
-        parse_time(value.as_str().unwrap()).unwrap()
+        let raw = value
+            .as_str()
+            .unwrap_or_else(|e| panic!("[bareclad][restore] Time not stored as text: {e:?}"));
+        // Try persisted canonical formats first, then fall back to script literals.
+        match Time::parse_persisted(raw) {
+            Some(t) => t,
+            None => parse_time(raw).unwrap_or_else(|| {
+                panic!("[bareclad][restore] Failed to parse Time literal '{raw}' from persistence (no recognized format)")
+            }),
+        }
     }
 }
 
@@ -502,9 +542,60 @@ impl Time {
     }
     /// Creates a `Time` from a datetime string acceptable by `NaiveDateTime::from_str`.
     pub fn new_datetime_from(d: &str) -> Time {
-        Time {
-            moment: TimeType::DateTime(NaiveDateTime::from_str(d).unwrap()),
+        match NaiveDateTime::from_str(d) {
+            Ok(dt) => Time {
+                moment: TimeType::DateTime(dt),
+            },
+            Err(e) => panic!("[bareclad][time] Failed to parse datetime '{d}': {e}"),
         }
+    }
+    /// Creates a `Time` from an existing `NaiveDateTime` (internal helper to avoid double parsing)
+    pub fn from_naive_datetime(dt: NaiveDateTime) -> Time {
+        Time {
+            moment: TimeType::DateTime(dt),
+        }
+    }
+    /// Parse a persisted canonical textual form of Time (no quotes, produced by Display).
+    /// Accepted forms:
+    /// BOT | EOT | YYYY | YYYY-MM | YYYY-MM-DD | YYYY-MM-DD HH:MM:SS[.fraction] | YYYY-MM-DDTHH:MM:SS[.fraction]
+    fn parse_persisted(raw: &str) -> Option<Time> {
+        let s = raw.trim();
+        match s {
+            "BOT" => return Some(Time::new_beginning_of_time()),
+            "EOT" => return Some(Time::new_end_of_time()),
+            _ => {}
+        }
+        if (s.contains(':')) && (s.contains(' ') || s.contains('T')) && s.matches('-').count() == 2
+        {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
+                return Some(Time::from_naive_datetime(dt));
+            }
+            if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+                return Some(Time::from_naive_datetime(dt));
+            }
+        }
+        if s.matches('-').count() == 2 && !s.contains(':') {
+            if NaiveDate::from_str(s).is_ok() {
+                return Some(Time::new_date_from(s));
+            }
+        }
+        if s.matches('-').count() == 1 && !s.contains(':') {
+            if let Some((y, m)) = s.split_once('-') {
+                if y.chars().all(|c| c == '-' || c.is_ascii_digit())
+                    && m.chars().all(|c| c.is_ascii_digit())
+                {
+                    if let Ok(mm) = m.parse::<u8>() {
+                        if (1..=12).contains(&mm) {
+                            return Some(Time::new_year_month_from(s));
+                        }
+                    }
+                }
+            }
+        }
+        if s.chars().all(|c| c == '-' || c.is_ascii_digit()) && (4..=8).contains(&s.len()) {
+            return Some(Time::new_year_from(s));
+        }
+        None
     }
 }
 impl fmt::Display for Time {

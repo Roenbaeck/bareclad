@@ -8,10 +8,13 @@
 //! engine. Callers can submit queries and cancel them by id.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use std::sync::mpsc::{self, Receiver};
 
 use crate::construct::Database;
 use crate::traqula::Engine;
@@ -25,10 +28,18 @@ pub struct Row(pub String);
 #[derive(Debug)]
 pub struct CancelToken(Arc<AtomicBool>);
 impl CancelToken {
-    pub fn new() -> Self { Self(Arc::new(AtomicBool::new(false))) }
-    pub fn cancel(&self) { self.0.store(true, Ordering::SeqCst); }
-    pub fn is_cancelled(&self) -> bool { self.0.load(Ordering::Relaxed) }
-    pub fn clone(&self) -> Self { Self(Arc::clone(&self.0)) }
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+    pub fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
 }
 
 /// Opaque query identifier.
@@ -45,11 +56,19 @@ pub struct QueryHandle {
 }
 impl QueryHandle {
     /// Request cancellation (cooperative). The worker may take a short time to observe it.
-    pub fn cancel(&self) { self.cancel.cancel(); }
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
     /// Wait for the query to finish.
-    pub fn join(mut self) { if let Some(j) = self.join.take() { let _ = j.join(); } }
+    pub fn join(mut self) {
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+    }
     /// Elapsed time since start.
-    pub fn elapsed(&self) -> Duration { self.started.elapsed() }
+    pub fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
 }
 
 /// Query submission options.
@@ -58,7 +77,12 @@ pub struct QueryOptions {
     pub timeout: Option<Duration>,
 }
 impl Default for QueryOptions {
-    fn default() -> Self { Self { stream_results: true, timeout: None } }
+    fn default() -> Self {
+        Self {
+            stream_results: true,
+            timeout: None,
+        }
+    }
 }
 
 /// Registry managing query lifecycles.
@@ -70,12 +94,17 @@ pub struct QueryInterface {
 
 impl QueryInterface {
     pub fn new(db: Arc<Database>) -> Self {
-        Self { db, next_id: Mutex::new(0), active: Mutex::new(HashMap::new()) }
+        Self {
+            db,
+            next_id: Mutex::new(0),
+            active: Mutex::new(HashMap::new()),
+        }
     }
 
     fn allocate_id(&self) -> QueryId {
         let mut g = self.next_id.lock().unwrap();
-        *g += 1; QueryId(*g)
+        *g += 1;
+        QueryId(*g)
     }
 
     /// Submit a Traqula script for execution on a background thread.
@@ -83,10 +112,7 @@ impl QueryInterface {
     pub fn start_query(&self, script: String, options: QueryOptions) -> QueryHandle {
         let id = self.allocate_id();
         let cancel = CancelToken::new();
-        self.active
-            .lock()
-            .unwrap()
-            .insert(id, cancel.clone());
+        self.active.lock().unwrap().insert(id, cancel.clone());
 
         // Optional results channel (not currently used by Engine which prints directly)
         let (tx, rx) = if options.stream_results {
@@ -112,7 +138,13 @@ impl QueryInterface {
             let _ = tx; // placeholder to avoid unused warning when not streaming
         });
 
-        QueryHandle { id, cancel, started: Instant::now(), join: Some(join), results: rx }
+        QueryHandle {
+            id,
+            cancel,
+            started: Instant::now(),
+            join: Some(join),
+            results: rx,
+        }
     }
 
     /// Run a Traqula script synchronously on the current thread.
@@ -130,6 +162,8 @@ impl QueryInterface {
         if let Some(tok) = self.active.lock().unwrap().get(&id) {
             tok.cancel();
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 }
