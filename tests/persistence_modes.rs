@@ -2,7 +2,7 @@ use bareclad::construct::{Database, PersistenceMode};
 
 #[test]
 fn in_memory_mode_allows_basic_operations() {
-    let db = Database::new(PersistenceMode::InMemory);
+    let db = Database::new(PersistenceMode::InMemory).expect("db");
     let (role, existed) = db.create_role("person".to_string(), false);
     assert!(!existed);
     let thing = db.create_thing();
@@ -18,7 +18,7 @@ fn file_mode_persists_and_has_ledger() {
     let path = "test_bareclad_temp.db".to_string();
     // Ensure clean start
     let _ = std::fs::remove_file(&path);
-    let db = Database::new(PersistenceMode::File(path.clone()));
+    let db = Database::new(PersistenceMode::File(path.clone())).expect("db");
     let (role, _) = db.create_role("audit".to_string(), false);
     let thing = db.create_thing();
     let (appearance, _) = db.create_apperance(*thing, role);

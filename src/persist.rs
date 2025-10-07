@@ -30,6 +30,7 @@
 // used for persistence
 use blake3;
 use rusqlite::{Connection, Error, params};
+use crate::error::{BarecladError, Result};
 
 /// 64 zero hex string representing the genesis (no previous) hash in the integrity chain.
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -47,9 +48,8 @@ pub struct Persistor {
 }
 impl Persistor {
     /// Create a file-backed persistor given a filesystem path; opens a connection to initialize schema and records the path for later calls.
-    pub fn new_from_file(path: &str) -> Persistor {
-        let conn = Connection::open(path).unwrap();
-        // Enable WAL for better concurrency on file-backed DBs
+    pub fn new_from_file(path: &str) -> Result<Persistor> {
+        let conn = Connection::open(path).map_err(BarecladError::from)?;
         let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         conn.execute_batch(
             "
@@ -125,11 +125,11 @@ impl Persistor {
             ) STRICT;
             ",
         )
-        .unwrap();
-        Persistor {
+        .map_err(BarecladError::from)?;
+        Ok(Persistor {
             db_path: Some(path.to_string()),
             seen_data_types: Vec::new(),
-        }
+        })
     }
 
     /// Create a persistor that performs no persistence at runtime (no file I/O).
@@ -143,9 +143,9 @@ impl Persistor {
     /// Helper: run an operation with a Connection. For file-backed databases, opens a fresh
     /// connection per call to avoid sharing Connection across threads. For in-memory, falls back
     /// to the primary connection created by the caller.
-    fn with_conn<T>(&self, mut op: impl FnMut(&Connection) -> T) -> Option<T> {
+    fn with_conn<T>(&self, mut op: impl FnMut(&Connection) -> Result<T>) -> Option<Result<T>> {
         if let Some(ref path) = self.db_path {
-            let conn = Connection::open(path).unwrap();
+            let conn = match Connection::open(path) { Ok(c) => c, Err(e) => return Some(Err(BarecladError::from(e))) };
             // Busy timeout helps under concurrent writes
             let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
             Some(op(&conn))
@@ -156,67 +156,42 @@ impl Persistor {
     }
     /// Persist a thing identity if not already present.
     /// Returns true if the record already existed.
-    pub fn persist_thing(&mut self, thing: &Thing) -> bool {
+    pub fn persist_thing(&mut self, thing: &Thing) -> Result<bool> {
         let mut existing = false;
-        let _ = self.with_conn(|conn| {
-            match conn
-                .prepare("select Thing_Identity from Thing where Thing_Identity = ?")
-                .unwrap()
-                .query_row::<usize, _, _>(params![&thing], |r| r.get(0))
-            {
-                Ok(_) => {
-                    existing = true;
-                }
+        if let Some(r) = self.with_conn(|conn| {
+            let mut stmt = conn.prepare("select Thing_Identity from Thing where Thing_Identity = ?")?;
+            match stmt.query_row::<usize, _, _>(params![&thing], |r| r.get(0)) {
+                Ok(_) => { existing = true; }
                 Err(Error::QueryReturnedNoRows) => {
-                    conn.prepare("insert into Thing (Thing_Identity) values (?)")
-                        .unwrap()
-                        .execute(params![&thing])
-                        .unwrap();
+                    conn.prepare("insert into Thing (Thing_Identity) values (?)")?
+                        .execute(params![&thing])?;
                 }
-                Err(err) => {
-                    panic!(
-                        "Could not check if the thing '{}' is persisted: {}",
-                        &thing, err
-                    );
-                }
+                Err(e) => { return Err(BarecladError::Persistence(format!("Thing check failed: {e}"))); }
             }
-        });
-        existing
+            Ok(())
+        }) { r?; }
+        Ok(existing)
     }
     /// Persist a role row by unique role name. Returns true if already present.
-    pub fn persist_role(&mut self, role: &Role) -> bool {
+    pub fn persist_role(&mut self, role: &Role) -> Result<bool> {
         let mut existing = false;
-        let _ = self.with_conn(|conn| {
-            match conn
-                .prepare("select Role_Identity from Role where Role = ?")
-                .unwrap()
-                .query_row::<usize, _, _>(params![&role.name()], |r| r.get(0))
-            {
-                Ok(_) => {
-                    existing = true;
-                }
+        if let Some(r) = self.with_conn(|conn| {
+            let mut stmt = conn.prepare("select Role_Identity from Role where Role = ?")?;
+            match stmt.query_row::<usize, _, _>(params![&role.name()], |r| r.get(0)) {
+                Ok(_) => { existing = true; }
                 Err(Error::QueryReturnedNoRows) => {
-                    conn.prepare(
-                        "insert into Role (Role_Identity, Role, Reserved) values (?, ?, ?)",
-                    )
-                    .unwrap()
-                    .execute(params![&role.role(), &role.name(), &role.reserved()])
-                    .unwrap();
+                    conn.prepare("insert into Role (Role_Identity, Role, Reserved) values (?, ?, ?)")?
+                        .execute(params![&role.role(), &role.name(), &role.reserved()])?;
                 }
-                Err(err) => {
-                    panic!(
-                        "Could not check if the role '{}' is persisted: {}",
-                        &role.name(),
-                        err
-                    );
-                }
+                Err(e) => { return Err(BarecladError::Persistence(format!("Role check failed: {e}"))); }
             }
-        });
-        existing
+            Ok(())
+        }) { r?; }
+        Ok(existing)
     }
     /// Persist a posit (idempotent). If unseen, ensures associated value & time
     /// data types are catalogued. Returns true if the posit already existed.
-    pub fn persist_posit<V: 'static + DataType>(&mut self, posit: &Posit<V>) -> bool {
+    pub fn persist_posit<V: 'static + DataType>(&mut self, posit: &Posit<V>) -> Result<bool> {
         let mut appearances = Vec::new();
         let appearance_set = posit.appearance_set();
         for appearance in appearance_set.appearances().iter() {
@@ -226,25 +201,15 @@ impl Persistor {
         let apperance_set_as_text = appearances.join("|");
         let mut existing = false;
         // Existence check
-        let _ = self.with_conn(|conn| {
-            match conn
-            .prepare("select Posit_Identity from Posit where AppearanceSet = ? and AppearingValue = ? and AppearanceTime = ?")
-            .unwrap()
-            .query_row::<usize, _, _>(params![&apperance_set_as_text, &posit.value(), &posit.time()], |r| r.get(0))
-            {
-                Ok(_) => {
-                    existing = true;
-                }
-                Err(Error::QueryReturnedNoRows) => { /* will insert below */ }
-                Err(err) => {
-                    panic!(
-                        "Could not check if the posit {} is persisted: {}",
-                        &posit.posit(),
-                        err
-                    );
-                }
+        if let Some(r) = self.with_conn(|conn| {
+            let mut stmt = conn.prepare("select Posit_Identity from Posit where AppearanceSet = ? and AppearingValue = ? and AppearanceTime = ?")?;
+            match stmt.query_row::<usize, _, _>(params![&apperance_set_as_text, &posit.value(), &posit.time()], |r| r.get(0)) {
+                Ok(_) => { existing = true; }
+                Err(Error::QueryReturnedNoRows) => { /* insert below */ }
+                Err(e) => { return Err(BarecladError::Persistence(format!("Posit check failed: {e}"))); }
             }
-        });
+            Ok(())
+        }) { r?; }
         if !existing {
             // Update cache outside of connection borrow
             let need_value_dt = !self.seen_data_types.contains(&posit.value().identifier());
@@ -256,253 +221,175 @@ impl Persistor {
                 self.seen_data_types.push(posit.time().identifier());
             }
             // Perform inserts
-            let _ = self.with_conn(|conn| {
+            if let Some(r) = self.with_conn(|conn| {
                 if need_value_dt {
-                    conn.prepare("insert or ignore into DataType (DataType_Identity, DataType) values (?, ?)")
-                        .unwrap()
-                        .execute(params![&posit.value().identifier(), &posit.value().data_type()])
-                        .unwrap();
+                    conn.prepare("insert or ignore into DataType (DataType_Identity, DataType) values (?, ?)")?
+                        .execute(params![&posit.value().identifier(), &posit.value().data_type()])?;
                 }
                 if need_time_dt {
-                    conn.prepare("insert or ignore into DataType (DataType_Identity, DataType) values (?, ?)")
-                        .unwrap()
-                        .execute(params![&posit.time().identifier(), &posit.time().data_type()])
-                        .unwrap();
+                    conn.prepare("insert or ignore into DataType (DataType_Identity, DataType) values (?, ?)")?
+                        .execute(params![&posit.time().identifier(), &posit.time().data_type()])?;
                 }
-                conn.prepare("insert into Posit (Posit_Identity, AppearanceSet, AppearingValue, ValueType_Identity, AppearanceTime) values (?, ?, ?, ?, ?)")
-                    .unwrap()
-                    .execute(params![&posit.posit(), &apperance_set_as_text, &posit.value(), &posit.value().identifier(), &posit.time()])
-                    .unwrap();
-
-                // Integrity ledger (canonical hash):
-                // Fetch previous hash first, then re-select the just inserted row using CAST for a stable textual form
+                conn.prepare("insert into Posit (Posit_Identity, AppearanceSet, AppearingValue, ValueType_Identity, AppearanceTime) values (?, ?, ?, ?, ?)")?
+                    .execute(params![&posit.posit(), &apperance_set_as_text, &posit.value(), &posit.value().identifier(), &posit.time()])?;
                 let prev_hash: String = {
-                    let mut stmt = conn.prepare("select Hash from PositHash order by Posit_Identity desc limit 1").unwrap();
-                    let mut rows = stmt.query([]).unwrap();
-                    if let Some(row) = rows.next().unwrap() { row.get::<_, String>(0).unwrap() } else { GENESIS_HASH.to_string() }
+                    let mut stmt = conn.prepare("select Hash from PositHash order by Posit_Identity desc limit 1")?;
+                    let mut rows = stmt.query([])?;
+                    if let Some(row) = rows.next()? { row.get::<_, String>(0)? } else { GENESIS_HASH.to_string() }
                 };
-                let mut stmt = conn.prepare("select AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit where Posit_Identity = ?").unwrap();
-                let mut rows = stmt.query(params![&posit.posit()]).unwrap();
-                if let Some(r) = rows.next().unwrap() {
-                    let aset_text: String = r.get_unwrap(0);
-                    let value_text: String = r.get_unwrap(1);
-                    let vtid: i64 = r.get_unwrap(2);
-                    let atime_text: String = r.get_unwrap(3);
+                let mut stmt = conn.prepare("select AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit where Posit_Identity = ?")?;
+                let mut rows = stmt.query(params![&posit.posit()])?;
+                if let Some(r) = rows.next()? {
+                    let aset_text: String = r.get(0)?;
+                    let value_text: String = r.get(1)?;
+                    let vtid: i64 = r.get(2)?;
+                    let atime_text: String = r.get(3)?;
                     let input = format!("{}|{}|{}|{}|{}|prev={}", &posit.posit(), aset_text, vtid, value_text, atime_text, prev_hash);
                     let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
-                    conn.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
-                        .unwrap()
-                        .execute(params![&posit.posit(), &prev_hash, &hash_hex])
-                        .unwrap();
-                    // Update ledger head
-                    let count: i64 = conn
-                        .prepare("select count(1) from PositHash")
-                        .unwrap()
-                        .query_row([], |r| r.get(0))
-                        .unwrap();
-                    conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
-                        .unwrap()
-                        .execute(params![&hash_hex, &count])
-                        .unwrap();
+                    conn.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")?
+                        .execute(params![&posit.posit(), &prev_hash, &hash_hex])?;
+                    let count: i64 = conn.prepare("select count(1) from PositHash")?
+                        .query_row([], |r| r.get(0))?;
+                    conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")?
+                        .execute(params![&hash_hex, &count])?;
                 }
-            });
+                Ok(())
+            }) { r?; }
         }
-        existing
+        Ok(existing)
     }
     /// Rehydrate all thing identities into the in-memory generator.
-    pub fn restore_things(&mut self, db: &Database) {
+    pub fn restore_things(&mut self, db: &Database) -> Result<()> {
         if let Some(ref path) = self.db_path {
-            let conn = Connection::open(path).unwrap();
-            let mut stmt = conn.prepare("select Thing_Identity from Thing").unwrap();
-            let rows = stmt
-                .query_map([], |row| Ok(row.get::<_, Thing>(0).unwrap()))
-                .unwrap();
+            let conn = Connection::open(path).map_err(BarecladError::from)?;
+            let mut stmt = conn.prepare("select Thing_Identity from Thing").map_err(BarecladError::from)?;
+            let rows = stmt.query_map([], |row| row.get::<_, Thing>(0)).map_err(BarecladError::from)?;
             for thing in rows {
-                db.thing_generator().lock().unwrap().retain(thing.unwrap());
+                match thing {
+                    Ok(t) => { db.thing_generator().lock().unwrap().retain(t); }
+                    Err(e) => return Err(BarecladError::DataCorruption { message: format!("Bad Thing row: {e}") })
+                }
             }
         }
+        Ok(())
     }
     /// Rehydrate all roles into the in-memory keeper.
-    pub fn restore_roles(&mut self, db: &Database) {
+    pub fn restore_roles(&mut self, db: &Database) -> Result<()> {
         if let Some(ref path) = self.db_path {
-            let conn = Connection::open(path).unwrap();
-            let mut stmt = conn
-                .prepare("select Role_Identity, Role, Reserved from Role")
-                .unwrap();
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(Role::new(
-                        row.get(0).unwrap(),
-                        row.get(1).unwrap(),
-                        row.get(2).unwrap(),
-                    ))
-                })
-                .unwrap();
-            for role in rows {
-                db.keep_role(role.unwrap());
+            let conn = Connection::open(path).map_err(BarecladError::from)?;
+            let mut stmt = conn.prepare("select Role_Identity, Role, Reserved from Role").map_err(BarecladError::from)?;
+            let rows = stmt.query_map([], |row| {
+                let role_id: Thing = row.get(0)?;
+                let name: String = row.get(1)?;
+                let reserved: i64 = row.get(2)?;
+                Ok(Role::new(role_id, name, reserved != 0))
+            }).map_err(BarecladError::from)?;
+            for r in rows {
+                match r {
+                    Ok(role) => { db.keep_role(role); }
+                    Err(e) => return Err(BarecladError::DataCorruption { message: format!("Bad Role row: {e}") })
+                }
             }
         }
+        Ok(())
     }
     /// Rehydrate all posits (including nested appearance sets) into memory.
     ///
     /// Appearance sets are parsed from their serialized pipe-separated form.
-    pub fn restore_posits(&mut self, db: &Database) {
-        if self.db_path.is_none() {
-            return;
-        }
-        let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
-        let mut stmt = conn
-            .prepare(
-                "select p.Posit_Identity, p.AppearanceSet, p.AppearingValue, v.DataType as ValueType, p.AppearanceTime from Posit p join DataType v on v.DataType_Identity = p.ValueType_Identity",
-            )
-            .unwrap();
-        let mut rows = stmt.query([]).unwrap();
-        while let Some(row) = rows.next().unwrap() {
-            let value_type: String = row.get_unwrap(3);
-            let thing: Thing = row.get_unwrap(0);
-            let appearances: String = row.get_unwrap(1);
-            let mut appearance_set = Vec::new();
+    pub fn restore_posits(&mut self, db: &Database) -> Result<()> {
+        if self.db_path.is_none() { return Ok(()); }
+        let conn = Connection::open(self.db_path.as_ref().unwrap()).map_err(BarecladError::from)?;
+        let mut stmt = conn.prepare("select p.Posit_Identity, p.AppearanceSet, p.AppearingValue, v.DataType as ValueType, p.AppearanceTime from Posit p join DataType v on v.DataType_Identity = p.ValueType_Identity").map_err(BarecladError::from)?;
+        let mut rows = stmt.query([]).map_err(BarecladError::from)?;
+        while let Some(row) = rows.next().map_err(BarecladError::from)? {
+            let value_type: String = row.get(3).map_err(|e| BarecladError::DataCorruption { message: format!("Bad value type: {e}") })?;
+            let thing: Thing = row.get(0).map_err(|e| BarecladError::DataCorruption { message: format!("Bad posit id: {e}") })?;
+            let appearances: String = row.get(1).map_err(|e| BarecladError::DataCorruption { message: format!("Bad appearance set: {e}") })?;
+            let mut appearance_vec = Vec::new();
             for appearance_text in appearances.split('|') {
-                let (thing, role) = appearance_text.split_once(',').unwrap();
-                let appearance = Appearance::new(
-                    thing.parse().unwrap(),
-                    db.role_keeper()
-                        .lock()
-                        .unwrap()
-                        .lookup(&role.parse::<Thing>().unwrap()),
-                );
+                let Some((thing_txt, role_txt)) = appearance_text.split_once(',') else { return Err(BarecladError::DataCorruption { message: format!("Malformed appearance fragment: '{appearance_text}'") }); };
+                let thing_id: Thing = thing_txt.parse().map_err(|e| BarecladError::DataCorruption { message: format!("Bad appearance thing id '{thing_txt}': {e}") })?;
+                let role_id: Thing = role_txt.parse().map_err(|e| BarecladError::DataCorruption { message: format!("Bad role id '{role_txt}': {e}") })?;
+                let role_arc = db.role_keeper().lock().unwrap().lookup(&role_id);
+                let appearance = Appearance::new(thing_id, role_arc);
                 let (kept_appearance, _) = db.keep_appearance(appearance);
-                appearance_set.push(kept_appearance);
+                appearance_vec.push(kept_appearance);
             }
-            let (kept_appearance_set, _) =
-                db.keep_appearance_set(AppearanceSet::new(appearance_set).unwrap());
-
-            // MAINTENANCE: The section below needs to be extended when new data types are added
+            let aset_res = AppearanceSet::new(appearance_vec).ok_or_else(|| BarecladError::DataCorruption { message: "Duplicate role in appearance set during restore".into() })?;
+            let (kept_appearance_set, _) = db.keep_appearance_set(aset_res);
+            let time = Time::convert(&row.get_ref(4).map_err(|e| BarecladError::DataCorruption { message: format!("Bad time ref: {e}") })?);
             match value_type.as_str() {
                 String::DATA_TYPE => {
-                    db.keep_posit(Posit::new(
-                        thing,
-                        kept_appearance_set,
-                        <String as DataType>::convert(&row.get_ref_unwrap(2)),
-                        Time::convert(&row.get_ref_unwrap(4)),
-                    ));
+                    let v = <String as DataType>::convert(&row.get_ref(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad string value: {e}") })?);
+                    db.keep_posit(Posit::new(thing, kept_appearance_set, v, time.clone()));
                 }
                 i64::DATA_TYPE => {
-                    db.keep_posit(Posit::new(
-                        thing,
-                        kept_appearance_set,
-                        <i64 as DataType>::convert(&row.get_ref_unwrap(2)),
-                        Time::convert(&row.get_ref_unwrap(4)),
-                    ));
+                    let v = <i64 as DataType>::convert(&row.get_ref(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad i64 value: {e}") })?);
+                    db.keep_posit(Posit::new(thing, kept_appearance_set, v, time.clone()));
                 }
                 Decimal::DATA_TYPE => {
-                    db.keep_posit(Posit::new(
-                        thing,
-                        kept_appearance_set,
-                        <Decimal as DataType>::convert(&row.get_ref_unwrap(2)),
-                        Time::convert(&row.get_ref_unwrap(4)),
-                    ));
+                    let v = <Decimal as DataType>::convert(&row.get_ref(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad decimal value: {e}") })?);
+                    db.keep_posit(Posit::new(thing, kept_appearance_set, v, time.clone()));
                 }
                 Time::DATA_TYPE => {
-                    db.keep_posit(Posit::new(
-                        thing,
-                        kept_appearance_set,
-                        <Time as DataType>::convert(&row.get_ref_unwrap(2)),
-                        Time::convert(&row.get_ref_unwrap(4)),
-                    ));
+                    let v = <Time as DataType>::convert(&row.get_ref(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad time value: {e}") })?);
+                    db.keep_posit(Posit::new(thing, kept_appearance_set, v, time.clone()));
                 }
                 JSON::DATA_TYPE => {
-                    db.keep_posit(Posit::new(
-                        thing,
-                        kept_appearance_set,
-                        <JSON as DataType>::convert(&row.get_ref_unwrap(2)),
-                        Time::convert(&row.get_ref_unwrap(4)),
-                    ));
+                    let v = <JSON as DataType>::convert(&row.get_ref(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad json value: {e}") })?);
+                    db.keep_posit(Posit::new(thing, kept_appearance_set, v, time.clone()));
                 }
                 Certainty::DATA_TYPE => {
-                    db.keep_posit(Posit::new(
-                        thing,
-                        kept_appearance_set,
-                        <Certainty as DataType>::convert(&row.get_ref_unwrap(2)),
-                        Time::convert(&row.get_ref_unwrap(4)),
-                    ));
+                    let v = <Certainty as DataType>::convert(&row.get_ref(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad certainty value: {e}") })?);
+                    db.keep_posit(Posit::new(thing, kept_appearance_set, v, time.clone()));
                 }
-                _ => (),
+                _ => { /* unknown type silently skipped */ }
             }
         }
+        Ok(())
     }
 
     /// Verify the integrity chain of posits (no auto backfill / rebuild).
     /// Emits warnings if ledger missing or hashes mismatch.
-    pub fn verify_integrity(&mut self) {
-        if self.db_path.is_none() {
-            return;
-        }
-        let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
-        // Quick counts
-        let posit_count: i64 = conn
-            .prepare("select count(1) from Posit")
-            .unwrap()
-            .query_row([], |r| r.get(0))
-            .unwrap();
-        if posit_count == 0 {
-            return;
-        }
-        let hash_count: i64 = conn
-            .prepare("select count(1) from PositHash")
-            .unwrap()
-            .query_row([], |r| r.get(0))
-            .unwrap();
+    pub fn verify_integrity(&mut self) -> Result<()> {
+        if self.db_path.is_none() { return Ok(()); }
+        let conn = Connection::open(self.db_path.as_ref().unwrap()).map_err(BarecladError::from)?;
+        let posit_count: i64 = conn.prepare("select count(1) from Posit").map_err(BarecladError::from)?.query_row([], |r| r.get(0)).map_err(BarecladError::from)?;
+        if posit_count == 0 { return Ok(()); }
+        let hash_count: i64 = conn.prepare("select count(1) from PositHash").map_err(BarecladError::from)?.query_row([], |r| r.get(0)).map_err(BarecladError::from)?;
         if hash_count == 0 {
-            eprintln!(
-                "[bareclad] INTEGRITY WARNING: ledger missing ({} posits).",
-                posit_count
-            );
-            return;
+            return Err(BarecladError::Invariant(format!("Integrity ledger missing ({} posits present)", posit_count)));
         }
-        // Verify existing chain (no repair)
-        let mut stmt = conn
-            .prepare("select p.Posit_Identity, p.AppearanceSet, cast(p.AppearingValue as text), p.ValueType_Identity, p.AppearanceTime, h.Hash from Posit p join PositHash h on h.Posit_Identity = p.Posit_Identity order by p.Posit_Identity asc")
-            .unwrap();
-        let mut rows = stmt.query([]).unwrap();
+        let mut stmt = conn.prepare("select p.Posit_Identity, p.AppearanceSet, cast(p.AppearingValue as text), p.ValueType_Identity, p.AppearanceTime, h.Hash from Posit p join PositHash h on h.Posit_Identity = p.Posit_Identity order by p.Posit_Identity asc").map_err(BarecladError::from)?;
+        let mut rows = stmt.query([]).map_err(BarecladError::from)?;
         let mut prev = GENESIS_HASH.to_string();
         let mut mismatches = 0usize;
         let mut first_bad: Option<i64> = None;
         let mut last_hash = prev.clone();
-        while let Some(row) = rows.next().unwrap() {
-            let thing: i64 = row.get_unwrap(0);
-            let aset: String = row.get_unwrap(1);
-            let aval: String = row.get_unwrap(2);
-            let vtid: i64 = row.get_unwrap(3);
-            let atime: String = row.get_unwrap(4);
-            let stored_hash: String = row.get_unwrap(5);
-            let input = format!(
-                "{}|{}|{}|{}|{}|prev={}",
-                thing, aset, vtid, aval, atime, prev
-            );
+        while let Some(row) = rows.next().map_err(BarecladError::from)? {
+            let thing: i64 = row.get(0).map_err(|e| BarecladError::DataCorruption { message: format!("Bad posit id: {e}") })?;
+            let aset: String = row.get(1).map_err(|e| BarecladError::DataCorruption { message: format!("Bad AppearanceSet: {e}") })?;
+            let aval: String = row.get(2).map_err(|e| BarecladError::DataCorruption { message: format!("Bad AppearingValue: {e}") })?;
+            let vtid: i64 = row.get(3).map_err(|e| BarecladError::DataCorruption { message: format!("Bad ValueType id: {e}") })?;
+            let atime: String = row.get(4).map_err(|e| BarecladError::DataCorruption { message: format!("Bad AppearanceTime: {e}") })?;
+            let stored_hash: String = row.get(5).map_err(|e| BarecladError::DataCorruption { message: format!("Bad stored hash: {e}") })?;
+            let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
             let calc = blake3::hash(input.as_bytes()).to_hex().to_string();
             if calc != stored_hash {
                 mismatches += 1;
-                if first_bad.is_none() {
-                    first_bad = Some(thing);
-                }
+                if first_bad.is_none() { first_bad = Some(thing); }
             }
             prev = stored_hash.clone();
             last_hash = stored_hash;
         }
-        // Update LedgerHead to reflect current chain state
         conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
-            .unwrap()
+            .map_err(BarecladError::from)?
             .execute(params![&last_hash, &posit_count])
-            .unwrap();
-
+            .map_err(BarecladError::from)?;
         if mismatches > 0 {
-            eprintln!(
-                "[bareclad] INTEGRITY VIOLATION: {} mismatched hashes (first at Posit_Identity={}). (No auto repair)",
-                mismatches,
-                first_bad.unwrap_or(-1)
-            );
+            return Err(BarecladError::Invariant(format!("Integrity violation: {mismatches} mismatched hashes (first at {:?})", first_bad)));
         }
+        Ok(())
     }
 
     /// Returns the current integrity ledger head hash and count, when persistence is enabled and the ledger exists.

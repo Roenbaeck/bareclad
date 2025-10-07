@@ -17,8 +17,7 @@ pest_derive = "2.8"
 config = "0.15.18"
 # the "standard" regular expression package
 regex = "1.10"
-# anyhow provides easy custom error handling
-anyhow = "1.0.86"
+thiserror = "1"
 # since every posit is a thing in itself we can use bitsets to "join" them
 # the "roaring bitmaps" seem to have the best ergonomics 
 roaring = "0.11"
@@ -35,6 +34,8 @@ jsondata = "0.8.1"
 lazy_static = "1.5"
 # cryptographic hashing for tamper-evident ledger (fast and secure)
 blake3 = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # ---- THESE MAY BE USED LATER -----
 #jql = "3.0.4"

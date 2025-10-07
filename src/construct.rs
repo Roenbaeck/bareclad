@@ -21,7 +21,7 @@
 //! use bareclad::construct::{Database, PersistenceMode};
 //! use bareclad::datatype::Time;
 //! // Pure in-memory (no SQLite persistence)
-//! let db = Database::new(PersistenceMode::InMemory);
+//! let db = Database::new(PersistenceMode::InMemory).unwrap();
 //! let (role, _) = db.create_role("person".to_string(), false);
 //! let thing = db.create_thing();
 //! let (appearance, _) = db.create_apperance(*thing, role);
@@ -32,6 +32,8 @@
 //! ```
 use crate::datatype::{DataType, Time};
 use crate::persist::Persistor;
+use tracing::{debug, warn, error};
+use crate::error::BarecladError;
 use bimap::BiMap;
 use core::hash::{BuildHasher, BuildHasherDefault, Hasher};
 use roaring::RoaringTreemap;
@@ -557,10 +559,10 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn new(mode: PersistenceMode) -> Database {
+    pub fn new(mode: PersistenceMode) -> Result<Database, BarecladError> {
         let persistor = match mode {
             PersistenceMode::InMemory => Persistor::new_no_persistence(),
-            PersistenceMode::File(path) => Persistor::new_from_file(&path),
+            PersistenceMode::File(path) => Persistor::new_from_file(&path)?,
         };
         // Create all the stuff that goes into a database engine
         let thing_generator = ThingGenerator::new();
@@ -604,11 +606,10 @@ impl Database {
         };
 
         // Restore the existing database
-        database.persistor.lock().unwrap().restore_things(&database);
-        database.persistor.lock().unwrap().restore_roles(&database);
-        database.persistor.lock().unwrap().restore_posits(&database);
-        // Verify integrity chain (file-backed only)
-        database.persistor.lock().unwrap().verify_integrity();
+    if let Err(e) = database.persistor.lock().unwrap().restore_things(&database) { warn!(?e, "restore_things failed"); }
+    if let Err(e) = database.persistor.lock().unwrap().restore_roles(&database) { warn!(?e, "restore_roles failed"); }
+    if let Err(e) = database.persistor.lock().unwrap().restore_posits(&database) { warn!(?e, "restore_posits failed"); }
+    if let Err(e) = database.persistor.lock().unwrap().verify_integrity() { warn!(?e, "verify_integrity reported issue"); }
 
         // Reserve some roles that will be necessary for implementing features
         // commonly found in many other (including non-tradtional) databases.
@@ -617,7 +618,7 @@ impl Database {
         database.create_role(String::from("thing"), true);
         database.create_role(String::from("classification"), true);
 
-        database
+        Ok(database)
     }
     // functions to access the owned generator and keepers
     pub fn thing_generator(&self) -> Arc<Mutex<ThingGenerator>> {
@@ -673,7 +674,7 @@ impl Database {
     }
     pub fn create_thing(&self) -> Arc<Thing> {
         let thing = self.thing_generator.lock().unwrap().generate();
-        self.persistor.lock().unwrap().persist_thing(&thing);
+        if let Err(e) = self.persistor.lock().unwrap().persist_thing(&thing) { warn!(?e, "persist_thing failed"); }
         Arc::new(thing)
     }
     // functions to create constructs for the keepers to keep that also populate the lookups
@@ -686,11 +687,8 @@ impl Database {
         let (kept_role, previously_kept) =
             self.keep_role(Role::new(role_thing, role_name, reserved));
         if !previously_kept {
-            self.persistor
-                .lock()
-                .unwrap()
-                .persist_thing(&kept_role.role());
-            self.persistor.lock().unwrap().persist_role(&kept_role);
+            if let Err(e) = self.persistor.lock().unwrap().persist_thing(&kept_role.role()) { warn!(?e, "persist_thing(role) failed"); }
+            if let Err(e) = self.persistor.lock().unwrap().persist_role(&kept_role) { warn!(?e, "persist_role failed"); }
         } else {
             self.thing_generator.lock().unwrap().release(role_thing);
         }
@@ -779,11 +777,8 @@ impl Database {
         let (kept_posit, previously_kept) =
             self.keep_posit(Posit::new(posit_thing, appearance_set, value, time));
         if !previously_kept {
-            self.persistor
-                .lock()
-                .unwrap()
-                .persist_thing(&kept_posit.posit());
-            self.persistor.lock().unwrap().persist_posit(&kept_posit);
+            if let Err(e) = self.persistor.lock().unwrap().persist_thing(&kept_posit.posit()) { warn!(?e, "persist_thing(posit) failed"); }
+            if let Err(e) = self.persistor.lock().unwrap().persist_posit(&kept_posit) { warn!(?e, "persist_posit failed"); }
         } else {
             self.thing_generator.lock().unwrap().release(posit_thing);
         }

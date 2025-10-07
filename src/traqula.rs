@@ -22,13 +22,9 @@
 //!
 //! # Example (executing Traqula)
 //! ```
-//! use rusqlite::Connection;
-//! use bareclad::persist::Persistor;
-//! use bareclad::construct::Database;
+//! use bareclad::construct::{Database, PersistenceMode};
 //! use bareclad::traqula::Engine;
-//! let conn = Connection::open_in_memory().unwrap();
-//! let persistor = Persistor::new(&conn);
-//! let db = Database::new(persistor);
+//! let db = Database::new(PersistenceMode::InMemory).unwrap();
 //! let engine = Engine::new(&db);
 //! engine.execute("add role person; add posit [{(+a, person)}, \"Alice\", @NOW];");
 //! ```

@@ -37,7 +37,7 @@
 //! ## Quick Start
 //! ```
 //! use bareclad::{construct::{Database, PersistenceMode}, traqula::Engine};
-//! let db = Database::new(PersistenceMode::InMemory);
+//! let db = Database::new(PersistenceMode::InMemory).unwrap();
 //! let engine = Engine::new(&db);
 //! engine.execute("add role person; add posit [{(+a, person)}, \"Alice\", @NOW];");
 //! assert!(db.role_keeper().lock().unwrap().len() >= 1);
@@ -65,3 +65,4 @@ pub mod datatype;
 pub mod interface;
 pub mod persist;
 pub mod traqula;
+pub mod error;
