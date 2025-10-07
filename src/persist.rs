@@ -29,6 +29,7 @@
 //! could propagate a domain error type instead.
 // used for persistence
 use rusqlite::{Connection, Error, params};
+use blake3;
 
 // our own stuff
 use crate::construct::{Appearance, AppearanceSet, Database, Posit, Role, Thing};
@@ -100,6 +101,25 @@ impl Persistor {
                     AppearanceTime
                 )
             ) STRICT;
+            create table if not exists PositHash (
+                Posit_Identity integer not null,
+                PrevHash text not null,
+                Hash text not null,
+                constraint PositHash_is_Posit foreign key (
+                    Posit_Identity
+                ) references Posit(Posit_Identity),
+                constraint referenceable_PositHash_Identity primary key (
+                    Posit_Identity
+                )
+            ) STRICT;
+            create table if not exists LedgerHead (
+                Name text not null,
+                HeadHash text not null,
+                Count integer not null,
+                constraint referenceable_LedgerHead_Name primary key (
+                    Name
+                )
+            ) STRICT;
             ",
             )
             .unwrap();
@@ -166,6 +186,25 @@ impl Persistor {
                     AppearanceSet,
                     AppearingValue,
                     AppearanceTime
+                )
+            ) STRICT;
+            create table if not exists PositHash (
+                Posit_Identity integer not null,
+                PrevHash text not null,
+                Hash text not null,
+                constraint PositHash_is_Posit foreign key (
+                    Posit_Identity
+                ) references Posit(Posit_Identity),
+                constraint referenceable_PositHash_Identity primary key (
+                    Posit_Identity
+                )
+            ) STRICT;
+            create table if not exists LedgerHead (
+                Name text not null,
+                HeadHash text not null,
+                Count integer not null,
+                constraint referenceable_LedgerHead_Name primary key (
+                    Name
                 )
             ) STRICT;
             ",
@@ -310,6 +349,43 @@ impl Persistor {
                     .unwrap()
                     .execute(params![&posit.posit(), &apperance_set_as_text, &posit.value(), &posit.value().identifier(), &posit.time()])
                     .unwrap();
+
+                // Integrity ledger: append BLAKE3 hash for this posit
+                // Previous hash = latest in PositHash (or GENESIS if none)
+                let prev_hash: String = {
+                    let mut stmt = conn.prepare("select Hash from PositHash order by Posit_Identity desc limit 1").unwrap();
+                    let mut rows = stmt.query([]).unwrap();
+                    if let Some(row) = rows.next().unwrap() {
+                        row.get::<_, String>(0).unwrap()
+                    } else {
+                        // 64 zeros (BLAKE3 hex length)
+                        "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+                    }
+                };
+                let input = format!(
+                    "{}|{}|{}|{}|{}|prev={}",
+                    &posit.posit(),
+                    &apperance_set_as_text,
+                    &posit.value().identifier(),
+                    &posit.value().to_string(),
+                    &posit.time().to_string(),
+                    &prev_hash
+                );
+                let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
+                conn.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
+                    .unwrap()
+                    .execute(params![&posit.posit(), &prev_hash, &hash_hex])
+                    .unwrap();
+                // Update ledger head
+                let count: i64 = conn
+                    .prepare("select count(1) from PositHash")
+                    .unwrap()
+                    .query_row([], |r| r.get(0))
+                    .unwrap();
+                conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
+                    .unwrap()
+                    .execute(params![&hash_hex, &count])
+                    .unwrap();
             });
         }
         existing
@@ -414,6 +490,120 @@ impl Persistor {
                 }
                 _ => (),
             }
+        }
+    }
+
+    /// Verify the integrity chain of posits; if the chain data is missing (fresh upgrade), backfill it.
+    /// Logs integrity violations to stderr but does not attempt to "fix" mismatches (besides backfilling when empty).
+    pub fn verify_and_backfill_integrity(&mut self) {
+        if self.db_path.is_none() { return; }
+        let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
+        // Quick counts
+        let posit_count: i64 = conn
+            .prepare("select count(1) from Posit")
+            .unwrap()
+            .query_row([], |r| r.get(0))
+            .unwrap();
+        let hash_count: i64 = conn
+            .prepare("select count(1) from PositHash")
+            .unwrap()
+            .query_row([], |r| r.get(0))
+            .unwrap();
+        if posit_count == 0 { return; }
+
+        // Helper to compute chain from scratch and write PositHash + LedgerHead
+        let backfill = |conn: &Connection| {
+            let tx = conn.unchecked_transaction().unwrap();
+            tx.execute("delete from PositHash", []).unwrap();
+            let mut stmt = tx
+                .prepare("select Posit_Identity, AppearanceSet, cast(AppearingValue as text), ValueType_Identity, AppearanceTime from Posit order by Posit_Identity asc")
+                .unwrap();
+            let mut rows = stmt.query([]).unwrap();
+            let mut prev = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+            let mut last = prev.clone();
+            while let Some(row) = rows.next().unwrap() {
+                let thing: i64 = row.get_unwrap(0);
+                let aset: String = row.get_unwrap(1);
+                let aval: String = row.get_unwrap(2);
+                let vtid: i64 = row.get_unwrap(3);
+                let atime: String = row.get_unwrap(4);
+                let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
+                let hash_hex = blake3::hash(input.as_bytes()).to_hex().to_string();
+                tx.prepare("insert into PositHash (Posit_Identity, PrevHash, Hash) values (?, ?, ?)")
+                    .unwrap()
+                    .execute(params![&thing, &prev, &hash_hex])
+                    .unwrap();
+                prev = hash_hex.clone();
+                last = hash_hex;
+            }
+            tx.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
+                .unwrap()
+                .execute(params![&last, &posit_count])
+                .unwrap();
+            tx.commit().unwrap();
+        };
+
+        if hash_count == 0 {
+            // Fresh upgrade path: build the entire chain
+            backfill(&conn);
+            eprintln!("[bareclad] Integrity chain backfilled for {} posits.", posit_count);
+            return;
+        }
+
+        // Verify existing chain
+        let mut stmt = conn
+            .prepare("select p.Posit_Identity, p.AppearanceSet, cast(p.AppearingValue as text), p.ValueType_Identity, p.AppearanceTime, h.Hash from Posit p join PositHash h on h.Posit_Identity = p.Posit_Identity order by p.Posit_Identity asc")
+            .unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        let mut prev = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+        let mut mismatches = 0usize;
+        let mut first_bad: Option<i64> = None;
+        let mut last_hash = prev.clone();
+        while let Some(row) = rows.next().unwrap() {
+            let thing: i64 = row.get_unwrap(0);
+            let aset: String = row.get_unwrap(1);
+            let aval: String = row.get_unwrap(2);
+            let vtid: i64 = row.get_unwrap(3);
+            let atime: String = row.get_unwrap(4);
+            let stored_hash: String = row.get_unwrap(5);
+            let input = format!("{}|{}|{}|{}|{}|prev={}", thing, aset, vtid, aval, atime, prev);
+            let calc = blake3::hash(input.as_bytes()).to_hex().to_string();
+            if calc != stored_hash {
+                mismatches += 1;
+                if first_bad.is_none() { first_bad = Some(thing); }
+            }
+            prev = stored_hash.clone();
+            last_hash = stored_hash;
+        }
+        // Update LedgerHead to reflect current chain state
+        conn.prepare("insert into LedgerHead (Name, HeadHash, Count) values ('PositLedger', ?, ?) on conflict(Name) do update set HeadHash=excluded.HeadHash, Count=excluded.Count")
+            .unwrap()
+            .execute(params![&last_hash, &posit_count])
+            .unwrap();
+
+        if mismatches > 0 {
+            eprintln!(
+                "[bareclad] INTEGRITY VIOLATION: {} mismatched hashes (first at Posit_Identity={}). Chain has been left unchanged.",
+                mismatches,
+                first_bad.unwrap_or(-1)
+            );
+        }
+    }
+
+    /// Returns the current integrity ledger head hash and count, when persistence is enabled and the ledger exists.
+    pub fn current_superhash(&self) -> Option<(String, i64)> {
+        if self.db_path.is_none() { return None; }
+        let conn = Connection::open(self.db_path.as_ref().unwrap()).unwrap();
+        let mut stmt = conn
+            .prepare("select HeadHash, Count from LedgerHead where Name = 'PositLedger'")
+            .unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        if let Some(row) = rows.next().unwrap() {
+            let head: String = row.get_unwrap(0);
+            let count: i64 = row.get_unwrap(1);
+            Some((head, count))
+        } else {
+            None
         }
     }
 }

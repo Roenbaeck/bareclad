@@ -585,6 +585,8 @@ impl Database {
         database.persistor.lock().unwrap().restore_things(&database);
         database.persistor.lock().unwrap().restore_roles(&database);
         database.persistor.lock().unwrap().restore_posits(&database);
+    // Verify/backfill integrity chain (file-backed only)
+    database.persistor.lock().unwrap().verify_and_backfill_integrity();
 
         // Reserve some roles that will be necessary for implementing features
         // commonly found in many other (including non-tradtional) databases.

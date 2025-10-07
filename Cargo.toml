@@ -11,8 +11,8 @@ chrono = "0.4.38"
 bimap = "0.6.3"
 # typemap holds one value per type of key, useful for Posit<V,T>
 # pest is a parser used when parsing Traqula
-pest = "2.7.11"
-pest_derive = "2.7.11"
+pest = "2.8"
+pest_derive = "2.8"
 # config lets you read a separate config file 
 config = "0.15.18"
 # the "standard" regular expression package
@@ -33,6 +33,8 @@ bigdecimal = "0.4"
 jsondata = "0.8.1"
 # so regular expressions don't have to be recompiled 
 lazy_static = "1.5"
+# cryptographic hashing for tamper-evident ledger (fast and secure)
+blake3 = "1"
 
 # ---- THESE MAY BE USED LATER -----
 #jql = "3.0.4"
