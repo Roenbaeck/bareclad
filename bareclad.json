@@ -1,5 +1,5 @@
 {
     "database_file_and_path": "bareclad.db",
     "recreate_database_on_startup": true,
-    "traqula_file_to_run_on_startup": "traqula/example.traqula"
+    "traqula_file_to_run_on_startup": "traqula/adds.traqula"
 }

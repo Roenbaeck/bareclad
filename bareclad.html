@@ -21,7 +21,8 @@
 *,*::before,*::after { box-sizing:border-box; }
 html,body { overflow-x:hidden; }
 body { margin:0; background:var(--bg); color:var(--text); display:flex; flex-direction:column; height:100vh; }
-header { padding:0.75rem 1rem; background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; letter-spacing:.5px; }
+header { padding:0.75rem 1rem; background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; letter-spacing:.5px; display:flex; align-items:center; gap:0.5rem; }
+header .svg { width:7rem; margin-right: 1rem;}
 main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 #splitContainer { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 #editorPane { flex:0 0 50%; min-height:140px; max-height:80%; display:flex; flex-direction:column; border-bottom:1px solid var(--border); background:var(--panel); }
@@ -30,6 +31,7 @@ main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 #splitter:after { content:''; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:60px; height:2px; background:#333; border-radius:2px; }
 section { padding:0.65rem 0.75rem 0.9rem; overflow:auto; }
 textarea { width:100%; max-width:100%; flex:1; resize:none; background:#0f0f10; color:var(--text); padding:.75rem; border:1px solid var(--border); border-radius:6px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; line-height:1.3; overflow-x:hidden; }
+#script-container { flex:1; display:flex; flex-direction:column; }
 button { background:var(--accent); color:#fff; border:none; padding:.55rem 1rem; border-radius:6px; cursor:pointer; font-weight:600; letter-spacing:.4px; display:inline-flex; align-items:center; gap:.4rem; font-size:.8rem; }
 button:hover { background:var(--accent-glow); }
 button:disabled { opacity:.5; cursor:not-allowed; }
@@ -63,7 +65,26 @@ progress { width:100%; height:6px; accent-color:var(--accent); }
 </style>
 </head>
 <body>
-<header>🟦 Bareclad Query Console</header>
+<!-- Prism.js for syntax highlighting (works with file:// protocol) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+<style>
+/* Custom Traqula syntax highlighting styles */
+.token.keyword { color: #2d72d2; font-weight: bold; }
+.token.constant { color: #4994ff; }
+.token.time { color: #ffb347; }
+.token.string { color: #ce9178; }
+.token.number { color: #b5cea8; }
+.token.variable-insert { color: #9cdcfe; font-weight: bold; }
+.token.variable { color: #9cdcfe; }
+.token.operator { color: #569cd6; }
+.token.wildcard { color: #ff6b6b; font-weight: bold; }
+.token.punctuation { color: #d4d4d4; }
+.token.comment { color: #6a9955; font-style: italic; }
+</style>
+<header>
+  <img class="svg" src="Traqula.svg"/>
+  Bareclad Query Console
+</header>
 <main>
   <div id="splitContainer">
     <div id="editorPane">
@@ -71,9 +92,18 @@ progress { width:100%; height:6px; accent-color:var(--accent); }
         <label for="endpoint">Endpoint</label>
         <input id="endpoint" type="text" value="http://127.0.0.1:8080/v1/query" />
         <label for="script">Traqula Script (Ctrl+Enter to run)</label>
-        <textarea id="script" spellcheck="false">search [{(*, name)}, +n, +t]
+        <div id="script-container" style="position: relative; flex: 1; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
+          <textarea id="script" spellcheck="false" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: #eee; resize: none; border: none; padding: 8px; font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; line-height: 20px; z-index: 2; outline: none;">
+search +posit [{(+person, name)}, +name, +since]
 return
-    n, t;</textarea>
+    posit, person, name, since;
+          </textarea>
+          <pre id="script-highlight" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; margin: 0; padding: 8px; font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; line-height: 20px; background: #0f0f10; color: #eee; overflow: auto; pointer-events: none; z-index: 1; white-space: pre-wrap; word-wrap: break-word;"><code class="language-traqula">
+search +posit [{(+person, name)}, +name, +since]
+return
+    posit, person, name, since;
+          </code></pre>
+        </div>
         <div class="controls">
           <button id="runBtn">Run</button>
           <button id="clearBtn" title="Clear results">Clear</button>
@@ -130,6 +160,156 @@ const els = {
   jsonView: document.getElementById('jsonView')
 };
 let lastResponse = null;
+
+// Define Traqula language for Prism.js
+Prism.languages.traqula = {
+  'comment': /\/\*[\s\S]*?\*\//,
+  'keyword': /\b(?:add|role|posit|search|return|where|and|limit|as|of)\b/i,
+  'constant': /@[A-Z]+/,
+  'time': /'[0-9:\-\s]+'/,
+  'string': /"(?:[^"\\]|\\.)*"/,
+  'number': /-?\d+(?:\.\d+)?%?/,
+  'variable-insert': /\+[a-zA-Z][a-zA-Z0-9_]*/,
+  'variable': /\b[a-zA-Z][a-zA-Z0-9_]*\b/,
+  'operator': /[+|<>=!]+/,
+  'wildcard': /\*/,
+  'punctuation': /[[\]{}(),;]/
+};
+
+// Get DOM elements  
+const scriptTextarea = document.getElementById('script');
+const scriptHighlight = document.getElementById('script-highlight');
+
+// Function to update syntax highlighting
+function updateHighlight() {
+  const code = scriptTextarea.value;
+  const highlightedCode = Prism.highlight(code, Prism.languages.traqula, 'traqula');
+  scriptHighlight.querySelector('code').innerHTML = highlightedCode;
+}
+
+// Sync scroll between textarea and highlight
+function syncScroll() {
+  scriptHighlight.scrollTop = scriptTextarea.scrollTop;
+  scriptHighlight.scrollLeft = scriptTextarea.scrollLeft;
+}
+
+// Setup event listeners for the editor
+scriptTextarea.addEventListener('input', updateHighlight);
+scriptTextarea.addEventListener('scroll', syncScroll);
+scriptTextarea.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    runQuery();
+  }
+  
+  // Handle tab key for indentation
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const start = this.selectionStart;
+    const end = this.selectionEnd;
+    const value = this.value;
+    this.value = value.substring(0, start) + '    ' + value.substring(end);
+    this.selectionStart = this.selectionEnd = start + 4;
+    updateHighlight();
+  }
+});
+
+// Initialize highlighting
+setTimeout(() => {
+  updateHighlight();
+  setStatus('Editor loaded with syntax highlighting');
+}, 100);
+
+// Legacy object structure (placeholder)
+const traqulaLanguage = {
+  keywords: [
+    'add', 'role', 'posit', 'search', 'return', 'where', 'and', 'limit', 'as', 'of'
+  ],
+  constants: [
+    '@NOW', '@BOT', '@EOT'
+  ],
+  operators: [
+    '+', '|', '<=', '>=', '<', '>', '==', '='
+  ],
+  ignoreCase: true,
+  tokenizer: {
+    root: [
+      // Comments
+      [/\/\*/, 'comment', '@comment'],
+      
+      // Keywords (case insensitive)
+      [/\b(?:add|role|posit|search|return|where|and|limit|as|of)\b/i, 'keyword'],
+      
+      // Constants
+      [/@[A-Z]+/, 'constant'],
+      
+      // Time literals (quoted)
+      [/'[0-9:\-\s]+'/, 'string.time'],
+      
+      // String literals (with escaped quotes support)
+      [/"/, 'string', '@string'],
+      
+      // JSON objects (basic detection)
+      [/\{/, 'delimiter.curly', '@json'],
+      
+      // Certainty percentages
+      [/-?\d{1,3}%/, 'number.percentage'],
+      
+      // Decimal numbers
+      [/-?\d+\.\d+/, 'number.float'],
+      
+      // Integer numbers
+      [/-?\d+/, 'number'],
+      
+      // Insert variables (with +)
+      [/\+[a-zA-Z][a-zA-Z0-9_]*/, 'variable.insert'],
+      
+      // Comparison operators (must come before single chars)
+      [/<=|>=|==/, 'operator.comparison'],
+      [/[<>=]/, 'operator.comparison'],
+      
+      // Union operator
+      [/\|/, 'operator.union'],
+      
+      // Insert operator
+      [/\+/, 'operator.insert'],
+      
+      // Variables (recall)
+      [/\b[a-zA-Z][a-zA-Z0-9_]*\b/, 'variable'],
+      
+      // Wildcard
+      [/\*/, 'wildcard'],
+      
+      // Delimiters
+      [/[\[\]]/, 'delimiter.bracket'],
+      [/[{}]/, 'delimiter.curly'],
+      [/[()]/, 'delimiter.parenthesis'],
+      [/[,;]/, 'delimiter'],
+      
+      // Whitespace
+      [/\s+/, 'white']
+    ],
+    
+    comment: [
+      [/[^/*]+/, 'comment'],
+      [/\*\//, 'comment', '@pop'],
+      [/[/*]/, 'comment']
+    ],
+    
+    string: [
+      [/[^"]+/, 'string'],
+      [/""/, 'string.escape'],
+      [/"/, 'string', '@pop']
+    ],
+    
+    json: [
+      [/[^{}]+/, 'string.json'],
+      [/\{/, 'delimiter.curly', '@push'],
+      [/\}/, 'delimiter.curly', '@pop']
+    ]
+  }
+};
+
+// No Monaco initialization needed - using Prism.js instead
 function setStatus(msg, cls='') { els.status.textContent = msg; els.status.className = cls; }
 function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 function buildTable(columns, rows, rowTypes) {
@@ -157,7 +337,8 @@ function buildTable(columns, rows, rowTypes) {
 }
 async function runQuery() {
   const endpoint = els.endpoint.value.trim();
-  const payload = { script: els.script.value, stream: false };
+  const script = scriptTextarea.value;
+  const payload = { script: script, stream: false };
   const timeoutMs = parseInt(els.timeout.value || '0',10);
   els.runBtn.disabled = true; setStatus('Running...'); els.progress.hidden=false; els.progress.value=15;
   const controller = timeoutMs>0 ? new AbortController() : null;
@@ -192,8 +373,6 @@ async function runQuery() {
 }
 els.runBtn.addEventListener('click', runQuery);
 els.clearBtn.addEventListener('click', ()=>{ els.tableHead.innerHTML=''; els.tableBody.innerHTML=''; els.jsonOut.textContent=''; els.perf.textContent=''; setStatus('Cleared'); });
-// Ctrl+Enter to run
-els.script.addEventListener('keydown', e=>{ if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) { runQuery(); } });
 
 // Tabs switching
 els.tabs.forEach(btn=>{
