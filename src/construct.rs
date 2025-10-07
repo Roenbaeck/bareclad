@@ -32,7 +32,7 @@
 //! ```
 use crate::datatype::{DataType, Time};
 use crate::persist::Persistor;
-use tracing::{debug, warn, error};
+use tracing::{warn};
 use crate::error::BarecladError;
 use bimap::BiMap;
 use core::hash::{BuildHasher, BuildHasherDefault, Hasher};

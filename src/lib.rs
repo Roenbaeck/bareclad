@@ -66,3 +66,4 @@ pub mod interface;
 pub mod persist;
 pub mod traqula;
 pub mod error;
+pub mod server;

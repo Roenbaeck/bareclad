@@ -51,7 +51,8 @@ search_clause = { ^"search" ~ (posit_search ~ ","?)+ }
 comparator = { "<=" | ">=" | "<" | ">" | "==" | "=" }
 condition = { recall ~ comparator ~ (constant | time) }
 where_clause = { ^"where" ~ condition ~ ("and" ~ condition)* }
-search = { search_clause ~ where_clause? ~ return_clause ~ ";" }
+limit_clause = { ^"limit" ~ int }
+search = { search_clause ~ where_clause? ~ return_clause ~ limit_clause? ~ ";" }
 
 // Optional per-pattern 'as of' clause
 as_of_clause = { "as of" ~ (constant | time | recall) }

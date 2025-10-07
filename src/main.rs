@@ -11,18 +11,18 @@ use bareclad::interface::{QueryInterface, QueryOptions};
 use bareclad::error::{BarecladError, Result};
 use std::sync::Arc;
 
-fn main() {
-    // Initialize tracing (ignore error if already set by embedding application)
+#[tokio::main]
+async fn main() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
-    if let Err(e) = real_main() {
+    if let Err(e) = real_main().await {
         eprintln!("bareclad error: {e}");
         std::process::exit(1);
     }
 }
 
-fn real_main() -> Result<()> {
+async fn real_main() -> Result<()> {
     let settings = Config::builder()
         .add_source(File::with_name("bareclad.json"))
         .build()
@@ -65,9 +65,8 @@ fn real_main() -> Result<()> {
         PersistenceMode::InMemory
     };
     let bareclad = Database::new(mode)?;
-    // Wrap database in Arc so it can be shared with the threaded interface
     let db = Arc::new(bareclad);
-    let interface = QueryInterface::new(Arc::clone(&db));
+    let interface = Arc::new(QueryInterface::new(Arc::clone(&db)));
     let traqula_file_to_run_on_startup = settings_lookup
         .get("traqula_file_to_run_on_startup")
         .ok_or_else(|| BarecladError::Config("Missing 'traqula_file_to_run_on_startup'".into()))?;
@@ -109,5 +108,15 @@ fn real_main() -> Result<()> {
             }
         }
     }
+    // Start HTTP server (simple /v1/query endpoint)
+    let app = bareclad::server::router(Arc::clone(&interface));
+    let addr = std::net::SocketAddr::from(([127,0,0,1], 8080));
+    tracing::info!(?addr, "HTTP server listening");
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| BarecladError::Execution(format!("bind error: {e}")))?;
+    axum::serve(listener, app.into_make_service())
+        .await
+        .map_err(|e| BarecladError::Execution(format!("server error: {e}")))?;
     Ok(())
 }

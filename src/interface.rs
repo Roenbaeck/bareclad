@@ -45,6 +45,9 @@ impl CancelToken {
 /// Opaque query identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryId(u64);
+impl QueryId {
+    pub fn value(&self) -> u64 { self.0 }
+}
 
 /// Handle to a running or completed query.
 pub struct QueryHandle {
@@ -100,6 +103,8 @@ impl QueryInterface {
             active: Mutex::new(HashMap::new()),
         }
     }
+
+    pub fn database(&self) -> &Arc<Database> { &self.db }
 
     fn allocate_id(&self) -> QueryId {
         let mut g = self.next_id.lock().unwrap();
