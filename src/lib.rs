@@ -36,11 +36,8 @@
 //!
 //! ## Quick Start
 //! ```
-//! use rusqlite::Connection;
-//! use bareclad::{persist::Persistor, construct::Database, traqula::Engine};
-//! let conn = Connection::open_in_memory().unwrap();
-//! let persistor = Persistor::new(&conn);
-//! let db = Database::new(persistor);
+//! use bareclad::{construct::{Database, PersistenceMode}, traqula::Engine};
+//! let db = Database::new(PersistenceMode::InMemory);
 //! let engine = Engine::new(&db);
 //! engine.execute("add role person; add posit [{(+a, person)}, \"Alice\", @NOW];");
 //! assert!(db.role_keeper().lock().unwrap().len() >= 1);

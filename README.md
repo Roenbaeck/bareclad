@@ -145,6 +145,86 @@ Config (bareclad.json):
 }
 ```
 
+## Initialization Modes
+
+The engine now uses an explicit persistence mode enum:
+
+```rust
+use bareclad::construct::{Database, PersistenceMode};
+
+// Ephemeral: nothing is written, all data lost when process exits
+let db = Database::new(PersistenceMode::InMemory);
+
+// File-backed persistence (creates or reuses SQLite file)
+let db = Database::new(PersistenceMode::File("bareclad.db".to_string()));
+
+// Derive from config style flags
+let enable = true; // imagine read from config
+let mode = PersistenceMode::from_config(enable, "bareclad.db");
+let db2 = Database::new(mode);
+```
+
+When running the provided binary, the `enable_persistence` flag in `bareclad.json` selects between these modes internally.
+
+## Integrity Ledger (Tamper-Evident Chain)
+
+When running in file‑backed mode (`PersistenceMode::File`), every new posit is appended to an integrity ledger that forms a hash chain. This provides a lightweight, tamper‑evident signal that the sequence (and contents) of stored posits has not been rewritten silently.
+
+### How it works
+
+For each newly persisted posit the engine computes a BLAKE3 hash over a canonical serialization:
+
+```
+<Posit_Identity>|<AppearanceSet>|<ValueType_Identifier>|<AppearingValue>|<AppearanceTime>|prev=<PreviousHash>
+```
+
+Where:
+- `AppearanceSet` is the pipe‑separated `thing_id,role_id` pairs in natural order (the same string stored in the `Posit` table).
+- `ValueType_Identifier` is the numeric stable identifier of the value's data type.
+- `AppearingValue` and `AppearanceTime` are serialized as (lossless) text representations.
+- `PreviousHash` is the hash of the prior posit in ascending `Posit_Identity` order (or 64 zeros for the genesis entry).
+
+An entry is then inserted into the `PositHash` table: `(Posit_Identity, PrevHash, Hash)` and the rolling head (hash + count) is maintained in the single‑row `LedgerHead` table (`Name='PositLedger'`).
+
+### Backfilling / Verification
+
+On startup the engine:
+1. Restores things / roles / posits.
+2. If `PositHash` is empty but posits exist (fresh upgrade), it backfills the entire chain deterministically.
+3. If hashes exist, it recomputes and verifies them in sequence, logging any mismatch but not mutating historical rows.
+
+### Accessing the head
+
+Library callers can obtain the current head hash + count (file‑backed mode only):
+
+```rust
+if let Some((hash, count)) = db.persistor.lock().unwrap().current_superhash() {
+	println!("ledger head: {hash} ({count} posits)");
+}
+```
+
+### Purpose
+
+The ledger helps detect accidental corruption or naive row‑level tampering (e.g. manually editing a value in SQLite) because any modification changes downstream hashes.
+
+### Limitations & Threat Model
+
+This is NOT a full audit or cryptographic anchoring system:
+- Anyone with write access to both `Posit` and `PositHash` tables can rewrite history and recompute the chain from genesis (64 zero hash) without detection.
+- There is no external timestamping or cross‑system anchoring by default.
+- Reordering of inserts (while preserving identities) is detectable only if identities are strictly increasing and you compare prior head externally.
+
+### Strengthening (Optional Ideas)
+
+If stronger guarantees are needed you can layer on:
+- Periodic external anchoring: write the `(HeadHash, Count, WallClockTime)` tuple to an append‑only log / transparency service / blockchain.
+- Independent watchers: run a sidecar process that snapshots heads and alerts on unexpected regressions or chain divergence.
+- Incorporate additional context in the hash preimage (e.g. deployment/version, machine ID) if that has provenance value.
+
+### Rationale
+
+This design deliberately favors simplicity and zero runtime cryptographic ceremony (one fast hash per posit). It offers a pragmatic middle ground: low overhead integrity signals without dictating a heavy auditing infrastructure.
+
 ## Status and roadmap
 
 Implemented:

@@ -6,11 +6,9 @@ use config::*;
 use std::collections::HashMap;
 use std::fs::{read_to_string, remove_file};
 
-use bareclad::construct::Database;
-use bareclad::persist::Persistor;
+use bareclad::construct::{Database, PersistenceMode};
 use bareclad::interface::{QueryInterface, QueryOptions};
 use std::sync::Arc;
-use rusqlite::Connection;
 
 fn main() {
     let settings = Config::builder()
@@ -38,18 +36,14 @@ fn main() {
             }
         }
     }
-    let persistor = if enable_persistence {
-        let sqlite = Connection::open(database_file_and_path).unwrap();
-        println!(
-            "The path to the database file is '{}'.",
-            sqlite.path().unwrap()
-        );
-        Persistor::new(&sqlite)
+    let mode = if enable_persistence {
+        println!("Using file-backed persistence at '{}'.", database_file_and_path);
+        PersistenceMode::File(database_file_and_path.clone())
     } else {
-        println!("Persistence disabled (no SQLite file will be used).");
-        Persistor::new_no_persistence()
+        println!("Persistence disabled (ephemeral in-memory engine).");
+        PersistenceMode::InMemory
     };
-    let bareclad = Database::new(persistor);
+    let bareclad = Database::new(mode);
     // Wrap database in Arc so it can be shared with the threaded interface
     let db = Arc::new(bareclad);
     let interface = QueryInterface::new(Arc::clone(&db));

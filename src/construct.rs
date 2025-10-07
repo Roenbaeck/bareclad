@@ -18,13 +18,10 @@
 //! Create a role, a thing, an appearance, an appearance set and finally a
 //! posit with a string value and time.
 //! ```
-//! use rusqlite::Connection;
-//! use bareclad::persist::Persistor;
-//! use bareclad::construct::Database;
+//! use bareclad::construct::{Database, PersistenceMode};
 //! use bareclad::datatype::Time;
-//! let conn = Connection::open_in_memory().unwrap();
-//! let persistor = Persistor::new(&conn);
-//! let db = Database::new(persistor);
+//! // Pure in-memory (no SQLite persistence)
+//! let db = Database::new(PersistenceMode::InMemory);
 //! let (role, _) = db.create_role("person".to_string(), false);
 //! let thing = db.create_thing();
 //! let (appearance, _) = db.create_apperance(*thing, role);
@@ -512,6 +509,23 @@ impl<K: Eq + Hash, H: BuildHasher + Default> ThingLookup<K, H> {
 
 // ------------- Database -------------
 // This sets up the database with the necessary structures
+
+/// Persistence configuration for the database engine.
+pub enum PersistenceMode {
+    /// Ephemeral engine: nothing is written, all data lost when dropped.
+    InMemory,
+    /// File-backed persistence using a SQLite database at the provided path.
+    File(String),
+}
+
+impl PersistenceMode {
+    /// Helper to derive a persistence mode from a flag + path string.
+    /// If `enable` is false, returns InMemory regardless of path contents.
+    pub fn from_config(enable: bool, path: impl Into<String>) -> Self {
+        if enable { PersistenceMode::File(path.into()) } else { PersistenceMode::InMemory }
+    }
+}
+
 pub struct Database {
     // owns a thing generator
     pub thing_generator: Arc<Mutex<ThingGenerator>>,
@@ -539,7 +553,11 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn new(persistor: Persistor) -> Database {
+    pub fn new(mode: PersistenceMode) -> Database {
+        let persistor = match mode {
+            PersistenceMode::InMemory => Persistor::new_no_persistence(),
+            PersistenceMode::File(path) => Persistor::new_from_file(&path),
+        };
         // Create all the stuff that goes into a database engine
         let thing_generator = ThingGenerator::new();
         let role_keeper = RoleKeeper::new();
