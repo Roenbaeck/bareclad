@@ -74,6 +74,22 @@ WHERE supports comparisons on:
 
 Certainty literals must end with a percent sign (`75%`). Forms like `0.75` or `75` no longer auto-convert; mixing a certainty variable with a bare number in an ordering comparison raises a helpful execution error.
 
+#### LIMIT clause (row capping)
+
+An optional `limit <N>` clause may appear at the end of a `search` command:
+
+```
+search [{(*, name)}, +n, *]
+return n
+limit 5;
+```
+
+Semantics:
+* Applied per `search` command (each search in a multi‑search script can have its own limit).
+* When present, at most N matching rows are emitted; result collection stops early for efficiency.
+* The JSON / programmatic result sets include a boolean `limited` flag indicating whether the limit was reached (i.e. the underlying matching set had ≥ N rows).
+* If multiple `search` commands are in a script, `execute_collect_multi` reports `limited` independently for each result set.
+
 ### Data types and literals ("look‑alike" / WYSIWYG)
 
 Traqula aims for “what you see is what you get” typing: the way a literal looks determines how it’s parsed and stored.
