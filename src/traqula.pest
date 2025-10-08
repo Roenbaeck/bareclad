@@ -14,7 +14,11 @@ certainty = { "-"? ~ digit{1,3} ~ "%" }
 time = { "'" ~ (digit | "-" | ":")+ ~ "'" }
 json = @{ "{" ~ (json | !"}" ~ ANY)* ~ "}" }
 string = { "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
-variable = ${ CASED_LETTER ~ (CASED_LETTER | digit | "_" )* }
+// Reserved keywords (cannot be used as bare variable names)
+keyword = { "add" | "role" | "posit" | "search" | "return" | "where" | "as" | "of" | "limit" | "and" }
+// A variable is an identifier not exactly equal to a reserved keyword.
+// Negative lookahead excludes exact keyword tokens but allows identifiers like 'limitX'.
+variable = ${ !(keyword ~ ! (CASED_LETTER | digit | "_" )) ~ CASED_LETTER ~ (CASED_LETTER | digit | "_" )* }
 constant = { "@" ~ UPPERCASE_LETTER+ }
 
 // add role command

@@ -826,7 +826,7 @@ impl<'en> Engine<'en> {
             }
         }
     }
-    fn search(&self, command: Pair<Rule>, variables: &mut Variables, mut sink: Option<&mut dyn RowSink>, return_columns: &mut Option<Vec<String>>, mut limit: Option<usize>, exec_error: &mut Option<crate::error::BarecladError>) {
+    fn search(&self, command: Pair<Rule>, variables: &mut Variables, mut sink: Option<&mut dyn RowSink>, return_columns: &mut Option<Vec<String>>, limit: &mut Option<usize>, exec_error: &mut Option<crate::error::BarecladError>) {
         // Helper numeric comparison
         fn cmp_numeric(lhs: f64, rhs: f64, op: &str) -> bool {
             match op {
@@ -904,6 +904,17 @@ impl<'en> Engine<'en> {
         let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
         // Track whether any clause in this search failed (no candidates after constraints)
         let mut any_clause_failed: bool = false;
+        // First pass: discover limit clause (so trailing "limit N" applies even with early pattern emission)
+        {
+            let cloned = command.clone();
+            for clause in cloned.into_inner() {
+                if clause.as_rule() == Rule::limit_clause && limit.is_none() {
+                    for part in clause.into_inner() { // part should be int
+                        if let Ok(v) = part.as_str().parse::<usize>() { *limit = Some(v); }
+                    }
+                }
+            }
+        }
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
@@ -2070,7 +2081,7 @@ impl<'en> Engine<'en> {
                                     println!("{}", row.join(", "));
                                 }
                                 emitted += 1;
-                                if let Some(lim) = limit { if emitted >= lim { break; } }
+                                if let Some(lim) = *limit { if emitted >= lim { break; } }
                             }
                         }
                         return;
@@ -2080,7 +2091,7 @@ impl<'en> Engine<'en> {
                     // extracted limit appears as: ["limit", int]
                     if limit.is_none() {
                         for part in clause.into_inner() { // part is int token
-                            if let Ok(v) = part.as_str().parse::<usize>() { limit = Some(v); }
+                            if let Ok(v) = part.as_str().parse::<usize>() { *limit = Some(v); }
                         }
                     }
                 }
@@ -2089,7 +2100,11 @@ impl<'en> Engine<'en> {
         }
     }
     // Backwards compatible wrapper retaining original signature (prints rows)
-    fn search_print(&self, command: Pair<Rule>, variables: &mut Variables) { let mut cols=None; let mut err=None; self.search(command, variables, None, &mut cols, None, &mut err); if let Some(e)=err { eprintln!("{}", e); } }
+    fn search_print(&self, command: Pair<Rule>, variables: &mut Variables) {
+        let mut cols=None; let mut err=None; let mut limit: Option<usize> = None; // limit scoped per search
+        self.search(command, variables, None, &mut cols, &mut limit, &mut err);
+        if let Some(e)=err { eprintln!("{}", e); }
+    }
     /// Parse and execute a Traqula script (one or more commands).
     pub fn execute(&self, traqula: &str) {
         let mut variables: Variables = Variables::default();
@@ -2119,7 +2134,9 @@ impl<'en> Engine<'en> {
             match command.as_rule() {
                 Rule::add_role => self.add_role(command),
                 Rule::add_posit => self.add_posit(command, &mut variables),
-                Rule::search => self.search_print(command, &mut variables),
+                Rule::search => { // reset limit per search
+                    self.search_print(command, &mut variables);
+                },
                 Rule::EOI => (), // end of input
                 _ => println!("Unknown command: {:?}", command),
             }
@@ -2135,7 +2152,6 @@ impl<'en> Engine<'en> {
         impl RowSink for CollectSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
         let mut collector = CollectSink { rows: Vec::new(), types: Vec::new() };
     let mut return_columns: Option<Vec<String>> = None;
-    let limit: Option<usize> = None;
         // grammar now supports optional limit clause; parse directly
         let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
         let traqula = match parse_result {
@@ -2152,19 +2168,34 @@ impl<'en> Engine<'en> {
                 return Err(crate::error::BarecladError::Parse { message: msg, line: None, col: None });
             }
         };
+        let mut search_count = 0usize;
+        let mut single_search_limit: Option<usize> = None;
+        let mut single_search_rows: usize = 0;
         for command in traqula {
             match command.as_rule() {
                 Rule::add_role => self.add_role(command),
                 Rule::add_posit => self.add_posit(command, &mut variables),
-                Rule::search => { let mut err=None; self.search(command, &mut variables, Some(&mut collector), &mut return_columns, limit, &mut err); if let Some(e)=err { return Err(e); } }
+                Rule::search => {
+                    search_count += 1;
+                    let before = collector.rows.len();
+                    let mut err=None; // limit scoped per search
+                    let mut limit: Option<usize> = None;
+                    self.search(command, &mut variables, Some(&mut collector), &mut return_columns, &mut limit, &mut err);
+                    if let Some(e)=err { return Err(e); }
+                    let after = collector.rows.len();
+                    if search_count == 1 { // record first search stats; if later more appear we'll clear limited later
+                        single_search_limit = limit;
+                        single_search_rows = after - before; // rows added by this search
+                    }
+                }
                 Rule::EOI => (),
                 _ => (),
             }
         }
-        let cols = return_columns.unwrap_or_default();
-        let row_count = collector.rows.len();
-        let limited = limit.map(|l| row_count >= l).unwrap_or(false);
-        Ok(CollectedResult { columns: cols, rows: collector.rows, row_types: collector.types, row_count, limited })
+    let cols = return_columns.unwrap_or_default();
+    let row_count = collector.rows.len();
+        let limited = if search_count == 1 { if let Some(lim) = single_search_limit { single_search_rows >= lim } else { false } } else { false };
+    Ok(CollectedResult { columns: cols, rows: collector.rows, row_types: collector.types, row_count, limited })
     }
 
     /// Execute a script and collect separate result sets for each search command.
@@ -2187,7 +2218,6 @@ impl<'en> Engine<'en> {
                 return Err(crate::error::BarecladError::Parse { message: msg, line: None, col: None });
             }
         };
-        let limit: Option<usize> = None;
         let mut results: Vec<CollectedResultSet> = Vec::new();
         for command in traqula {
             match command.as_rule() {
@@ -2199,7 +2229,8 @@ impl<'en> Engine<'en> {
                     impl RowSink for LocalSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
                     let mut sink = LocalSink { rows: Vec::new(), types: Vec::new() };
                     let mut local_return_columns: Option<Vec<String>> = None;
-                    let mut err=None; self.search(command, &mut variables, Some(&mut sink), &mut local_return_columns, limit, &mut err); if let Some(e)=err { return Err(e); }
+                    let mut err=None; let mut limit: Option<usize> = None; // limit scoped per search
+                    self.search(command, &mut variables, Some(&mut sink), &mut local_return_columns, &mut limit, &mut err); if let Some(e)=err { return Err(e); }
                     let cols = local_return_columns.unwrap_or_default();
                     let row_count = sink.rows.len();
                     let limited = limit.map(|l| row_count >= l).unwrap_or(false);
