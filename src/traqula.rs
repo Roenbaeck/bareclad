@@ -55,6 +55,7 @@ use std::sync::Arc;
 
 // used for internal result sets
 use roaring::RoaringTreemap;
+use tracing::info;
 use std::ops::{BitAndAssign, BitOrAssign, BitXorAssign, SubAssign};
 
 type Variables = HashMap<String, ResultSet, OtherHasher>;
@@ -626,9 +627,13 @@ impl<'en> Engine<'en> {
     }
     /// Handle an `add role` command.
     fn add_role(&self, command: Pair<Rule>) {
+        let mut added = 0usize;
         for role in command.into_inner() {
-            self.database.create_role(role.as_str().to_string(), false);
+            let name = role.as_str().trim();
+            let (_r, existed) = self.database.create_role(name.to_string(), false);
+            if !existed { added +=1; info!(target: "bareclad::traqula", event="add_role", role=name, "role added"); } else { info!(target: "bareclad::traqula", event="add_role", role=name, existed=true, "role already existed"); }
         }
+        if added>0 { info!(target: "bareclad::traqula", event="add_role_batch", added, "roles batch added"); }
     }
     /// Handle an `add posit` command producing one or more posits.
     fn add_posit(&self, command: Pair<Rule>, variables: &mut Variables) {
@@ -868,6 +873,10 @@ impl<'en> Engine<'en> {
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed
                         }
+                    }
+                    if !posits.is_empty() {
+                        // summarize roles_ord (roles after reordering) if available
+                        info!(target: "bareclad::traqula", event="add_posit", created=posits.len(), roles=%roles_ord.join(","), value_kind=%if value_as_json.is_some(){"json"} else if value_as_string.is_some(){"string"} else if value_as_time.is_some(){"time"} else if value_as_certainty.is_some(){"certainty"} else if value_as_decimal.is_some(){"decimal"} else if value_as_i64.is_some(){"i64"} else {"unknown"}, "posits created");
                     }
                 }
                 _ => println!("Unknown structure: {:?}", structure),
