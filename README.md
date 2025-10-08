@@ -264,7 +264,7 @@ Logging uses `RUST_LOG`; presets: quiet | normal | verbose | trace.
 
 A minimal static HTML client (`bareclad.html`) demonstrates submitting scripts to the server endpoint and rendering results. Open it in a browser (or host it) and point the form to your server's `/v1/query` URL.
 
-<img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/bareclad_web_app.png">
+<img src="https://github.com/Roenbaeck/bareclad/blob/master/bareclad_web_app.png?raw=true">
 
 ## Updated Status and Roadmap
 
