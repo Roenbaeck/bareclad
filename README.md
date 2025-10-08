@@ -320,12 +320,12 @@ Implemented:
 * PowerShell helper script for lifecycle (start/stop/restart) with logging presets
 * Minimal HTML client page
 * Execution error surfacing (unknown variable, type mismatch, ordering misuse)
+* Streaming row delivery over HTTP (chunked / SSE)
 
 Planned/next:
 * WHERE enhancements: OR, grouping, BETWEEN, IN
 * Aggregations and tuple-shaped / structured returns
 * Projection type annotations stabilization (avoid dynamic probing)
-* Streaming row delivery over HTTP (chunked / SSE)
 * Authentication / access control for the server
 * Optimization: caching value extraction during predicate evaluation
 * Optional JSON/CSV export helpers
