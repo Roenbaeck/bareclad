@@ -44,6 +44,7 @@ return
         <button class="tabBtn active" data-tab="table">Table</button>
         <button class="tabBtn" data-tab="json">JSON</button>
         <button class="tabBtn" data-tab="status">Status</button>
+        <select id="resultSetSelect" style="display:none;" title="Select result set"></select>
         <div></div>
         <span id="perf"></span>
       </div>
@@ -87,7 +88,8 @@ const els = {
   tableView: document.getElementById('tableView'),
   jsonView: document.getElementById('jsonView'),
   statusView: document.getElementById('statusView'),
-  statusOut: document.getElementById('statusOut')
+  statusOut: document.getElementById('statusOut'),
+  resultSetSelect: document.getElementById('resultSetSelect')
 };
 let lastResponse = null;
 
@@ -219,7 +221,6 @@ function buildTable(columns, rows, rowTypes) {
   els.tableHead.innerHTML = '';
   els.tableBody.innerHTML = '';
   if (!columns || columns.length===0) return;
-  
   // Collect unique data types for each column
   const columnTypes = columns.map((_, colIndex) => {
     const types = new Set();
@@ -232,7 +233,6 @@ function buildTable(columns, rows, rowTypes) {
     }
     return Array.from(types).sort();
   });
-  
   const tr = document.createElement('tr');
   columns.forEach((c,i)=>{
     const th = document.createElement('th');
@@ -250,6 +250,25 @@ function buildTable(columns, rows, rowTypes) {
     });
     els.tableBody.appendChild(tr);
     if (els.autoScroll.checked) tr.scrollIntoView({block:'end'});
+  });
+}
+
+function populateResultSetSelect(resultSets) {
+  const sel = els.resultSetSelect;
+  if (!resultSets || resultSets.length <= 1) {
+    sel.style.display = 'none';
+    sel.innerHTML = '';
+    return;
+  }
+  sel.style.display = 'inline-block';
+  sel.innerHTML = '';
+  resultSets.forEach((rs, idx) => {
+    const opt = document.createElement('option');
+    const colPreview = rs.columns.slice(0,4).join(', ');
+    opt.value = idx;
+    opt.textContent = `Set ${idx+1} (${rs.row_count} rows)`;
+    opt.title = `Columns: ${colPreview}${rs.columns.length>4?'…':''}`;
+    sel.appendChild(opt);
   });
 }
 async function runQuery() {
@@ -273,7 +292,20 @@ async function runQuery() {
     lastResponse = json;
     els.progress.value=85;
     if (json.status === 'ok') {
-      buildTable(json.columns, json.rows||[], json.row_types||[]);
+      if (json.result_sets) {
+        populateResultSetSelect(json.result_sets);
+        // Default to first set
+        const first = json.result_sets[0];
+        buildTable(first.columns, first.rows||[], first.row_types||[]);
+        els.resultSetSelect.onchange = () => {
+          const idx = parseInt(els.resultSetSelect.value,10);
+            const rs = json.result_sets[idx];
+            buildTable(rs.columns, rs.rows||[], rs.row_types||[]);
+        };
+      } else {
+        populateResultSetSelect(null);
+        buildTable(json.columns, json.rows||[], json.row_types||[]);
+      }
       const ms = (performance.now()-started).toFixed(2);
       els.perf.textContent = `client ${(ms)} ms | server ${(json.elapsed_ms).toFixed(3)} ms | rows ${json.row_count}`;
       setStatus('OK');

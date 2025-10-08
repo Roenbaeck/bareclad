@@ -533,6 +533,14 @@ pub struct CollectedResult {
     pub row_count: usize,
     pub limited: bool,
 }
+#[derive(Debug, Clone)]
+pub struct CollectedResultSet {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub row_types: Vec<Vec<String>>,
+    pub row_count: usize,
+    pub limited: bool,
+}
 impl<'en> Engine<'en> {
     /// Create a new engine borrowing the provided database.
     pub fn new(database: &'en Database) -> Self {
@@ -1937,6 +1945,51 @@ impl<'en> Engine<'en> {
         let row_count = collector.rows.len();
         let limited = limit.map(|l| row_count >= l).unwrap_or(false);
         Ok(CollectedResult { columns: cols, rows: collector.rows, row_types: collector.types, row_count, limited })
+    }
+
+    /// Execute a script and collect separate result sets for each search command.
+    /// This provides the foundation for a multi-result JSON protocol.
+    pub fn execute_collect_multi(&self, traqula: &str) -> Result<Vec<CollectedResultSet>, crate::error::BarecladError> {
+        let mut variables: Variables = Variables::default();
+        // Parse once
+        let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
+        let traqula = match parse_result {
+            Ok(pairs) => pairs,
+            Err(err) => {
+                let mut msg = format!("{}", err);
+                if let ErrorVariant::ParsingError { positives, negatives: _ } = err.variant {
+                    if !positives.is_empty() {
+                        let mut expected: Vec<&'static str> = positives.iter().map(|r| friendly_rule_name(*r)).collect();
+                        expected.sort(); expected.dedup();
+                        msg.push_str(&format!("\nExpected one of: {}", expected.join(", ")));
+                    }
+                }
+                return Err(crate::error::BarecladError::Parse { message: msg, line: None, col: None });
+            }
+        };
+        let limit: Option<usize> = None;
+        let mut results: Vec<CollectedResultSet> = Vec::new();
+        for command in traqula {
+            match command.as_rule() {
+                Rule::add_role => self.add_role(command),
+                Rule::add_posit => self.add_posit(command, &mut variables),
+                Rule::search => {
+                    // Local collector per search
+                    struct LocalSink { rows: Vec<Vec<String>>, types: Vec<Vec<String>> }
+                    impl RowSink for LocalSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
+                    let mut sink = LocalSink { rows: Vec::new(), types: Vec::new() };
+                    let mut local_return_columns: Option<Vec<String>> = None;
+                    self.search(command, &mut variables, Some(&mut sink), &mut local_return_columns, limit);
+                    let cols = local_return_columns.unwrap_or_default();
+                    let row_count = sink.rows.len();
+                    let limited = limit.map(|l| row_count >= l).unwrap_or(false);
+                    results.push(CollectedResultSet { columns: cols, rows: sink.rows, row_types: sink.types, row_count, limited });
+                }
+                Rule::EOI => (),
+                _ => (),
+            }
+        }
+        Ok(results)
     }
 }
 

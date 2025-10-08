@@ -63,4 +63,8 @@ return
 search +p [{(h, name)}, +n, +t] 
 return
     p, h, n, t;
+
+search [{(*, name)}, +n2, +t2] 
+return
+    n2, t2;    
     
