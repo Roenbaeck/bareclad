@@ -245,7 +245,11 @@ function buildTable(columns, rows, rowTypes) {
     r.forEach((cell,ci)=>{
       const td = document.createElement('td');
       const typ = (rowTypes && rowTypes[ri] ? rowTypes[ri][ci] : '');
-      td.innerHTML = '<span class="badge '+escapeHtml(typ)+'">'+escapeHtml(typ||'')+'</span> '+ escapeHtml(String(cell));
+      let display = String(cell);
+      if (typ === 'Certainty') {
+        display = formatCertaintyDisplay(display);
+      }
+      td.innerHTML = '<span class="badge '+escapeHtml(typ)+'">'+escapeHtml(typ||'')+'</span> '+ escapeHtml(display);
       tr.appendChild(td);
     });
     els.tableBody.appendChild(tr);
@@ -371,6 +375,23 @@ window.addEventListener('mousemove', e=>{
 });
 window.addEventListener('mouseup', ()=>{ if (dragging) { dragging=false; document.body.style.cursor=''; }});
 window.addEventListener('resize', ()=>{ /* keep within bounds */ setEditorHeight(els.editorPane.getBoundingClientRect().height); });
+
+function formatCertaintyDisplay(raw) {
+  if (raw === undefined || raw === null) return raw;
+  if (raw === '?') return raw;
+  // Expect forms: -1, -0.xx, 0, 0.xx, 1
+  if (raw === '1' || raw === '-1') return (raw.startsWith('-')?'-':'') + '100%';
+  if (raw === '0') return '0%';
+  const m = raw.match(/^(-?)0\.(\d{1,2})$/);
+  if (m) {
+    const sign = m[1];
+    const digits = m[2];
+    // strip potential leading zero in percent, keep as integer ("05" -> 5) but preserve up to 2 digits
+    const pct = parseInt(digits,10); // safe
+    return sign + pct + '%';
+  }
+  return raw; // fallback
+}
 </script>
 </body>
 </html>
