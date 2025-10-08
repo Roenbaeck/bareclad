@@ -4,83 +4,11 @@
 <meta charset="UTF-8" />
 <title>Bareclad Query Console</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-:root {
-  color-scheme: light dark;
-  --bg: #111;
-  --panel: #1e1e1e;
-  --border: #333;
-  --accent: #2d72d2;
-  --accent-glow: #4994ff;
-  --text: #eee;
-  --warn: #ffb347;
-  --err: #ff6b6b;
-  font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-}
-/* Ensure padding/border don't cause overflow calculations */
-*,*::before,*::after { box-sizing:border-box; }
-html,body { overflow-x:hidden; }
-body { margin:0; background:var(--bg); color:var(--text); display:flex; flex-direction:column; height:100vh; }
-header { padding:0.75rem 1rem; background:var(--panel); border-bottom:1px solid var(--border); font-weight:600; letter-spacing:.5px; display:flex; align-items:center; gap:0.5rem; }
-header .svg { width:7rem; margin-right: 1rem;}
-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-#splitContainer { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-#editorPane { flex:0 0 50%; min-height:140px; max-height:80%; display:flex; flex-direction:column; border-bottom:1px solid var(--border); background:var(--panel); }
-#resultsPane { flex:1; display:flex; flex-direction:column; min-height:140px; overflow:hidden; }
-#splitter { height:6px; background:linear-gradient(to bottom,#1a1a1c,#141414); border-top:1px solid #222; border-bottom:1px solid #222; cursor:row-resize; position:relative; }
-#splitter:after { content:''; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:60px; height:2px; background:#333; border-radius:2px; }
-section { padding:0.65rem 0.75rem 0.9rem; overflow:auto; }
-textarea { width:100%; max-width:100%; flex:1; resize:none; background:#0f0f10; color:var(--text); padding:.75rem; border:1px solid var(--border); border-radius:6px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; line-height:1.3; overflow-x:hidden; }
-#script-container { flex:1; display:flex; flex-direction:column; }
-button { background:var(--accent); color:#fff; border:none; padding:.55rem 1rem; border-radius:6px; cursor:pointer; font-weight:600; letter-spacing:.4px; display:inline-flex; align-items:center; gap:.4rem; font-size:.8rem; }
-button:hover { background:var(--accent-glow); }
-button:disabled { opacity:.5; cursor:not-allowed; }
-.controls { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.55rem; align-items:center; }
-label { font-size:.7rem; opacity:.8; }
-input[type="number"], input[type="text"] { background:#0f0f10; color:var(--text); border:1px solid var(--border); border-radius:4px; padding:.4rem .55rem; font-size:.8rem; }
-#endpoint { width:100%; margin:.25rem 0 .55rem; }
-input[type="number"] { width:5.5rem; }
-#statusBar { font-size:.7rem; opacity:.75; margin-top:.4rem; white-space:pre-wrap; }
-#resultsTabs { display:flex; gap:.25rem; padding:.4rem .6rem .35rem; background:#141414; border-bottom:1px solid var(--border); }
-.tabBtn { background:#1f1f22; color:var(--text); border:1px solid #262626; padding:.4rem .8rem; border-radius:5px; font-size:.7rem; font-weight:600; letter-spacing:.4px; cursor:pointer; }
-.tabBtn.active { background:var(--accent); border-color:var(--accent); color:#fff; }
-#tableView { flex:1; overflow:auto; }
-#jsonView { flex:1; overflow:auto; display:none; }
-#resultsTable { width:100%; border-collapse:collapse; font-size:.8rem; }
-#resultsTable th,#resultsTable td { border:1px solid #222; padding:.35rem .5rem; vertical-align:top; }
-#resultsTable th { background:#202025; position:sticky; top:0; z-index:2; }
-#resultsTable tbody tr:nth-child(odd) { background:#18181a; }
-#resultsTable tbody tr:hover { background:#26262b; }
-.badge { font-size:.55rem; padding:.12rem .35rem; border-radius:3px; background:#253141; color:#c5e2ff; font-weight:600; }
-.badge.Time { background:#3c2d55; color:#eccdff; }
-.badge.i64 { background:#334936; color:#d6ffd6; }
-.badge.Decimal { background:#4a3c2d; color:#ffe4c5; }
-.badge.Certainty { background:#4d3b3b; }
-.badge.JSON { background:#2d444d; }
-#jsonOut { white-space:pre; font-family:ui-monospace,monospace; font-size:.7rem; background:#0f0f10; padding:.75rem; border:1px solid var(--border); border-radius:6px; margin:.6rem; }
-footer { padding:.45rem .75rem; border-top:1px solid var(--border); font-size:.6rem; display:flex; justify-content:space-between; align-items:center; background:#121314; }
-progress { width:100%; height:6px; accent-color:var(--accent); }
-::selection { background:#2d72d2aa; }
-@media (max-width: 840px) { #editorPane { flex:0 0 55%; } }
-</style>
+<link rel="stylesheet" href="bareclad.css" />
 </head>
 <body>
 <!-- Prism.js for syntax highlighting (works with file:// protocol) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
-<style>
-/* Custom Traqula syntax highlighting styles */
-.token.keyword { color: #2d72d2; font-weight: bold; }
-.token.constant { color: #4994ff; }
-.token.time { color: #ffb347; }
-.token.string { color: #ce9178; }
-.token.number { color: #b5cea8; }
-.token.variable-insert { color: #9cdcfe; font-weight: bold; }
-.token.variable { color: #9cdcfe; }
-.token.operator { color: #569cd6; }
-.token.wildcard { color: #ff6b6b; font-weight: bold; }
-.token.punctuation { color: #d4d4d4; }
-.token.comment { color: #6a9955; font-style: italic; }
-</style>
 <header>
   <img class="svg" src="Traqula.svg"/>
   Bareclad Query Console
@@ -88,17 +16,13 @@ progress { width:100%; height:6px; accent-color:var(--accent); }
 <main>
   <div id="splitContainer">
     <div id="editorPane">
-      <section style="flex:1; display:flex; flex-direction:column;">
+      <section>
         <label for="endpoint">Endpoint</label>
         <input id="endpoint" type="text" value="http://127.0.0.1:8080/v1/query" />
         <label for="script">Traqula Script (Ctrl+Enter to run)</label>
-        <div id="script-container" style="position: relative; flex: 1; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
-          <textarea id="script" spellcheck="false" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: #eee; resize: none; border: none; padding: 8px; font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; line-height: 20px; z-index: 2; outline: none;">
-search +posit [{(+person, name)}, +name, +since]
-return
-    posit, person, name, since;
-          </textarea>
-          <pre id="script-highlight" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; margin: 0; padding: 8px; font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 13px; line-height: 20px; background: #0f0f10; color: #eee; overflow: auto; pointer-events: none; z-index: 1; white-space: pre-wrap; word-wrap: break-word;"><code class="language-traqula">
+        <div id="script-container">
+          <textarea id="script" spellcheck="false"></textarea>
+          <pre id="script-highlight"><code class="language-traqula">
 search +posit [{(+person, name)}, +name, +since]
 return
     posit, person, name, since;
@@ -107,11 +31,11 @@ return
         <div class="controls">
           <button id="runBtn">Run</button>
           <button id="clearBtn" title="Clear results">Clear</button>
-          <label><input type="checkbox" id="autoScroll" checked> auto-scroll</label>
           <label>Timeout <input type="number" id="timeout" min="0" step="100" placeholder="ms"></label>
+          <label><input type="checkbox" id="autoScroll" checked> Auto-scroll to latest</label>
         </div>
         <div id="statusBar"></div>
-        <progress id="progress" max="100" value="0" hidden></progress>
+        <progress id="progress" max="100" value="0"></progress>
       </section>
     </div>
     <div id="splitter" title="Drag to resize"></div>
@@ -119,8 +43,9 @@ return
       <div id="resultsTabs">
         <button class="tabBtn active" data-tab="table">Table</button>
         <button class="tabBtn" data-tab="json">JSON</button>
-        <div style="flex:1"></div>
-        <span id="perf" style="font-size:.65rem; opacity:.75;"></span>
+        <button class="tabBtn" data-tab="status">Status</button>
+        <div></div>
+        <span id="perf"></span>
       </div>
       <div id="tableView">
         <table id="resultsTable">
@@ -131,12 +56,15 @@ return
       <div id="jsonView">
         <pre id="jsonOut"></pre>
       </div>
+      <div id="statusView">
+        <pre id="statusOut"></pre>
+      </div>
     </div>
   </div>
 </main>
 <footer>
   <span>Bareclad local console (dev)</span>
-  <span>Drag splitter to resize editor/results • Tabs to switch view</span>
+  <span>Drag splitter to resize editor/results • Tabs to switch view • Status tab shows logs</span>
 </footer>
 <script>
 const els = {
@@ -157,9 +85,17 @@ const els = {
   resultsPane: document.getElementById('resultsPane'),
   tabs: document.querySelectorAll('.tabBtn'),
   tableView: document.getElementById('tableView'),
-  jsonView: document.getElementById('jsonView')
+  jsonView: document.getElementById('jsonView'),
+  statusView: document.getElementById('statusView'),
+  statusOut: document.getElementById('statusOut')
 };
 let lastResponse = null;
+
+// Load saved query from localStorage
+const savedQuery = localStorage.getItem('bareclad-query');
+if (savedQuery) {
+  els.script.value = savedQuery;
+}
 
 // Define Traqula language for Prism.js
 Prism.languages.traqula = {
@@ -185,6 +121,9 @@ function updateHighlight() {
   const code = scriptTextarea.value;
   const highlightedCode = Prism.highlight(code, Prism.languages.traqula, 'traqula');
   scriptHighlight.querySelector('code').innerHTML = highlightedCode;
+  
+  // Save query to localStorage
+  localStorage.setItem('bareclad-query', code);
 }
 
 // Sync scroll between textarea and highlight
@@ -217,109 +156,87 @@ scriptTextarea.addEventListener('keydown', function(e) {
 setTimeout(() => {
   updateHighlight();
   setStatus('Editor loaded with syntax highlighting');
+  
+  // Initialize status view with welcome message
+  const initTime = new Date().toLocaleTimeString();
+  els.statusOut.textContent = `[${initTime}] Bareclad Query Console initialized\n[${initTime}] Editor loaded with syntax highlighting\n`;
 }, 100);
 
-// Legacy object structure (placeholder)
-const traqulaLanguage = {
-  keywords: [
-    'add', 'role', 'posit', 'search', 'return', 'where', 'and', 'limit', 'as', 'of'
-  ],
-  constants: [
-    '@NOW', '@BOT', '@EOT'
-  ],
-  operators: [
-    '+', '|', '<=', '>=', '<', '>', '==', '='
-  ],
-  ignoreCase: true,
-  tokenizer: {
-    root: [
-      // Comments
-      [/\/\*/, 'comment', '@comment'],
-      
-      // Keywords (case insensitive)
-      [/\b(?:add|role|posit|search|return|where|and|limit|as|of)\b/i, 'keyword'],
-      
-      // Constants
-      [/@[A-Z]+/, 'constant'],
-      
-      // Time literals (quoted)
-      [/'[0-9:\-\s]+'/, 'string.time'],
-      
-      // String literals (with escaped quotes support)
-      [/"/, 'string', '@string'],
-      
-      // JSON objects (basic detection)
-      [/\{/, 'delimiter.curly', '@json'],
-      
-      // Certainty percentages
-      [/-?\d{1,3}%/, 'number.percentage'],
-      
-      // Decimal numbers
-      [/-?\d+\.\d+/, 'number.float'],
-      
-      // Integer numbers
-      [/-?\d+/, 'number'],
-      
-      // Insert variables (with +)
-      [/\+[a-zA-Z][a-zA-Z0-9_]*/, 'variable.insert'],
-      
-      // Comparison operators (must come before single chars)
-      [/<=|>=|==/, 'operator.comparison'],
-      [/[<>=]/, 'operator.comparison'],
-      
-      // Union operator
-      [/\|/, 'operator.union'],
-      
-      // Insert operator
-      [/\+/, 'operator.insert'],
-      
-      // Variables (recall)
-      [/\b[a-zA-Z][a-zA-Z0-9_]*\b/, 'variable'],
-      
-      // Wildcard
-      [/\*/, 'wildcard'],
-      
-      // Delimiters
-      [/[\[\]]/, 'delimiter.bracket'],
-      [/[{}]/, 'delimiter.curly'],
-      [/[()]/, 'delimiter.parenthesis'],
-      [/[,;]/, 'delimiter'],
-      
-      // Whitespace
-      [/\s+/, 'white']
-    ],
-    
-    comment: [
-      [/[^/*]+/, 'comment'],
-      [/\*\//, 'comment', '@pop'],
-      [/[/*]/, 'comment']
-    ],
-    
-    string: [
-      [/[^"]+/, 'string'],
-      [/""/, 'string.escape'],
-      [/"/, 'string', '@pop']
-    ],
-    
-    json: [
-      [/[^{}]+/, 'string.json'],
-      [/\{/, 'delimiter.curly', '@push'],
-      [/\}/, 'delimiter.curly', '@pop']
-    ]
-  }
-};
+// Save query on page unload
+window.addEventListener('beforeunload', () => {
+  localStorage.setItem('bareclad-query', scriptTextarea.value);
+});
 
 // No Monaco initialization needed - using Prism.js instead
-function setStatus(msg, cls='') { els.status.textContent = msg; els.status.className = cls; }
+function setStatus(msg, cls='') {
+  // Update the status bar with brief messages only
+  if (cls === 'err') {
+    // For errors, show a brief indicator in status bar
+    els.status.textContent = 'Error occurred - see Status tab for details';
+    els.status.className = cls;
+  } else {
+    // For non-errors, show the full message
+    els.status.textContent = msg;
+    els.status.className = cls;
+  }
+
+  // Always log to status view with timestamp
+  const timestamp = new Date().toLocaleTimeString();
+  const logEntry = `[${timestamp}] ${msg}\n`;
+  els.statusOut.textContent += logEntry;
+
+  // Auto-scroll to bottom of status view
+  const statusView = els.statusView;
+  setTimeout(() => {
+    statusView.scrollTop = statusView.scrollHeight;
+  }, 0);
+
+  // Switch to status tab if there's an error
+  if (cls === 'err') {
+    els.tabs.forEach(btn => btn.classList.remove('active'));
+    const statusTab = document.querySelector('[data-tab="status"]');
+    if (statusTab) {
+      statusTab.classList.add('active');
+      els.tableView.style.display = 'none';
+      els.jsonView.style.display = 'none';
+      els.statusView.style.display = 'block';
+    }
+  }
+  // Switch back to table tab for successful query completion
+  else if (msg === 'OK') {
+    els.tabs.forEach(btn => btn.classList.remove('active'));
+    const tableTab = document.querySelector('[data-tab="table"]');
+    if (tableTab) {
+      tableTab.classList.add('active');
+      els.tableView.style.display = 'block';
+      els.jsonView.style.display = 'none';
+      els.statusView.style.display = 'none';
+    }
+  }
+}
 function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 function buildTable(columns, rows, rowTypes) {
   els.tableHead.innerHTML = '';
   els.tableBody.innerHTML = '';
   if (!columns || columns.length===0) return;
+  
+  // Collect unique data types for each column
+  const columnTypes = columns.map((_, colIndex) => {
+    const types = new Set();
+    if (rowTypes) {
+      rowTypes.forEach(rowType => {
+        if (rowType && rowType[colIndex]) {
+          types.add(rowType[colIndex]);
+        }
+      });
+    }
+    return Array.from(types).sort();
+  });
+  
   const tr = document.createElement('tr');
   columns.forEach((c,i)=>{
     const th = document.createElement('th');
-    th.innerHTML = escapeHtml(c) + '<br><span style="font-weight:400;opacity:.6;font-size:.65rem;">'+ (rowTypes&&rowTypes[0]? escapeHtml(rowTypes[0][i]||''): '') +'</span>';
+    th.innerHTML = escapeHtml(c) + '<br><span>'+ escapeHtml(columnTypes[i].join(', ') || '') +'</span>';
     tr.appendChild(th);
   });
   els.tableHead.appendChild(tr);
@@ -340,7 +257,7 @@ async function runQuery() {
   const script = scriptTextarea.value;
   const payload = { script: script, stream: false };
   const timeoutMs = parseInt(els.timeout.value || '0',10);
-  els.runBtn.disabled = true; setStatus('Running...'); els.progress.hidden=false; els.progress.value=15;
+  els.runBtn.disabled = true; setStatus('Running...'); els.progress.style.visibility='visible'; els.progress.value=15;
   const controller = timeoutMs>0 ? new AbortController() : null;
   if (controller) setTimeout(()=>controller.abort(), timeoutMs);
   const started = performance.now();
@@ -368,11 +285,18 @@ async function runQuery() {
   } catch (e) {
     setStatus('Request failed: '+ e.message, 'err');
   } finally {
-    els.runBtn.disabled=false; els.progress.value=100; setTimeout(()=>{els.progress.hidden=true;},400);
+    els.runBtn.disabled=false; els.progress.value=100; setTimeout(()=>{els.progress.style.visibility='hidden';},400);
   }
 }
 els.runBtn.addEventListener('click', runQuery);
-els.clearBtn.addEventListener('click', ()=>{ els.tableHead.innerHTML=''; els.tableBody.innerHTML=''; els.jsonOut.textContent=''; els.perf.textContent=''; setStatus('Cleared'); });
+els.clearBtn.addEventListener('click', ()=>{ 
+  els.tableHead.innerHTML=''; 
+  els.tableBody.innerHTML=''; 
+  els.jsonOut.textContent=''; 
+  els.statusOut.textContent=''; 
+  els.perf.textContent=''; 
+  setStatus('Cleared'); 
+});
 
 // Tabs switching
 els.tabs.forEach(btn=>{
@@ -380,8 +304,21 @@ els.tabs.forEach(btn=>{
     els.tabs.forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.getAttribute('data-tab');
-    if (tab==='table') { els.tableView.style.display='block'; els.jsonView.style.display='none'; }
-    else { els.tableView.style.display='none'; els.jsonView.style.display='flex'; }
+    if (tab==='table') { 
+      els.tableView.style.display='block'; 
+      els.jsonView.style.display='none'; 
+      els.statusView.style.display='none'; 
+    }
+    else if (tab==='json') { 
+      els.tableView.style.display='none'; 
+      els.jsonView.style.display='block'; 
+      els.statusView.style.display='none'; 
+    }
+    else if (tab==='status') { 
+      els.tableView.style.display='none'; 
+      els.jsonView.style.display='none'; 
+      els.statusView.style.display='block'; 
+    }
   });
 });
 
