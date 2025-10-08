@@ -1,5 +1,17 @@
 //! Traqula query & mutation language engine.
 //!
+//! Recent capabilities of note:
+//! * Multi-result collection: `Engine::execute_collect_multi` returns one result set per `search` in a script.
+//! * Variable–variable predicates:
+//!   - Time vs time comparisons (e.g. `where t1 < t2`).
+//!   - Value vs value comparisons for numbers, decimals, certainties, and strings (equality only for strings).
+//! * Certainty literals are percent-only (`75%`, `-10%`); bare numbers like `0.75` no longer auto-convert.
+//! * Ordering on certainty variables requires both sides to be certainties (percent forms); mixed certainty/numeric ordering yields an execution error mentioning a missing percent sign.
+//! * Numeric ordering/equality supports `i64` and `Decimal` interop (coerced during comparison).
+//! * Execution errors surface unknown variables and mismatched ordering types early, halting evaluation.
+//!
+//! These enhancements are intentionally conservative: unsupported comparisons are rejected with clear errors rather than coerced implicitly.
+//!
 //! This module provides a rudimentary parser (Pest based) and executor for a
 //! domain specific language used to:
 //! * add roles
@@ -421,11 +433,12 @@ fn parse_i64_constant(_value: &str) -> Option<i64> {
     None
 }
 fn parse_certainty(value: &str) -> Option<Certainty> {
-    let value = value.replace("%", "");
-    match value.parse::<i8>() {
-        Ok(v) => Some(Certainty::new(v)),
-        Err(_) => None,
-    }
+    let raw = value.trim().trim_end_matches('%');
+    if let Ok(v) = raw.parse::<f64>() {
+        // Accept either fraction [-1,1] or percent [-100,100]
+        let f = if v.abs() > 1.0 { v / 100.0 } else { v };
+        Some(Certainty::new(f))
+    } else { None }
 }
 fn parse_certainty_constant(_value: &str) -> Option<Certainty> {
     None
@@ -813,17 +826,51 @@ impl<'en> Engine<'en> {
             }
         }
     }
-    fn search(&self, command: Pair<Rule>, variables: &mut Variables, mut sink: Option<&mut dyn RowSink>, return_columns: &mut Option<Vec<String>>, mut limit: Option<usize>) {
+    fn search(&self, command: Pair<Rule>, variables: &mut Variables, mut sink: Option<&mut dyn RowSink>, return_columns: &mut Option<Vec<String>>, mut limit: Option<usize>, exec_error: &mut Option<crate::error::BarecladError>) {
+        // Helper numeric comparison
+        fn cmp_numeric(lhs: f64, rhs: f64, op: &str) -> bool {
+            match op {
+                "<" => lhs < rhs,
+                "<=" => lhs <= rhs,
+                ">" => lhs > rhs,
+                ">=" => lhs >= rhs,
+                "=" | "==" => (lhs - rhs).abs() < 1e-9,
+                _ => false,
+            }
+        }
+        fn cmp_bigdecimal(lhs: &bigdecimal::BigDecimal, rhs: &bigdecimal::BigDecimal, op: &str) -> bool {
+            use std::cmp::Ordering::*;
+            match (lhs.cmp(rhs), op) {
+                (Less, "<") | (Less, "<=") => true,
+                (Equal, "<=" | "=" | "==") => true,
+                (Greater, ">" | ">=") => true,
+                (Less, ">=") | (Greater, "<=") => false,
+                (Less, ">") | (Greater, "<") => false,
+                (Equal, _ ) => op == "=" || op == "==",
+                _ => false,
+            }
+        }
         // Track variables referenced in this search command to guide projection
         let mut active_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
         // Track candidate posits per bound time variable name (e.g., t, tw, birth_t)
         let mut time_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
-        // Track candidate posits per bound value variable name (e.g., n, name_val)
-        let mut value_var_candidates: HashMap<String, RoaringTreemap> = HashMap::new();
+    // value_var_candidates removed (late pruning only during filtering stage)
         // Parsed where conditions on time variables: var -> (comparator, Time)
         let mut where_time: Vec<(String, String, Time)> = Vec::new();
         // Parsed where conditions between time variables: (var1, comparator, var2)
         let mut where_time_var: Vec<(String, String, String)> = Vec::new();
+    // Parsed generic value conditions: (lhs_var, op, Rhs)
+    #[derive(Debug, Clone)]
+    enum RhsValueKind { Cert(i8), Int(i64), Decimal(String), String(String), Const(String) }
+    let mut where_value: Vec<(String, String, RhsValueKind)> = Vec::new();
+    let mut where_value_var: Vec<(String, String, String)> = Vec::new();
+    fn parse_certainty_literal(raw: &str) -> Option<i8> {
+        let s = raw.trim();
+        if s.ends_with('%') { if let Ok(v)=s.trim_end_matches('%').parse::<i16>() { if (-100..=100).contains(&v) { return Some(v as i8); } } return None; }
+        None // only percent-suffixed forms are certainty literals now
+    }
+    // Parsed variable-to-variable value comparisons (both non-time for now): (lhs, op, rhs)
+    // (variable-to-variable value comparisons omitted in current implementation)
         // Track kinds of variables seen in this search (identity, value, time)
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum VarKind {
@@ -1347,11 +1394,7 @@ impl<'en> Engine<'en> {
                                         // Remember candidate posits for projection when returning values/times
                                         // (legacy single-role candidate capture removed)
                                         // If the appearing value used a variable (e.g., +n or n), capture its candidates
-                                        if let Some(vname) = _value_as_variable {
-                                            value_var_candidates
-                                                .insert(vname.to_string(), cands.clone());
-                                            active_vars.insert(vname.to_string());
-                                        }
+                                        if let Some(vname) = _value_as_variable { active_vars.insert(vname.to_string()); }
                                         // If the time slot used a variable, capture its candidate posits under that variable name
                                         if let Some(varname) = _time_as_variable {
                                             time_var_candidates
@@ -1662,30 +1705,67 @@ impl<'en> Engine<'en> {
                     }
                 }
                 Rule::where_clause => {
-                    // Parse one or more conditions of the form: x <= 'YYYY-MM-DD'
+                    // Extended parser: collect time comparisons (existing behavior) and stash generic ones for future evaluation.
+                    // Unsupported (non-time) conditions are currently parsed but not evaluated: we log once if encountered.
+                    // (Previously logged unsupported conditions; now we capture generics silently.)
                     for part in clause.into_inner() {
                         match part.as_rule() {
                             Rule::condition => {
-                                let mut var: Option<String> = None;
+                                let mut lhs_var: Option<String> = None;
                                 let mut op: Option<String> = None;
                                 let mut rhs_time: Option<Time> = None;
+                                let mut rhs_is_time = false;
+                                let mut rhs_raw: Option<String> = None; // generic string form
+                                let mut rhs_var: Option<String> = None;
                                 for c in part.into_inner() {
                                     match c.as_rule() {
                                         Rule::recall => {
-                                            var = Some(
-                                                c.into_inner().next().unwrap().as_str().to_string(),
-                                            )
+                                            if lhs_var.is_none() {
+                                                lhs_var = Some(c.into_inner().next().unwrap().as_str().to_string());
+                                            } else if rhs_var.is_none() {
+                                                rhs_var = Some(c.into_inner().next().unwrap().as_str().to_string());
+                                            }
                                         }
                                         Rule::comparator => op = Some(c.as_str().to_string()),
                                         Rule::constant => {
-                                            rhs_time = parse_time_constant(c.as_str())
+                                            // Could be time constant
+                                            if let Some(t) = parse_time_constant(c.as_str()) { rhs_time = Some(t); rhs_is_time = true; }
+                                            rhs_raw = Some(c.as_str().to_string());
                                         }
-                                        Rule::time => rhs_time = parse_time(c.as_str()),
+                                        Rule::time => { rhs_time = parse_time(c.as_str()); rhs_is_time = true; rhs_raw = Some(c.as_str().to_string()); }
+                                        // literals
+                                        Rule::certainty | Rule::decimal | Rule::int | Rule::string => {
+                                            rhs_raw = Some(c.as_str().to_string());
+                                        }
+                                        Rule::rhs_value => {
+                                            // unwrap one level
+                                            for r in c.into_inner() {
+                                                match r.as_rule() {
+                                                    Rule::constant => { if let Some(t)=parse_time_constant(r.as_str()) { rhs_time=Some(t); rhs_is_time=true; } rhs_raw=Some(r.as_str().to_string()); }
+                                                    Rule::time => { rhs_time = parse_time(r.as_str()); rhs_is_time=true; rhs_raw=Some(r.as_str().to_string()); }
+                                                    Rule::certainty | Rule::decimal | Rule::int | Rule::string => { rhs_raw=Some(r.as_str().to_string()); }
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
-                                if let (Some(v), Some(o), Some(t)) = (var, op, rhs_time) {
-                                    where_time.push((v, o, t));
+                                if rhs_is_time {
+                                    if let (Some(v), Some(o), Some(t)) = (lhs_var.clone(), op.clone(), rhs_time) { where_time.push((v, o, t)); }
+                                } else if let (Some(lv), Some(o)) = (lhs_var.clone(), op.clone()) {
+                                    if let Some(rv) = rhs_var.clone() {
+                                        // Defer classification: push to both time_var and value_var lists; execution will keep the valid kind.
+                                        where_time_var.push((lv.clone(), o.clone(), rv.clone()));
+                                        where_value_var.push((lv, o, rv));
+                                    } else if let Some(raw) = rhs_raw.clone() {
+                                        let trimmed = raw.trim();
+                                        let rhs_kind = if trimmed.starts_with('"') && trimmed.ends_with('"') { RhsValueKind::String(trimmed.trim_matches('"').to_string()) }
+                                            else if trimmed.ends_with('%') { if let Some(cpct)=parse_certainty_literal(trimmed) { RhsValueKind::Cert(cpct) } else { RhsValueKind::Const(trimmed.to_string()) } }
+                                            else if trimmed.contains('.') && trimmed.chars().all(|c| c.is_ascii_digit() || c=='.' || c=='-' ) { RhsValueKind::Decimal(trimmed.to_string()) }
+                                            else if let Ok(iv) = trimmed.parse::<i64>() { RhsValueKind::Int(iv) } else { RhsValueKind::Const(trimmed.to_string()) };
+                                        where_value.push((lv, o, rhs_kind));
+                                    }
                                 }
                             }
                             _ => {}
@@ -1705,6 +1785,17 @@ impl<'en> Engine<'en> {
                         return;
                     }
                     if enumeration_started {
+                        // (debug logging removed)
+                        // Validate variable references in value predicates
+                        if exec_error.is_none() {
+                            for (lhs, _op, _rhs) in &where_value {
+                                if !variable_kinds.contains_key(lhs) {
+                                    *exec_error = Some(crate::error::BarecladError::Execution(format!("Unknown variable in predicate: {}", lhs)));
+                                    break;
+                                }
+                            }
+                        }
+                        if exec_error.is_some() { return; }
                         if !where_time.is_empty() {
                             let tk = self.database.posit_time_lookup();
                             let guard_time = tk.lock().unwrap();
@@ -1738,14 +1829,8 @@ impl<'en> Engine<'en> {
                             let guard_time = tk.lock().unwrap();
                             bindings.retain(|b| {
                                 for (v1, op, v2) in &where_time_var {
-                                    if let (
-                                        Some((pid1, VarKind::Time)),
-                                        Some((pid2, VarKind::Time)),
-                                    ) = (b.value_slots.get(v1), b.value_slots.get(v2))
-                                    {
-                                        if let (Some(pt1), Some(pt2)) =
-                                            (guard_time.get(pid1), guard_time.get(pid2))
-                                        {
+                                    if let (Some((pid1, VarKind::Time)), Some((pid2, VarKind::Time))) = (b.value_slots.get(v1), b.value_slots.get(v2)) {
+                                        if let (Some(pt1), Some(pt2)) = (guard_time.get(pid1), guard_time.get(pid2)) {
                                             let ok = match op.as_str() {
                                                 "<" => pt1 < pt2,
                                                 "<=" => pt1 <= pt2,
@@ -1754,21 +1839,156 @@ impl<'en> Engine<'en> {
                                                 "==" | "=" => pt1 == pt2,
                                                 _ => false,
                                             };
-                                            if !ok {
-                                                return false;
-                                            }
-                                        } else {
-                                            return false;
-                                        }
-                                    } else {
-                                        return false;
-                                    }
+                                            if !ok { return false; }
+                                        } else { return false; }
+                                    } // else skip (handled in value stage if applicable)
                                 }
                                 true
                             });
                         }
-                        if bindings.is_empty() {
-                            return;
+                        if bindings.is_empty() { return; }
+                        if !where_value_var.is_empty() {
+                            let posit_keeper = self.database.posit_keeper();
+                            let type_partitions = self.database.role_name_to_data_type_lookup();
+                            let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
+                            let mut pk_guard = posit_keeper.lock().unwrap();
+                            let tp_guard = type_partitions.lock().unwrap();
+                            let aset_guard = aset_lookup.lock().unwrap();
+                            bindings.retain(|b| {
+                                for (l, op, r) in &where_value_var {
+                                    let (lpid, lkind) = if let Some(t) = b.value_slots.get(l) { *t } else { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Unknown variable in predicate: {}", l))); } return false; };
+                                    let (rpid, rkind) = if let Some(t) = b.value_slots.get(r) { *t } else { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Unknown variable in predicate: {}", r))); } return false; };
+                                    if lkind == VarKind::Time || rkind == VarKind::Time { continue; } // handled by where_time_var stage
+                                    if lkind != VarKind::Value || rkind != VarKind::Value { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Non-value variable used in value predicate: {} or {}", l, r))); } return false; }
+                                    let l_roles = if let Some(app) = aset_guard.get(&lpid) { app.roles() } else { return false; };
+                                    let r_roles = if let Some(app) = aset_guard.get(&rpid) { app.roles() } else { return false; };
+                                    let l_allowed = tp_guard.lookup(&l_roles).clone();
+                                    let r_allowed = tp_guard.lookup(&r_roles).clone();
+                                    let ordering = matches!(op.as_str(), "<"|"<="|">"|">=");
+                                    macro_rules! grab_val { ($allowed:expr, $pid:expr, $numeric_first:expr) => {{
+                                        let mut out: Option<(String,String)> = None;
+                                        if out.is_none() && $numeric_first && $allowed.contains("Decimal") { if let Some(p)=pk_guard.posit::<Decimal>($pid) { out=Some((p.value().to_string(), "Decimal".to_string())); } }
+                                        if out.is_none() && $numeric_first && $allowed.contains("i64") { if let Some(p)=pk_guard.posit::<i64>($pid) { out=Some((p.value().to_string(), "i64".to_string())); } }
+                                        if out.is_none() && $allowed.contains("String") { if let Some(p)=pk_guard.posit::<String>($pid) { out=Some((p.value().to_string(), "String".to_string())); } }
+                                        if out.is_none() && $allowed.contains("JSON") { if let Some(p)=pk_guard.posit::<JSON>($pid) { out=Some((p.value().to_string(), "JSON".to_string())); } }
+                                        if out.is_none() && $allowed.contains("Certainty") { if let Some(p)=pk_guard.posit::<Certainty>($pid) { out=Some((p.value().to_string(), "Certainty".to_string())); } }
+                                        if out.is_none() && !$numeric_first && $allowed.contains("Decimal") { if let Some(p)=pk_guard.posit::<Decimal>($pid) { out=Some((p.value().to_string(), "Decimal".to_string())); } }
+                                        if out.is_none() && !$numeric_first && $allowed.contains("i64") { if let Some(p)=pk_guard.posit::<i64>($pid) { out=Some((p.value().to_string(), "i64".to_string())); } }
+                                        out
+                                    }}}
+                                    let l_val = grab_val!(l_allowed, lpid, ordering);
+                                    let r_val = grab_val!(r_allowed, rpid, ordering);
+                                    let (l_text, l_type) = if let Some(v)=l_val { v } else { return false; };
+                                    let (r_text, r_type) = if let Some(v)=r_val { v } else { return false; };
+                                    let pass = if ordering {
+                                        if (l_type=="Certainty") ^ (r_type=="Certainty") { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison requires both sides to be certainties or percent sign (%) certainty mismatch: {} {} {}", l, op, r))); } false }
+                                        else if l_type=="Certainty" && r_type=="Certainty" {
+                                            let to_pct = |s:&str| if s=="1" {100} else if s=="-1" {-100} else if s=="0" {0} else if s.starts_with("0.") || s.starts_with("-0.") { (s.parse::<f64>().unwrap_or(0.0)*100.0) as i32 } else {0};
+                                            cmp_numeric(to_pct(&l_text) as f64, to_pct(&r_text) as f64, op)
+                                        } else if (l_type=="i64" || l_type=="Decimal") && (r_type=="i64" || r_type=="Decimal") {
+                                            use bigdecimal::BigDecimal; use std::str::FromStr; let lbd=BigDecimal::from_str(&l_text).unwrap_or_else(|_| BigDecimal::from(0)); let rbd=BigDecimal::from_str(&r_text).unwrap_or_else(|_| BigDecimal::from(0)); cmp_bigdecimal(&lbd,&rbd,op)
+                                        } else { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison not allowed for value variables: {}({}) {} {}({})", l, l_type, op, r, r_type))); } false }
+                                    } else { // equality
+                                        if op != "=" && op != "==" { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Unsupported comparison operator '{}' for value variables", op))); } false }
+                                        else if l_type=="Certainty" && r_type=="Certainty" { l_text==r_text }
+                                        else if (l_type=="i64"||l_type=="Decimal") && (r_type=="i64"||r_type=="Decimal") { let lf=l_text.parse::<f64>().unwrap_or(0.0); let rf=r_text.parse::<f64>().unwrap_or(0.0); (lf-rf).abs()<1e-9 }
+                                        else if l_type=="String" && r_type=="String" { l_text==r_text }
+                                        else { l_text==r_text }
+                                    };
+                                    if !pass { return false; }
+                                }
+                                true
+                            });
+                            if exec_error.is_some() { return; }
+                            if bindings.is_empty() { return; }
+                        }
+                        if !where_value.is_empty() {
+                            let posit_keeper = self.database.posit_keeper();
+                            let type_partitions = self.database.role_name_to_data_type_lookup();
+                            let mut pk_guard = posit_keeper.lock().unwrap();
+                            let tp_guard = type_partitions.lock().unwrap();
+                            bindings.retain(|b| {
+                                for (lhs, op, rhs) in &where_value {
+                                    // locate lhs posit/value
+                                    let (pid, vkind) = if let Some(tup) = b.value_slots.get(lhs) { *tup } else { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Unknown variable in predicate: {}", lhs))); } return false; };
+                                    if vkind != VarKind::Value { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Non-value variable used in value predicate: {}", lhs))); } return false; }
+                                    // Determine allowed types for this posit
+                                    // We need appearance set to determine role datatypes; reuse logic from projection path.
+                                    let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
+                                    let aset_guard = aset_lookup.lock().unwrap();
+                                    let val_string_opt = if let Some(appset) = aset_guard.get(&pid) {
+                                        let roles = appset.roles();
+                                        let allowed = tp_guard.lookup(&roles).clone();
+                                        let ordering = matches!(op.as_str(), "<"|"<="|">"|">=");
+                                        // Generic ordering mismatch: if RHS numeric and allowed doesn't include a numeric type
+                                        if ordering {
+                                            match rhs {
+                                                RhsValueKind::Int(_) | RhsValueKind::Decimal(_) => {
+                                                    let numeric_allowed = allowed.contains("i64") || allowed.contains("Decimal");
+                                                    if !numeric_allowed {
+                                                        // If this variable is a certainty, produce the more helpful percent sign guidance.
+                                                        if allowed.contains("Certainty") {
+                                                            if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison requires a percent sign (%) for certainty variable '{}' (e.g. 75%)", lhs))); }
+                                                        } else {
+                                                            if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison not allowed: variable '{}' of non-numeric type used with '{}'", lhs, op))); }
+                                                        }
+                                                        return false;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        // Helper macros to attempt extraction
+                                        macro_rules! grab_string { ($t:ty, $label:expr) => { if allowed.contains($label) { if let Some(p) = pk_guard.posit::<$t>(pid) { Some(format!("{}", p.value())) } else { None } } else { None } }; }
+                                        // Try in a precedence order; note we only need the one matching RHS kind.
+                                        match rhs {
+                                            RhsValueKind::Int(_) => grab_string!(i64, "i64"),
+                                            RhsValueKind::Cert(_) => grab_string!(Certainty, "Certainty"),
+                                            RhsValueKind::Decimal(_) => grab_string!(Decimal, "Decimal").or(grab_string!(i64, "i64")),
+                                            RhsValueKind::String(_) | RhsValueKind::Const(_) => grab_string!(String, "String").or(grab_string!(JSON, "JSON")).or(grab_string!(Certainty, "Certainty")).or(grab_string!(i64, "i64")),
+                                        }
+                                    } else { None };
+                                    let lhs_val = if let Some(v) = val_string_opt { v } else { return false; };
+                                    // Detect ordering mismatch: certainty value (by display pattern) vs int/decimal RHS lacking %.
+                                    let ordering = matches!(op.as_str(), "<"|"<="|">"|">=");
+                                    if ordering {
+                                        if matches!(rhs, RhsValueKind::Int(_) | RhsValueKind::Decimal(_)) && (lhs_val == "1" || lhs_val == "-1" || lhs_val == "0" || lhs_val.starts_with("0.") || lhs_val.starts_with("-0.")) {
+                                            if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison requires a percent sign (%) for certainty variable '{}' (e.g. 75%)", lhs))); }
+                                            return false;
+                                        }
+                                    }
+                                    // Comparison dispatch
+                                    let pass = match rhs {
+                                        RhsValueKind::Int(r) => {
+                                            if let Ok(l) = lhs_val.parse::<i64>() { cmp_numeric(l as f64, *r as f64, op) } else { if ["<","<=",">",">="].contains(&op.as_str()) && exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Type mismatch for ordering: value '{}' not comparable to int literal {}", lhs_val, r))); } false }
+                                        }
+                                        RhsValueKind::Cert(rpct) => {
+                                            // lhs_val is display (e.g., 0.75, -0.25, 1, -1, 0)
+                                            let l_pct_opt = if lhs_val == "1" { Some(100) } else if lhs_val == "-1" { Some(-100) } else if lhs_val == "0" { Some(0) } else if lhs_val.starts_with("0.") || lhs_val.starts_with("-0.") { lhs_val.parse::<f64>().ok().map(|f| (f*100.0) as i32) } else { None };
+                                            if let Some(lpct) = l_pct_opt { cmp_numeric(lpct as f64, *rpct as f64, op) } else { if ["<","<=",">",">="].contains(&op.as_str()) && exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Type mismatch for ordering: value '{}' not comparable to certainty literal {}%", lhs_val, rpct))); } false }
+                                        }
+                                        RhsValueKind::Decimal(rraw) => {
+                                            // compare as BigDecimal via string parse fallback to f64
+                                            use bigdecimal::BigDecimal; use std::str::FromStr;
+                                            let lbd = BigDecimal::from_str(&lhs_val).or_else(|_| BigDecimal::from_str("0")).unwrap();
+                                            let rbd = BigDecimal::from_str(rraw).or_else(|_| BigDecimal::from_str("0")).unwrap();
+                                            cmp_bigdecimal(&lbd, &rbd, op)
+                                        }
+                                        RhsValueKind::String(rstr) => {
+                                            if ["<","<=",">",">="].contains(&op.as_str()) { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison not allowed for string literal: {} {} '{}'", lhs, op, rstr))); } return false; }
+                                            if op == "=" || op == "==" { lhs_val == *rstr } else { false }
+                                        }
+                                        RhsValueKind::Const(rconst) => {
+                                            if ["<","<=",">",">="].contains(&op.as_str()) { if exec_error.is_none() { *exec_error = Some(crate::error::BarecladError::Execution(format!("Ordering comparison not allowed for constant literal: {} {} '{}'", lhs, op, rconst))); } return false; }
+                                            if op == "=" || op == "==" { lhs_val == *rconst } else { false }
+                                        }
+                                    };
+                                    if !pass { return false; }
+                                }
+                                true
+                            });
+                            if exec_error.is_some() { return; }
+                            if bindings.is_empty() { return; }
                         }
                         let posit_keeper = self.database.posit_keeper();
                         let aset_lookup = self.database.posit_thing_to_appearance_set_lookup();
@@ -1869,7 +2089,7 @@ impl<'en> Engine<'en> {
         }
     }
     // Backwards compatible wrapper retaining original signature (prints rows)
-    fn search_print(&self, command: Pair<Rule>, variables: &mut Variables) { let mut cols=None; self.search(command, variables, None, &mut cols, None); }
+    fn search_print(&self, command: Pair<Rule>, variables: &mut Variables) { let mut cols=None; let mut err=None; self.search(command, variables, None, &mut cols, None, &mut err); if let Some(e)=err { eprintln!("{}", e); } }
     /// Parse and execute a Traqula script (one or more commands).
     pub fn execute(&self, traqula: &str) {
         let mut variables: Variables = Variables::default();
@@ -1936,7 +2156,7 @@ impl<'en> Engine<'en> {
             match command.as_rule() {
                 Rule::add_role => self.add_role(command),
                 Rule::add_posit => self.add_posit(command, &mut variables),
-                Rule::search => { self.search(command, &mut variables, Some(&mut collector), &mut return_columns, limit); }
+                Rule::search => { let mut err=None; self.search(command, &mut variables, Some(&mut collector), &mut return_columns, limit, &mut err); if let Some(e)=err { return Err(e); } }
                 Rule::EOI => (),
                 _ => (),
             }
@@ -1979,7 +2199,7 @@ impl<'en> Engine<'en> {
                     impl RowSink for LocalSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
                     let mut sink = LocalSink { rows: Vec::new(), types: Vec::new() };
                     let mut local_return_columns: Option<Vec<String>> = None;
-                    self.search(command, &mut variables, Some(&mut sink), &mut local_return_columns, limit);
+                    let mut err=None; self.search(command, &mut variables, Some(&mut sink), &mut local_return_columns, limit, &mut err); if let Some(e)=err { return Err(e); }
                     let cols = local_return_columns.unwrap_or_default();
                     let row_count = sink.rows.len();
                     let limited = limit.map(|l| row_count >= l).unwrap_or(false);

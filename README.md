@@ -64,7 +64,15 @@ Bindings and tokens:
 
 Values support multiple types (String, JSON, Decimal, i64, Certainty, Time). Times accept literals like 'YYYY-MM-DD' or constants @NOW, @BOT, @EOT.
 
-WHERE supports comparisons on time variables: <, <=, >, >=, =, ==.
+WHERE supports comparisons on:
+- Time variables vs time literals/constants: `<, <=, >, >=, =, ==`
+- Time variable vs time variable (e.g. `t1 < t2`)
+- Value variable vs literal (numbers, decimals, certainties, strings)
+- Value variable vs value variable:
+	* Ordering: numeric (`i64` / `Decimal`) and certainty-to-certainty
+	* Equality: numeric, decimal, certainty, string (string ordering is rejected)
+
+Certainty literals must end with a percent sign (`75%`). Forms like `0.75` or `75` no longer auto-convert; mixing a certainty variable with a bare number in an ordering comparison raises a helpful execution error.
 
 ### Data types and literals ("look‑alike" / WYSIWYG)
 
@@ -141,7 +149,7 @@ Config (bareclad.json):
 {
 	"database_file_and_path": "bareclad.db",
 	"recreate_database_on_startup": true,
-	"traqula_file_to_run_on_startup": "traqula/example.traqula"
+	"traqula_file_to_run_on_startup": "traqula/adds.traqula"
 }
 ```
 
@@ -186,13 +194,6 @@ Where:
 
 An entry is then inserted into the `PositHash` table: `(Posit_Identity, PrevHash, Hash)` and the rolling head (hash + count) is maintained in the single‑row `LedgerHead` table (`Name='PositLedger'`).
 
-### Backfilling / Verification
-
-On startup the engine:
-1. Restores things / roles / posits.
-2. If `PositHash` is empty but posits exist (fresh upgrade), it backfills the entire chain deterministically.
-3. If hashes exist, it recomputes and verifies them in sequence, logging any mismatch but not mutating historical rows.
-
 ### Accessing the head
 
 Library callers can obtain the current head hash + count (file‑backed mode only):
@@ -214,31 +215,80 @@ This is NOT a full audit or cryptographic anchoring system:
 - There is no external timestamping or cross‑system anchoring by default.
 - Reordering of inserts (while preserving identities) is detectable only if identities are strictly increasing and you compare prior head externally.
 
-### Strengthening (Optional Ideas)
-
-If stronger guarantees are needed you can layer on:
-- Periodic external anchoring: write the `(HeadHash, Count, WallClockTime)` tuple to an append‑only log / transparency service / blockchain.
-- Independent watchers: run a sidecar process that snapshots heads and alerts on unexpected regressions or chain divergence.
-- Incorporate additional context in the hash preimage (e.g. deployment/version, machine ID) if that has provenance value.
 
 ### Rationale
 
 This design deliberately favors simplicity and zero runtime cryptographic ceremony (one fast hash per posit). It offers a pragmatic middle ground: low overhead integrity signals without dictating a heavy auditing infrastructure.
 
-## Status and roadmap
+## Client / Server Architecture
+
+Bareclad can run as a library or an HTTP server. The server layer (Axum + Tokio) exposes a JSON endpoint:
+
+`POST /v1/query`
+
+Request body:
+```jsonc
+{ "script": "search [{(*, name)}, +n, *] return n;", "stream": false, "timeout_ms": 5000 }
+```
+
+Response (single result set):
+```jsonc
+{
+	"id": 0,
+	"status": "ok",
+	"elapsed_ms": 1.23,
+	"columns": ["n"],
+	"row_types": [["String"]],
+	"row_count": 2,
+	"limited": false,
+	"rows": [["Alice"],["Bob"]]
+}
+```
+
+If the script contains multiple `search` commands, the response omits top-level `columns/rows` and instead returns `result_sets` (array of result set objects) with cumulative `row_count`.
+
+### Starting the server
+
+You can start the server via the binary (if `main.rs` wires it) or using the helper PowerShell script (Windows):
+
+```powershell
+. .\scriptsareclad.ps1                # dot-source to load functions
+Start-Bareclad -Profile normal -Tail   # run and stream logs
+Stop-Bareclad                          # stop
+Restart-Bareclad -Profile verbose
+```
+
+Logging uses `RUST_LOG`; presets: quiet | normal | verbose | trace.
+
+### Web UI (bareclad.html)
+
+A minimal static HTML client (`bareclad.html`) demonstrates submitting scripts to the server endpoint and rendering results. Open it in a browser (or host it) and point the form to your server's `/v1/query` URL.
+
+<img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/bareclad_web_app.png">
+
+## Updated Status and Roadmap
 
 Implemented:
-- Roles, appearances, appearance sets, heterogeneous posits with times
-- Persistence via SQLite
-- Traqula parsing (Pest) for add/search/where/return and union of recalls
-- Bitmap-backed indexes for fast intersections
-- Time filtering and per-variable candidate tracking for precise returns
+* Roles, appearances, appearance sets, heterogeneous posits with times
+* Persistence via SQLite + tamper-evident ledger (file mode)
+* Traqula parsing (Pest) for add/search/where/return, unions, multi-result scripts
+* Bitmap-backed indexes for fast intersections
+* Time filtering (variable vs literal and variable vs variable)
+* Value predicate filtering (variable vs literal & variable vs variable) with type-aware ordering checks
+* Certainty percent-only literals and strict ordering rules
+* HTTP server (Axum), JSON query endpoint, multi-result response encoding
+* PowerShell helper script for lifecycle (start/stop/restart) with logging presets
+* Minimal HTML client page
+* Execution error surfacing (unknown variable, type mismatch, ordering misuse)
 
 Planned/next:
-- Richer WHERE (OR, grouping) and comparisons on non-time values
-- Aggregations and tuple-shaped returns
-- Type tags for posits to remove remaining dynamic probing
-- More docs and doctests
+* WHERE enhancements: OR, grouping, BETWEEN, IN
+* Aggregations and tuple-shaped / structured returns
+* Projection type annotations stabilization (avoid dynamic probing)
+* Streaming row delivery over HTTP (chunked / SSE)
+* Authentication / access control for the server
+* Optimization: caching value extraction during predicate evaluation
+* Optional JSON/CSV export helpers
 
 ## License
 
