@@ -33,6 +33,7 @@ return
           <button id="clearBtn" title="Clear results">Clear</button>
           <label>Timeout <input type="number" id="timeout" min="0" step="100" placeholder="ms"></label>
           <label><input type="checkbox" id="autoScroll" checked> Auto-scroll to latest</label>
+          <label><input type="checkbox" id="streamMode"> Stream results</label>
         </div>
         <div id="statusBar"></div>
         <progress id="progress" max="100" value="0"></progress>
@@ -78,6 +79,7 @@ const els = {
   status: document.getElementById('statusBar'),
   jsonOut: document.getElementById('jsonOut'),
   autoScroll: document.getElementById('autoScroll'),
+  streamMode: document.getElementById('streamMode'),
   timeout: document.getElementById('timeout'),
   perf: document.getElementById('perf'),
   progress: document.getElementById('progress'),
@@ -91,6 +93,10 @@ const els = {
   statusOut: document.getElementById('statusOut'),
   resultSetSelect: document.getElementById('resultSetSelect')
 };
+// Hover highlight feature removed; stubs and related logic eliminated.
+
+// Event listeners for hover highlighting on dropdown
+document.addEventListener('DOMContentLoaded', () => {});
 let lastResponse = null;
 
 // Load saved query from localStorage
@@ -123,8 +129,6 @@ function updateHighlight() {
   const code = scriptTextarea.value;
   const highlightedCode = Prism.highlight(code, Prism.languages.traqula, 'traqula');
   scriptHighlight.querySelector('code').innerHTML = highlightedCode;
-  
-  // Save query to localStorage
   localStorage.setItem('bareclad-query', code);
 }
 
@@ -270,59 +274,202 @@ function populateResultSetSelect(resultSets) {
     const opt = document.createElement('option');
     const colPreview = rs.columns.slice(0,4).join(', ');
     opt.value = idx;
-    opt.textContent = `Set ${idx+1} (${rs.row_count} rows)`;
-    opt.title = `Columns: ${colPreview}${rs.columns.length>4?'…':''}`;
+    const rowCount = rs.row_count ?? (rs.rows ? rs.rows.length : undefined);
+    const limited = rs.limited ? ' (limited)' : '';
+    opt.textContent = rowCount !== undefined ? `Search ${idx+1} (${rowCount} rows${limited})` : `Search ${idx+1}`;
+    if (rs.search) {
+      const snippet = rs.search.replace(/\s+/g,' ').slice(0,120);
+      opt.title = `Search ${idx+1}: ${snippet}${rs.search.length>120?'…':''}`;
+      opt.dataset.snippet = rs.search; // full snippet for offset computation
+    } else {
+      opt.title = `Search ${idx+1} – Columns: ${colPreview}${rs.columns.length>4?'…':''}` + (rowCount!==undefined?` – ${rowCount} rows${limited}`:'');
+    }
     sel.appendChild(opt);
   });
 }
 async function runQuery() {
   const endpoint = els.endpoint.value.trim();
   const script = scriptTextarea.value;
-  const payload = { script: script, stream: false };
+  const doStream = els.streamMode.checked;
+  const payload = { script: script, stream: doStream };
   const timeoutMs = parseInt(els.timeout.value || '0',10);
   els.runBtn.disabled = true; setStatus('Running...'); els.progress.style.visibility='visible'; els.progress.value=15;
   const controller = timeoutMs>0 ? new AbortController() : null;
   if (controller) setTimeout(()=>controller.abort(), timeoutMs);
   const started = performance.now();
   try {
-    const res = await fetch(endpoint, {
-      method:'POST',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller? controller.signal : undefined
-    });
-    els.progress.value=60;
-    const json = await res.json();
-    lastResponse = json;
-    els.progress.value=85;
-    if (json.status === 'ok') {
-      if (json.result_sets) {
-        populateResultSetSelect(json.result_sets);
-        // Default to first set
-        const first = json.result_sets[0];
-        buildTable(first.columns, first.rows||[], first.row_types||[]);
-        els.resultSetSelect.onchange = () => {
-          const idx = parseInt(els.resultSetSelect.value,10);
-            const rs = json.result_sets[idx];
-            buildTable(rs.columns, rs.rows||[], rs.row_types||[]);
-        };
-      } else {
-        populateResultSetSelect(null);
-        buildTable(json.columns, json.rows||[], json.row_types||[]);
-      }
-      const ms = (performance.now()-started).toFixed(2);
-      els.perf.textContent = `client ${(ms)} ms | server ${(json.elapsed_ms).toFixed(3)} ms | rows ${json.row_count}`;
-      setStatus('OK');
+    if (doStream) {
+      await runStream(endpoint, payload, started, controller);
     } else {
-      buildTable([],[],[]);
-      setStatus('Error: '+ json.error, 'err');
+      const res = await fetch(endpoint, {
+        method:'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller? controller.signal : undefined
+      });
+      els.progress.value=60;
+      const json = await res.json();
+      lastResponse = json;
+      els.progress.value=85;
+      if (json.status === 'ok') {
+        if (json.result_sets) {
+          populateResultSetSelect(json.result_sets);
+          const first = json.result_sets[0];
+          buildTable(first.columns, first.rows||[], first.row_types||[]);
+          els.resultSetSelect.onchange = () => {
+            const idx = parseInt(els.resultSetSelect.value,10);
+              const rs = json.result_sets[idx];
+              buildTable(rs.columns, rs.rows||[], rs.row_types||[]);
+          };
+        } else {
+          populateResultSetSelect(null);
+          buildTable(json.columns, json.rows||[], json.row_types||[]);
+        }
+        const ms = (performance.now()-started).toFixed(2);
+        els.perf.textContent = `client ${(ms)} ms | server ${(json.elapsed_ms).toFixed(3)} ms | rows ${json.row_count}`;
+        setStatus('OK');
+      } else {
+        buildTable([],[],[]);
+        setStatus('Error: '+ json.error, 'err');
+      }
+      els.jsonOut.textContent = JSON.stringify(json, null, 2);
     }
-    els.jsonOut.textContent = JSON.stringify(json, null, 2);
   } catch (e) {
     setStatus('Request failed: '+ e.message, 'err');
   } finally {
     els.runBtn.disabled=false; els.progress.value=100; setTimeout(()=>{els.progress.style.visibility='hidden';},400);
   }
+}
+async function runStream(endpoint, payload, started, controller) {
+  // Reset table
+  buildTable([],[],[]); populateResultSetSelect(null); els.jsonOut.textContent='';
+  // Multi-search streaming accumulation structures
+  let multiSets = []; // each: { columns, rows, row_types, limited }
+  let currentSetIndex = 0;
+  let streamingMulti = false;
+  const res = await fetch(endpoint, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: controller? controller.signal:undefined
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    setStatus('Stream init error: HTTP '+res.status, 'err');
+    els.jsonOut.textContent = txt; return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let columns = null; let rowTypesAll = []; let rowCount=0; let limited=false;
+  const rows = [];
+  function flushEvents(text) {
+    const parts = text.split(/\n\n/);
+    for (let part of parts) {
+      if (!part.trim()) continue;
+      const line = part.trim();
+      if (!line.startsWith('data:')) continue;
+      const jsonStr = line.slice(5).trim();
+      try {
+        const evt = JSON.parse(jsonStr);
+        if (evt.event==='meta') {
+          columns = evt.columns; limited = !!evt.limited; setStatus('Streaming meta received');
+          buildTable(columns, [], []);
+        } else if (evt.event==='result_set_start') {
+            // Start of new result set
+            streamingMulti = true;
+            if (!evt.columns) continue;
+            multiSets.push({ columns: evt.columns, rows: [], row_types: [], limited: false, search: evt.search || null });
+            const idx = evt.index;
+            // If first set, initialize overall view
+            if (multiSets.length === 1) {
+              currentSetIndex = 0;
+              buildTable(evt.columns, [], []);
+            }
+            // Show dropdown once we have >1 set
+            if (multiSets.length > 1) {
+              const sel = els.resultSetSelect;
+              sel.style.display='inline-block';
+              // Rebuild options
+              sel.innerHTML='';
+              multiSets.forEach((s,i)=>{ const opt=document.createElement('option'); const rc = s.row_count || s.rows.length || 0; const limited = s.limited ? ' (limited)' : ''; opt.value=i; opt.textContent=`Search ${i+1} (${rc} rows${limited})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); opt.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; opt.dataset.snippet = s.search; } else { opt.title=`Search ${i+1}`;} sel.appendChild(opt); });
+              // Preserve previously selected if still valid
+              sel.value = String(currentSetIndex);
+              sel.onchange = () => { currentSetIndex = parseInt(sel.value,10); const s = multiSets[currentSetIndex]; buildTable(s.columns, s.rows, s.row_types); };
+              computeSearchOffsetsForOptions();
+            }
+            setStatus(`Result set ${idx+1} start`);
+        } else if (evt.event==='row') {
+            if (streamingMulti && typeof evt.index === 'number' && multiSets[evt.index]) {
+              const set = multiSets[evt.index];
+              set.rows.push(evt.row); set.row_types.push(evt.types); set.row_count = set.rows.length;
+              if (evt.index === currentSetIndex) {
+                buildTable(set.columns, set.rows, set.row_types);
+              }
+              // Refresh dropdown option text to reflect new row counts
+              if (multiSets.length > 1) {
+                const sel = els.resultSetSelect;
+                const prevSelection = sel.value;
+                Array.from(sel.options).forEach((optEl, i)=>{
+                  const s = multiSets[i]; const rc = s.row_count || s.rows.length || 0; const limitedTxt = s.limited ? ' (limited)' : ''; optEl.textContent = `Search ${i+1} (${rc} rows${limitedTxt})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); optEl.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; }
+                });
+                sel.value = prevSelection;
+              }
+              els.perf.textContent = `stream sets ${multiSets.length} | rows set${evt.index+1}=${set.rows.length}`;
+            } else { // single-search path
+              rows.push(evt.row); rowTypesAll.push(evt.types); rowCount = rows.length;
+              buildTable(columns, rows, rowTypesAll);
+              els.perf.textContent = `stream rows ${rowCount}`;
+            }
+        } else if (evt.event==='result_set_end') {
+            if (streamingMulti && typeof evt.index === 'number' && multiSets[evt.index]) {
+              multiSets[evt.index].limited = evt.limited;
+              multiSets[evt.index].row_count = evt.row_count;
+              setStatus(`Result set ${evt.index+1} end (${evt.row_count} rows${evt.limited?' limited':''})`);
+              // Final refresh for this result set to include limited flag
+              if (multiSets.length > 1) {
+                const sel = els.resultSetSelect; const prevSelection = sel.value;
+                Array.from(sel.options).forEach((optEl, i)=>{ const s=multiSets[i]; const rc=s.row_count||s.rows.length||0; const limitedTxt = s.limited ? ' (limited)' : ''; optEl.textContent=`Search ${i+1} (${rc} rows${limitedTxt})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); optEl.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; } });
+                sel.value = prevSelection;
+              }
+            }
+    } else if (evt.event==='multi_end') {
+            const ms = (performance.now()-started).toFixed(2);
+            if (streamingMulti) {
+              const total = evt.total_rows ?? multiSets.reduce((a,s)=>a+(s.row_count||s.rows.length),0);
+              els.perf.textContent = `client ${(ms)} ms | sets ${multiSets.length} | total rows ${total}`;
+              setStatus('OK');
+              els.jsonOut.textContent = JSON.stringify({ status:'ok', result_sets: multiSets.map((s,i)=>({ index:i, columns:s.columns, rows:s.rows, row_types:s.row_types, row_count: s.row_count||s.rows.length, limited: !!s.limited, search: s.search })) }, null, 2);
+            } else {
+              els.perf.textContent = `client ${(ms)} ms | total rows ${evt.total_rows ?? rowCount}`;
+              setStatus('OK');
+              const summary = { status:'ok', last_set: { columns, rows, row_types: rowTypesAll, row_count: rowCount }, total_rows: evt.total_rows ?? rowCount };
+              els.jsonOut.textContent = JSON.stringify(summary,null,2);
+            }
+        } else if (evt.event==='error') {
+            setStatus('Stream error: '+evt.error, 'err');
+        } else if (evt.event==='end') {
+      // Fallback completion (single-search or legacy); if multi already handled do nothing extra
+            const ms = (performance.now()-started).toFixed(2);
+            els.perf.textContent = `client ${(ms)} ms | rows ${rowCount}${limited?' (limited)':''}`;
+            setStatus('OK');
+            // Summarize JSON output
+            const summary = { status:'ok', columns, rows, row_types: rowTypesAll, row_count: rowCount, limited };
+            els.jsonOut.textContent = JSON.stringify(summary,null,2);
+        }
+      } catch (e) { /* ignore parse errors mid-stream */ }
+    }
+  }
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream:true});
+    // Attempt to flush complete events
+    const lastSep = buffer.lastIndexOf('\n\n');
+    if (lastSep !== -1) {
+      const toFlush = buffer.slice(0,lastSep+2); // include sep
+      flushEvents(toFlush);
+      buffer = buffer.slice(lastSep+2);
+    }
+  }
+  flushEvents(buffer); // flush remainder
 }
 els.runBtn.addEventListener('click', runQuery);
 els.clearBtn.addEventListener('click', ()=>{ 
@@ -331,6 +478,11 @@ els.clearBtn.addEventListener('click', ()=>{
   els.jsonOut.textContent=''; 
   els.statusOut.textContent=''; 
   els.perf.textContent=''; 
+  // Hide and reset result set selector so old streaming sets cannot be resurrected
+  els.resultSetSelect.style.display='none';
+  els.resultSetSelect.innerHTML='';
+  els.resultSetSelect.onchange = null;
+  lastResponse = null;
   setStatus('Cleared'); 
 });
 

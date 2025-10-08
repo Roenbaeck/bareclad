@@ -66,6 +66,7 @@ progress { width:100%; height:6px; accent-color:var(--accent); visibility:hidden
 .token.wildcard { color: #ff6b6b; font-weight: bold; }
 .token.punctuation { color: #d4d4d4; }
 .token.comment { color: #6a9955; font-style: italic; }
+/* Hover highlight for search snippet */
 /* Editor section layout */
 #editorPane section {
   flex: 1;

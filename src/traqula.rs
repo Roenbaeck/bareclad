@@ -534,9 +534,25 @@ struct TraqulaParser;
 pub struct Engine<'en> {
     database: &'en Database,
 }
-/// Simple sink trait for capturing projected result rows.
+/// Control flow returned by a sink after receiving a row.
+pub enum SinkFlow { Continue, Stop }
+/// Simple sink trait for capturing projected result rows. Returning Stop requests the engine to halt emission early.
 pub trait RowSink {
-    fn push(&mut self, row: Vec<String>, types: Vec<String>);
+    /// Called once when column names become available (return clause parsed) before any rows.
+    /// Default is no-op. Returning Stop aborts the search early.
+    fn on_meta(&mut self, _columns: &[String]) -> SinkFlow { SinkFlow::Continue }
+    /// Called for each projected row.
+    fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow;
+}
+
+/// Callback interface for multi-search streaming. Implementors receive framing events for each result set.
+pub trait MultiStreamCallbacks {
+    /// Called once at the beginning of a result set with its index (0-based), column names, and raw search snippet.
+    fn on_result_set_start(&mut self, set_index: usize, columns: &[String], search_text: &str);
+    /// Called for every row. Return false to request early termination of this result set.
+    fn on_row(&mut self, set_index: usize, row: Vec<String>, types: Vec<String>) -> bool;
+    /// Called when a result set finishes (naturally or via limit/early stop).
+    fn on_result_set_end(&mut self, set_index: usize, row_count: usize, limited: bool);
 }
 #[derive(Debug)]
 pub struct CollectedResult {
@@ -553,11 +569,60 @@ pub struct CollectedResultSet {
     pub row_types: Vec<Vec<String>>,
     pub row_count: usize,
     pub limited: bool,
+    pub search: Option<String>,
 }
 impl<'en> Engine<'en> {
     /// Create a new engine borrowing the provided database.
     pub fn new(database: &'en Database) -> Self {
         Self { database }
+    }
+
+    /// Execute a single-search script in streaming fashion using the provided RowSink.
+    /// Returns (columns, limited, row_count) or an error. If the script has zero or multiple search commands an error is returned.
+    pub fn execute_stream_single<S: RowSink>(&self, traqula: &str, sink: &mut S) -> Result<(Vec<String>, bool, usize), crate::error::BarecladError> {
+        let mut variables: Variables = Variables::default();
+        let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
+        let pairs = match parse_result {
+            Ok(p) => p,
+            Err(err) => {
+                let mut msg = format!("{}", err);
+                if let ErrorVariant::ParsingError { positives, negatives: _ } = err.variant {
+                    if !positives.is_empty() {
+                        let mut expected: Vec<&'static str> = positives.iter().map(|r| friendly_rule_name(*r)).collect();
+                        expected.sort(); expected.dedup();
+                        msg.push_str(&format!("\nExpected one of: {}", expected.join(", ")));
+                    }
+                }
+                return Err(crate::error::BarecladError::Parse { message: msg, line: None, col: None });
+            }
+        };
+        let search_count = pairs.clone().filter(|p| p.as_rule()==Rule::search).count();
+        if search_count != 1 { return Err(crate::error::BarecladError::Execution(format!("execute_stream_single expects exactly one search, found {}", search_count))); }
+        let mut return_columns: Option<Vec<String>> = None; // will be populated when return clause processed
+        let mut total_rows = 0usize; let mut limited=false;
+        for command in pairs { match command.as_rule() { Rule::add_role => self.add_role(command), Rule::add_posit => self.add_posit(command, &mut variables), Rule::search => {
+            // limit extraction
+            let mut limit=None; let cloned=command.clone(); for c in cloned.into_inner(){ if c.as_rule()==Rule::limit_clause { for p in c.into_inner(){ if let Ok(v)=p.as_str().parse::<usize>() { limit=Some(v);} } } }
+            let mut err=None; struct CountingSink<'a, T: RowSink> { inner: &'a mut T, limit: Option<usize>, count: usize, limited: bool }
+            impl<'a, T: RowSink> RowSink for CountingSink<'a, T> {
+                fn on_meta(&mut self, columns: &[String]) -> SinkFlow { self.inner.on_meta(columns) }
+                fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow {
+                    if let Some(l)=self.limit { if self.count >= l { self.limited=true; return SinkFlow::Stop; } }
+                    match self.inner.push(row, types) {
+                        SinkFlow::Continue => {
+                            self.count +=1;
+                            if let Some(l)=self.limit { if self.count>=l { self.limited=true; return SinkFlow::Stop; } }
+                            SinkFlow::Continue
+                        }
+                        stop => stop
+                    }
+                }
+            }
+            let mut wrapper = CountingSink { inner: sink, limit, count:0, limited:false };
+            self.search(command, &mut variables, &mut wrapper, &mut return_columns, &mut err);
+            if let Some(e)=err { return Err(e); }
+            total_rows = wrapper.count; limited = wrapper.limited; }, Rule::EOI => (), _=>() } }
+        Ok((return_columns.unwrap_or_default(), limited, total_rows))
     }
     /// Handle an `add role` command.
     fn add_role(&self, command: Pair<Rule>) {
@@ -826,7 +891,7 @@ impl<'en> Engine<'en> {
             }
         }
     }
-    fn search(&self, command: Pair<Rule>, variables: &mut Variables, mut sink: Option<&mut dyn RowSink>, return_columns: &mut Option<Vec<String>>, limit: &mut Option<usize>, exec_error: &mut Option<crate::error::BarecladError>) {
+    fn search(&self, command: Pair<Rule>, variables: &mut Variables, sink: &mut dyn RowSink, return_columns: &mut Option<Vec<String>>, exec_error: &mut Option<crate::error::BarecladError>) {
         // Helper numeric comparison
         fn cmp_numeric(lhs: f64, rhs: f64, op: &str) -> bool {
             match op {
@@ -904,17 +969,7 @@ impl<'en> Engine<'en> {
         let mut variable_kinds: HashMap<String, VarKind> = HashMap::new();
         // Track whether any clause in this search failed (no candidates after constraints)
         let mut any_clause_failed: bool = false;
-        // First pass: discover limit clause (so trailing "limit N" applies even with early pattern emission)
-        {
-            let cloned = command.clone();
-            for clause in cloned.into_inner() {
-                if clause.as_rule() == Rule::limit_clause && limit.is_none() {
-                    for part in clause.into_inner() { // part should be int
-                        if let Ok(v) = part.as_str().parse::<usize>() { *limit = Some(v); }
-                    }
-                }
-            }
-        }
+        // (LIMIT handled externally by a wrapping sink)
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
@@ -1791,7 +1846,14 @@ impl<'en> Engine<'en> {
                                 .push(structure.into_inner().next().unwrap().as_str().to_string());
                         }
                     }
-                    if return_columns.is_none() { *return_columns = Some(returns.clone()); }
+                    let first_time = return_columns.is_none();
+                    if first_time { *return_columns = Some(returns.clone()); }
+                    // Emit meta as soon as we know the column set (only once per search)
+                    if first_time {
+                        if let Some(cols) = return_columns.as_ref() {
+                            if let SinkFlow::Stop = sink.on_meta(cols) { return; }
+                        }
+                    }
                     if any_clause_failed {
                         return;
                     }
@@ -2011,7 +2073,7 @@ impl<'en> Engine<'en> {
                         let time_guard = time_lookup.lock().unwrap();
 
                         // Column-level inference removed; we now collect a per-row types vector.
-                        let mut emitted: usize = 0;
+                        // Emission handled after full clause scan; see post-clause block.
                         for b in bindings.iter() {
                             let mut row: Vec<String> = Vec::with_capacity(returns.len());
                             let mut types_row: Vec<String> = Vec::with_capacity(returns.len());
@@ -2075,35 +2137,20 @@ impl<'en> Engine<'en> {
                                 }
                             }
                             if row_ok {
-                                if let Some(s) = sink.as_deref_mut() {
-                                    s.push(row, types_row);
-                                } else {
-                                    println!("{}", row.join(", "));
-                                }
-                                emitted += 1;
-                                if let Some(lim) = *limit { if emitted >= lim { break; } }
+                                if let SinkFlow::Stop = sink.push(row, types_row) { break; }
                             }
                         }
                         return;
                     }
                 }
-                Rule::limit_clause => {
-                    // extracted limit appears as: ["limit", int]
-                    if limit.is_none() {
-                        for part in clause.into_inner() { // part is int token
-                            if let Ok(v) = part.as_str().parse::<usize>() { *limit = Some(v); }
-                        }
-                    }
-                }
+                Rule::limit_clause => { /* ignored here */ }
                 _ => println!("Unknown clause: {:?}", clause),
             }
         }
     }
     // Backwards compatible wrapper retaining original signature (prints rows)
     fn search_print(&self, command: Pair<Rule>, variables: &mut Variables) {
-        let mut cols=None; let mut err=None; let mut limit: Option<usize> = None; // limit scoped per search
-        self.search(command, variables, None, &mut cols, &mut limit, &mut err);
-        if let Some(e)=err { eprintln!("{}", e); }
+        let mut cols=None; let mut err=None; struct PrintSink; impl RowSink for PrintSink { fn push(&mut self, row: Vec<String>, _types: Vec<String>) -> SinkFlow { println!("{}", row.join(", ")); SinkFlow::Continue } } let mut ps=PrintSink; self.search(command, variables, &mut ps, &mut cols, &mut err); if let Some(e)=err { eprintln!("{}", e); }
     }
     /// Parse and execute a Traqula script (one or more commands).
     pub fn execute(&self, traqula: &str) {
@@ -2148,10 +2195,10 @@ impl<'en> Engine<'en> {
     /// This is a stop-gap until the search pipeline is refactored to emit structured rows directly.
     pub fn execute_collect(&self, traqula: &str) -> Result<CollectedResult, crate::error::BarecladError> {
         let mut variables: Variables = Variables::default();
-        struct CollectSink { rows: Vec<Vec<String>>, types: Vec<Vec<String>> }
-        impl RowSink for CollectSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
-        let mut collector = CollectSink { rows: Vec::new(), types: Vec::new() };
-    let mut return_columns: Option<Vec<String>> = None;
+        struct CollectSink { rows: Vec<Vec<String>>, types: Vec<Vec<String>>, limit: Option<usize>, limited: bool }
+        impl RowSink for CollectSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow { if let Some(l) = self.limit { if self.rows.len() >= l { self.limited = true; return SinkFlow::Stop; } } self.rows.push(row); self.types.push(types); if let Some(l)=self.limit { if self.rows.len() >= l { self.limited = true; return SinkFlow::Stop; } } SinkFlow::Continue } }
+        let mut collector = CollectSink { rows: Vec::new(), types: Vec::new(), limit: None, limited: false };
+        let mut return_columns: Option<Vec<String>> = None;
         // grammar now supports optional limit clause; parse directly
         let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
         let traqula = match parse_result {
@@ -2169,33 +2216,25 @@ impl<'en> Engine<'en> {
             }
         };
         let mut search_count = 0usize;
-        let mut single_search_limit: Option<usize> = None;
-        let mut single_search_rows: usize = 0;
         for command in traqula {
             match command.as_rule() {
                 Rule::add_role => self.add_role(command),
                 Rule::add_posit => self.add_posit(command, &mut variables),
                 Rule::search => {
                     search_count += 1;
-                    let before = collector.rows.len();
-                    let mut err=None; // limit scoped per search
-                    let mut limit: Option<usize> = None;
-                    self.search(command, &mut variables, Some(&mut collector), &mut return_columns, &mut limit, &mut err);
-                    if let Some(e)=err { return Err(e); }
-                    let after = collector.rows.len();
-                    if search_count == 1 { // record first search stats; if later more appear we'll clear limited later
-                        single_search_limit = limit;
-                        single_search_rows = after - before; // rows added by this search
-                    }
+                    // Extract per-search limit and install into sink (overwrite any prior; only meaningful when one search in script)
+                    let limit = { let mut l=None; let cloned=command.clone(); for c in cloned.into_inner(){ if c.as_rule()==Rule::limit_clause { for p in c.into_inner(){ if let Ok(v)=p.as_str().parse::<usize>() { l=Some(v);} } } } l };
+                    collector.limit = limit;
+                    let mut err=None; self.search(command, &mut variables, &mut collector, &mut return_columns, &mut err); if let Some(e)=err { return Err(e); }
                 }
                 Rule::EOI => (),
                 _ => (),
             }
         }
-    let cols = return_columns.unwrap_or_default();
-    let row_count = collector.rows.len();
-        let limited = if search_count == 1 { if let Some(lim) = single_search_limit { single_search_rows >= lim } else { false } } else { false };
-    Ok(CollectedResult { columns: cols, rows: collector.rows, row_types: collector.types, row_count, limited })
+        let cols = return_columns.unwrap_or_default();
+        let row_count = collector.rows.len();
+        let limited = search_count == 1 && collector.limited;
+        Ok(CollectedResult { columns: cols, rows: collector.rows, row_types: collector.types, row_count, limited })
     }
 
     /// Execute a script and collect separate result sets for each search command.
@@ -2224,23 +2263,83 @@ impl<'en> Engine<'en> {
                 Rule::add_role => self.add_role(command),
                 Rule::add_posit => self.add_posit(command, &mut variables),
                 Rule::search => {
-                    // Local collector per search
-                    struct LocalSink { rows: Vec<Vec<String>>, types: Vec<Vec<String>> }
-                    impl RowSink for LocalSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) { self.rows.push(row); self.types.push(types); } }
-                    let mut sink = LocalSink { rows: Vec::new(), types: Vec::new() };
+                    struct LocalSink { rows: Vec<Vec<String>>, types: Vec<Vec<String>>, limit: Option<usize>, limited: bool }
+                    impl RowSink for LocalSink { fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow { if let Some(l)=self.limit { if self.rows.len() >= l { self.limited=true; return SinkFlow::Stop; }} self.rows.push(row); self.types.push(types); if let Some(l)=self.limit { if self.rows.len() >= l { self.limited=true; return SinkFlow::Stop; }} SinkFlow::Continue } }
+                    let mut sink = LocalSink { rows: Vec::new(), types: Vec::new(), limit: None, limited:false };
+                    // Capture raw search text before moving command into search execution
+                    let raw_search_string = command.as_str().trim().to_string();
+                    sink.limit = { let mut l=None; let cloned=command.clone(); for c in cloned.into_inner(){ if c.as_rule()==Rule::limit_clause { for p in c.into_inner(){ if let Ok(v)=p.as_str().parse::<usize>() { l=Some(v);} } } } l };
                     let mut local_return_columns: Option<Vec<String>> = None;
-                    let mut err=None; let mut limit: Option<usize> = None; // limit scoped per search
-                    self.search(command, &mut variables, Some(&mut sink), &mut local_return_columns, &mut limit, &mut err); if let Some(e)=err { return Err(e); }
+                    let mut err=None; self.search(command, &mut variables, &mut sink, &mut local_return_columns, &mut err); if let Some(e)=err { return Err(e); }
                     let cols = local_return_columns.unwrap_or_default();
                     let row_count = sink.rows.len();
-                    let limited = limit.map(|l| row_count >= l).unwrap_or(false);
-                    results.push(CollectedResultSet { columns: cols, rows: sink.rows, row_types: sink.types, row_count, limited });
+                    let limited = sink.limited;
+                    results.push(CollectedResultSet { columns: cols, rows: sink.rows, row_types: sink.types, row_count, limited, search: Some(raw_search_string) });
                 }
                 Rule::EOI => (),
                 _ => (),
             }
         }
         Ok(results)
+    }
+
+    /// Execute a script containing multiple searches (>=1) and stream each result set with framing callbacks.
+    /// Maintains standard variable scoping semantics across searches.
+    pub fn execute_stream_multi<C: MultiStreamCallbacks>(&self, traqula: &str, callbacks: &mut C) -> Result<(), crate::error::BarecladError> {
+        let mut variables: Variables = Variables::default();
+        let parse_result = TraqulaParser::parse(Rule::traqula, traqula.trim());
+        let pairs = match parse_result {
+            Ok(p) => p,
+            Err(err) => {
+                let mut msg = format!("{}", err);
+                if let ErrorVariant::ParsingError { positives, negatives: _ } = err.variant {
+                    if !positives.is_empty() {
+                        let mut expected: Vec<&'static str> = positives.iter().map(|r| friendly_rule_name(*r)).collect();
+                        expected.sort(); expected.dedup();
+                        msg.push_str(&format!("\nExpected one of: {}", expected.join(", ")));
+                    }
+                }
+                return Err(crate::error::BarecladError::Parse { message: msg, line: None, col: None });
+            }
+        };
+        let mut set_index = 0usize;
+        for command in pairs { match command.as_rule() {
+            Rule::add_role => self.add_role(command),
+            Rule::add_posit => self.add_posit(command, &mut variables),
+            Rule::search => {
+                // Extract limit for this search
+                let search_text_full = command.as_str().trim().to_string();
+                let mut limit=None; let cloned=command.clone(); for c in cloned.into_inner(){ if c.as_rule()==Rule::limit_clause { for p in c.into_inner(){ if let Ok(v)=p.as_str().parse::<usize>() { limit=Some(v);} } } }
+                // Per-set sink bridging to callbacks
+                struct SetSink<'a, C: MultiStreamCallbacks> { cb: &'a mut C, idx: usize, started: bool, search_text: &'a str }
+                impl<'a, C: MultiStreamCallbacks> RowSink for SetSink<'a, C> {
+                    fn on_meta(&mut self, columns: &[String]) -> SinkFlow { self.started=true; self.cb.on_result_set_start(self.idx, columns, self.search_text); SinkFlow::Continue }
+                    fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow { if self.cb.on_row(self.idx, row, types) { SinkFlow::Continue } else { SinkFlow::Stop } }
+                }
+                struct CountingSetSink<'a, C: MultiStreamCallbacks> { inner: SetSink<'a, C>, limit: Option<usize>, count: usize, limited: bool }
+                impl<'a, C: MultiStreamCallbacks> RowSink for CountingSetSink<'a, C> {
+                    fn on_meta(&mut self, columns: &[String]) -> SinkFlow { self.inner.on_meta(columns) }
+                    fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow {
+                        if let Some(l)=self.limit { if self.count>=l { self.limited=true; return SinkFlow::Stop; } }
+                        match self.inner.push(row, types) {
+                            SinkFlow::Continue => { self.count+=1; if let Some(l)=self.limit { if self.count>=l { self.limited=true; return SinkFlow::Stop; } } SinkFlow::Continue },
+                            stop => stop,
+                        }
+                    }
+                }
+                let mut sink = CountingSetSink { inner: SetSink { cb: callbacks, idx: set_index, started:false, search_text: &search_text_full }, limit, count:0, limited:false };
+                let mut return_columns: Option<Vec<String>> = None; // ignored here beyond meta
+                let mut err=None;
+                self.search(command, &mut variables, &mut sink, &mut return_columns, &mut err);
+                if let Some(e)=err { return Err(e); }
+                let finished_count = sink.count; let limited_flag = sink.limited; // drop sink here
+                callbacks.on_result_set_end(set_index, finished_count, limited_flag);
+                set_index +=1;
+            }
+            Rule::EOI => (),
+            _ => (),
+        }}
+        Ok(())
     }
 }
 
