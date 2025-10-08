@@ -265,16 +265,40 @@ If the script contains multiple `search` commands, the response omits top-level 
 
 ### Starting the server
 
-You can start the server via the binary (if `main.rs` wires it) or using the helper PowerShell script (Windows):
+You can run the server directly with the binary or use the convenience scripts provided for different platforms.
 
+Windows (PowerShell):
 ```powershell
-. .\scriptsareclad.ps1                # dot-source to load functions
-Start-Bareclad -Profile normal -Tail   # run and stream logs
-Stop-Bareclad                          # stop
-Restart-Bareclad -Profile verbose
+. .\scripts\bareclad.ps1                 # dot-source to load functions
+Start-Bareclad -Profile normal -Tail    # run and stream logs live
+Stop-Bareclad                           # stop
+Restart-Bareclad -Profile verbose       # restart with different profile
 ```
 
-Logging uses `RUST_LOG`; presets: quiet | normal | verbose | trace.
+macOS / Linux (bash):
+```bash
+chmod +x scripts/bareclad.sh            # first time
+./scripts/bareclad.sh start --profile normal --tail   # foreground (logs to console)
+./scripts/bareclad.sh stop
+./scripts/bareclad.sh restart --profile verbose --force-rebuild
+./scripts/bareclad.sh start --log 'warn,bareclad=info'  # custom RUST_LOG filter
+./scripts/bareclad.sh tail               # follow log file if started in background
+```
+
+Both scripts support a common set of logging profiles mapped to `RUST_LOG`:
+
+Profile | RUST_LOG
+:--|:--
+quiet | `error`
+normal | `info`
+verbose | `debug,bareclad=info`
+trace | `trace`
+
+You can override the profile with an explicit `--log` / `-Log` argument (EnvFilter syntax) such as `warn,axum=info,bareclad=debug`.
+
+The bash script maintains a PID file at `.bareclad.pid` and writes background logs to `bareclad.out`; use `--tail` (bash) or `-Tail` (PowerShell) to stream logs directly instead.
+
+Logging uses `tracing` with `RUST_LOG` filtering.
 
 ### Web UI (bareclad.html)
 

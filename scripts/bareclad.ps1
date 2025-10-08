@@ -35,7 +35,7 @@ $script:BARECLAD_REPO_ROOT = try { Split-Path $PSScriptRoot -Parent } catch { (R
 function Set-BarecladLogEnv {
     param(
         [Parameter(Mandatory=$false)][string] $Log,
-        [ValidateSet('quiet','normal','verbose','trace')][string] $Profile = 'normal'
+        [ValidateSet('quiet','normal','verbose','trace')][string] $LogProfile = 'normal'
     )
     if (-not $Log) {
         switch ($Profile) {
@@ -52,7 +52,7 @@ function Set-BarecladLogEnv {
 function Start-Bareclad {
     [CmdletBinding()] param(
         [string] $Log,
-        [ValidateSet('quiet','normal','verbose','trace')][string] $Profile = 'normal',
+        [ValidateSet('quiet','normal','verbose','trace')][string] $LogProfile = 'normal',
         [switch] $ForceRebuild,
         [switch] $Release,
         [switch] $Tail
@@ -61,7 +61,7 @@ function Start-Bareclad {
         Write-Warning 'Bareclad already running. Use Restart-Bareclad or Stop-Bareclad first.'
         return
     }
-    Set-BarecladLogEnv -Log $Log -Profile $Profile
+    Set-BarecladLogEnv -Log $Log -Profile $LogProfile
     $cargoArgs = @('run','--quiet')
     if ($Release) { $cargoArgs = @('run','--release','--quiet') }
     if ($ForceRebuild) { Write-Host '[bareclad] Forcing clean build...' -ForegroundColor Yellow; cargo clean | Out-Null }
@@ -114,12 +114,12 @@ function Stop-Bareclad {
 function Restart-Bareclad {
     [CmdletBinding()] param(
         [string] $Log,
-        [ValidateSet('quiet','normal','verbose','trace')][string] $Profile = 'normal',
+        [ValidateSet('quiet','normal','verbose','trace')][string] $LogProfile = 'normal',
         [switch] $ForceRebuild,
         [switch] $Release
     )
     Stop-Bareclad
-    Start-Bareclad -Log $Log -Profile $Profile -ForceRebuild:$ForceRebuild -Release:$Release
+    Start-Bareclad -Log $Log -Profile $LogProfile -ForceRebuild:$ForceRebuild -Release:$Release
 }
 
 Set-Alias bareclad-run Start-Bareclad
