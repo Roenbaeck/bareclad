@@ -101,7 +101,7 @@ impl ResultSet {
         self.multi = Some(multi);
     }
     /// Insert a single thing into this result set (idempotent; preserves ordering semantics).
-    fn insert(&mut self, thing: Thing) {
+    pub fn insert(&mut self, thing: Thing) {
         match self.mode {
             ResultSetMode::Empty => self.thing(thing),
             ResultSetMode::Thing => {
@@ -117,7 +117,7 @@ impl ResultSet {
         }
     }
     /// Insert many things from a bitmap into this result set.
-    fn insert_many(&mut self, bitmap: &RoaringTreemap) {
+    pub fn insert_many(&mut self, bitmap: &RoaringTreemap) {
         match self.mode {
             ResultSetMode::Empty => {
                 match bitmap.len() {
@@ -335,6 +335,28 @@ impl ResultSet {
                 (_, _) => (),
             }
         }
+    }
+}
+
+// Operator-assign support to preserve public API used by benches
+impl std::ops::BitAndAssign<&ResultSet> for ResultSet {
+    fn bitand_assign(&mut self, rhs: &ResultSet) {
+        self.intersect_with(rhs);
+    }
+}
+impl std::ops::BitOrAssign<&ResultSet> for ResultSet {
+    fn bitor_assign(&mut self, rhs: &ResultSet) {
+        self.union_with(rhs);
+    }
+}
+impl std::ops::SubAssign<&ResultSet> for ResultSet {
+    fn sub_assign(&mut self, rhs: &ResultSet) {
+        self.difference_with(rhs);
+    }
+}
+impl std::ops::BitXorAssign<&ResultSet> for ResultSet {
+    fn bitxor_assign(&mut self, rhs: &ResultSet) {
+        self.symmetric_difference_with(rhs);
     }
 }
 
