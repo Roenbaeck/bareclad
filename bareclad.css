@@ -101,6 +101,9 @@ progress { width:100%; height:6px; accent-color:var(--accent); visibility:hidden
   line-height: 20px;
   z-index: 2;
   outline: none;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 #script-highlight {
@@ -108,7 +111,7 @@ progress { width:100%; height:6px; accent-color:var(--accent); visibility:hidden
   top: 0;
   left: 0;
   width: 100%;
-  height: auto;
+  height: 100%;
   margin: 0;
   padding: 8px;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
@@ -116,10 +119,36 @@ progress { width:100%; height:6px; accent-color:var(--accent); visibility:hidden
   line-height: 20px;
   background: #0f0f10;
   color: #eee;
-  overflow: visible;
+  overflow: hidden;
   pointer-events: none;
   z-index: 1;
   white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+#script-container {
+  position: relative;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0f0f10;
+}
+
+#script {
+  width: 100%;
+  height: 100%;
+  background: #0f0f10;
+  color: var(--text);
+  padding: 8px;
+  border: none;
+  outline: none;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: auto;
 }
 
 /* Tab layout */

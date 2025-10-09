@@ -21,12 +21,7 @@
         <input id="endpoint" type="text" value="http://127.0.0.1:8080/v1/query" />
         <label for="script">Traqula Script (Ctrl+Enter to run)</label>
         <div id="script-container">
-          <textarea id="script" spellcheck="false"></textarea>
-          <pre id="script-highlight"><code class="language-traqula">
-search +posit [{(+person, name)}, +name, +since]
-return
-    posit, person, name, since;
-          </code></pre>
+          <div id="script" contenteditable="true" spellcheck="false"></div>
         </div>
         <div class="controls">
           <button id="runBtn">Run</button>
@@ -96,14 +91,83 @@ const els = {
 // Hover highlight feature removed; stubs and related logic eliminated.
 
 // Event listeners for hover highlighting on dropdown
-document.addEventListener('DOMContentLoaded', () => {});
-let lastResponse = null;
+document.addEventListener('DOMContentLoaded', () => {
+  // Load saved query from localStorage
+  const savedQuery = localStorage.getItem('bareclad-query');
+  if (savedQuery) {
+    scriptEditor.textContent = savedQuery;
+  }
 
-// Load saved query from localStorage
-const savedQuery = localStorage.getItem('bareclad-query');
-if (savedQuery) {
-  els.script.value = savedQuery;
-}
+  // Initialize highlighting
+  setTimeout(() => {
+    updateHighlight();
+    setStatus('Editor loaded with syntax highlighting');
+    
+    // Initialize status view with welcome message
+    const initTime = new Date().toLocaleTimeString();
+    els.statusOut.textContent = `[${initTime}] Bareclad Query Console initialized\n[${initTime}] Editor loaded with syntax highlighting\n`;
+  }, 100);
+
+  // Button event listeners
+  els.runBtn.addEventListener('click', runQuery);
+  els.clearBtn.addEventListener('click', () => { 
+    els.tableHead.innerHTML=''; 
+    els.tableBody.innerHTML=''; 
+    els.jsonOut.textContent=''; 
+    els.statusOut.textContent=''; 
+    els.perf.textContent=''; 
+    // Hide and reset result set selector so old streaming sets cannot be resurrected
+    els.resultSetSelect.style.display='none';
+    els.resultSetSelect.innerHTML='';
+    els.resultSetSelect.onchange = null;
+    lastResponse = null;
+    setStatus('Cleared'); 
+  });
+
+  // Tabs switching
+  els.tabs.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      els.tabs.forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.getAttribute('data-tab');
+      if (tab==='table') { 
+        els.tableView.style.display='block'; 
+        els.jsonView.style.display='none'; 
+        els.statusView.style.display='none'; 
+      }
+      else if (tab==='json') { 
+        els.tableView.style.display='none'; 
+        els.jsonView.style.display='block'; 
+        els.statusView.style.display='none'; 
+      }
+      else if (tab==='status') { 
+        els.tableView.style.display='none'; 
+        els.jsonView.style.display='none'; 
+        els.statusView.style.display='block'; 
+      }
+    });
+  });
+
+  // Vertical splitter drag logic
+  let dragging = false; let startY = 0; let startHeight = 0;
+  function setEditorHeight(px){
+    const min = 100; const max = window.innerHeight * 0.85;
+    const clamped = Math.min(Math.max(px,min), max);
+    els.editorPane.style.flex = '0 0 '+clamped+'px';
+  }
+  els.splitter.addEventListener('mousedown', e=>{
+    dragging = true; startY = e.clientY; startHeight = els.editorPane.getBoundingClientRect().height;
+    document.body.style.cursor='row-resize';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e=>{
+    if (!dragging) return;
+    const dy = e.clientY - startY;
+    setEditorHeight(startHeight + dy);
+  });
+  window.addEventListener('mouseup', ()=>{ if (dragging) { dragging=false; document.body.style.cursor=''; }});
+  window.addEventListener('resize', ()=>{ /* keep within bounds */ setEditorHeight(els.editorPane.getBoundingClientRect().height); });
+});
 
 // Define Traqula language for Prism.js
 Prism.languages.traqula = {
@@ -121,27 +185,55 @@ Prism.languages.traqula = {
 };
 
 // Get DOM elements  
-const scriptTextarea = document.getElementById('script');
-const scriptHighlight = document.getElementById('script-highlight');
+const scriptEditor = document.getElementById('script');
 
 // Function to update syntax highlighting
 function updateHighlight() {
-  const code = scriptTextarea.value;
+  const code = scriptEditor.textContent;
   const highlightedCode = Prism.highlight(code, Prism.languages.traqula, 'traqula');
-  scriptHighlight.querySelector('code').innerHTML = highlightedCode;
+  // Save selection
+  const selection = window.getSelection();
+  const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  let startOffset = 0;
+  if (range) {
+    const preCaretRange = range.cloneRange();
+    preCaretRange.selectNodeContents(scriptEditor);
+    preCaretRange.setEnd(range.startContainer, range.startOffset);
+    startOffset = preCaretRange.toString().length;
+  }
+  scriptEditor.innerHTML = highlightedCode;
+  // Restore selection
+  if (range) {
+    const newRange = document.createRange();
+    let charCount = 0;
+    let found = false;
+    function traverse(node) {
+      if (found) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const nextCharCount = charCount + node.length;
+        if (startOffset <= nextCharCount) {
+          newRange.setStart(node, startOffset - charCount);
+          found = true;
+        }
+        charCount = nextCharCount;
+      } else {
+        for (let child of node.childNodes) {
+          traverse(child);
+        }
+      }
+    }
+    traverse(scriptEditor);
+    if (found) {
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+    }
+  }
   localStorage.setItem('bareclad-query', code);
-  syncScroll();
-}
-
-// Sync scroll between textarea and highlight
-function syncScroll() {
-  scriptHighlight.style.top = -scriptTextarea.scrollTop + 'px';
 }
 
 // Setup event listeners for the editor
-scriptTextarea.addEventListener('input', updateHighlight);
-scriptTextarea.addEventListener('scroll', syncScroll);
-scriptTextarea.addEventListener('keydown', function(e) {
+scriptEditor.addEventListener('input', updateHighlight);
+scriptEditor.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     runQuery();
   }
@@ -149,11 +241,7 @@ scriptTextarea.addEventListener('keydown', function(e) {
   // Handle tab key for indentation
   if (e.key === 'Tab') {
     e.preventDefault();
-    const start = this.selectionStart;
-    const end = this.selectionEnd;
-    const value = this.value;
-    this.value = value.substring(0, start) + '    ' + value.substring(end);
-    this.selectionStart = this.selectionEnd = start + 4;
+    document.execCommand('insertText', false, '    ');
     updateHighlight();
   }
 });
@@ -170,7 +258,7 @@ setTimeout(() => {
 
 // Save query on page unload
 window.addEventListener('beforeunload', () => {
-  localStorage.setItem('bareclad-query', scriptTextarea.value);
+  localStorage.setItem('bareclad-query', scriptEditor.textContent);
 });
 
 // No Monaco initialization needed - using Prism.js instead
@@ -288,8 +376,10 @@ function populateResultSetSelect(resultSets) {
   });
 }
 async function runQuery() {
+  console.log('runQuery called');
   const endpoint = els.endpoint.value.trim();
-  const script = scriptTextarea.value;
+  const script = scriptEditor.textContent;
+  console.log('script:', script);
   const doStream = els.streamMode.checked;
   const payload = { script: script, stream: doStream };
   const timeoutMs = parseInt(els.timeout.value || '0',10);
@@ -389,7 +479,7 @@ async function runStream(endpoint, payload, started, controller) {
               sel.style.display='inline-block';
               // Rebuild options
               sel.innerHTML='';
-              multiSets.forEach((s,i)=>{ const opt=document.createElement('option'); const rc = s.row_count || s.rows.length || 0; const limited = s.limited ? ' (limited)' : ''; opt.value=i; opt.textContent=`Search ${i+1} (${rc} rows${limited})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); opt.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; opt.dataset.snippet = s.search; } else { opt.title=`Search ${i+1}`;} sel.appendChild(opt); });
+              multiSets.forEach((s,i)=>{ const opt=document.createElement('option'); const rc = s.row_count || s.rows.length || 0; const limited = s.limited ? ' (limited)' : ''; opt.value=i; opt.textContent=`Search ${i+1} (${rc} rows${limited})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); opt.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; opt.dataset.snippet = s.search; } });
               // Preserve previously selected if still valid
               sel.value = String(currentSetIndex);
               sel.onchange = () => { currentSetIndex = parseInt(sel.value,10); const s = multiSets[currentSetIndex]; buildTable(s.columns, s.rows, s.row_types); };
@@ -523,7 +613,9 @@ els.splitter.addEventListener('mousedown', e=>{
   e.preventDefault();
 });
 window.addEventListener('mousemove', e=>{
-  if (!dragging) return; const dy = e.clientY - startY; setEditorHeight(startHeight + dy);
+  if (!dragging) return;
+  const dy = e.clientY - startY;
+  setEditorHeight(startHeight + dy);
 });
 window.addEventListener('mouseup', ()=>{ if (dragging) { dragging=false; document.body.style.cursor=''; }});
 window.addEventListener('resize', ()=>{ /* keep within bounds */ setEditorHeight(els.editorPane.getBoundingClientRect().height); });
