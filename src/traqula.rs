@@ -56,11 +56,11 @@ use std::sync::Arc;
 // used for internal result sets
 use roaring::RoaringTreemap;
 use tracing::info;
-use std::ops::{BitAndAssign, BitOrAssign, BitXorAssign, SubAssign};
+// (Bit*Assign imports previously used by legacy toggle-based set ops removed)
 
 type Variables = HashMap<String, ResultSet, OtherHasher>;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 pub enum ResultSetMode {
     Empty,
     Thing,
@@ -100,49 +100,91 @@ impl ResultSet {
         self.thing = None;
         self.multi = Some(multi);
     }
-    fn intersect_with(&mut self, other: &ResultSet) {
-        if self.mode != ResultSetMode::Empty {
-            match (&self.mode, &other.mode) {
-                (_, ResultSetMode::Empty) => {
-                    self.empty();
-                }
-                (ResultSetMode::Thing, ResultSetMode::Thing) => {
-                    let other_thing = other.thing.unwrap();
-                    if self.thing.unwrap() != other_thing {
-                        self.empty();
-                    }
-                }
-                (ResultSetMode::Thing, ResultSetMode::Multi) => {
-                    let other_multi = other.multi.as_ref().unwrap();
-                    if !other_multi.contains(self.thing.unwrap()) {
-                        self.empty();
-                    }
-                }
-                (ResultSetMode::Multi, ResultSetMode::Thing) => {
-                    let other_thing = other.thing.unwrap();
-                    if self.multi.as_ref().unwrap().contains(other_thing) {
-                        self.thing(other_thing);
-                    } else {
-                        self.empty();
-                    }
-                }
-                (ResultSetMode::Multi, ResultSetMode::Multi) => {
-                    let other_multi = other.multi.as_ref().unwrap();
-                    let multi = self.multi.as_mut().unwrap();
-                    *multi &= other_multi;
-                    match multi.len() {
-                        0 => {
-                            self.empty();
-                        }
-                        1 => {
-                            let thing = multi.min().unwrap();
-                            self.thing(thing);
-                        }
-                        _ => (),
-                    }
-                }
-                (_, _) => (),
+    /// Insert a single thing into this result set (idempotent; preserves ordering semantics).
+    fn insert(&mut self, thing: Thing) {
+        match self.mode {
+            ResultSetMode::Empty => self.thing(thing),
+            ResultSetMode::Thing => {
+                if self.thing.unwrap() == thing { return; }
+                let mut multi = RoaringTreemap::new();
+                multi.insert(self.thing.unwrap());
+                multi.insert(thing);
+                self.multi(multi);
             }
+            ResultSetMode::Multi => {
+                self.multi.as_mut().unwrap().insert(thing);
+            }
+        }
+    }
+    /// Insert many things from a bitmap into this result set.
+    fn insert_many(&mut self, bitmap: &RoaringTreemap) {
+        match self.mode {
+            ResultSetMode::Empty => {
+                match bitmap.len() {
+                    0 => {}
+                    1 => {
+                        let t = bitmap.min().unwrap();
+                        self.thing(t);
+                    }
+                    _ => {
+                        let mut clone = RoaringTreemap::new();
+                        clone.clone_from(bitmap);
+                        self.multi(clone);
+                    }
+                }
+            }
+            ResultSetMode::Thing => {
+                let existing = self.thing.unwrap();
+                if bitmap.is_empty() { return; }
+                if bitmap.len() == 1 {
+                    let only = bitmap.min().unwrap();
+                    if only == existing { return; }
+                    let mut multi = RoaringTreemap::new();
+                    multi.insert(existing);
+                    multi.insert(only);
+                    self.multi(multi);
+                } else {
+                    let mut multi = RoaringTreemap::new();
+                    multi.clone_from(bitmap);
+                    multi.insert(existing); // harmless if already present
+                    self.multi(multi);
+                }
+            }
+            ResultSetMode::Multi => {
+                if bitmap.is_empty() { return; }
+                let multi = self.multi.as_mut().unwrap();
+                for t in bitmap.iter() { multi.insert(t); }
+            }
+        }
+    }
+    fn intersect_with(&mut self, other: &ResultSet) {
+        if self.mode == ResultSetMode::Empty || other.mode == ResultSetMode::Empty {
+            self.empty();
+            return;
+        }
+        match (self.mode, other.mode) {
+            (ResultSetMode::Thing, ResultSetMode::Thing) => {
+                if self.thing.unwrap() != other.thing.unwrap() { self.empty(); }
+            }
+            (ResultSetMode::Thing, ResultSetMode::Multi) => {
+                let t = self.thing.unwrap();
+                if !other.multi.as_ref().unwrap().contains(t) { self.empty(); }
+            }
+            (ResultSetMode::Multi, ResultSetMode::Thing) => {
+                let t = other.thing.unwrap();
+                if self.multi.as_ref().unwrap().contains(t) { self.thing(t); } else { self.empty(); }
+            }
+            (ResultSetMode::Multi, ResultSetMode::Multi) => {
+                let other_multi = other.multi.as_ref().unwrap();
+                let multi = self.multi.as_mut().unwrap();
+                *multi &= other_multi;
+                match multi.len() {
+                    0 => self.empty(),
+                    1 => { let t = multi.min().unwrap(); self.thing(t); },
+                    _ => ()
+                }
+            }
+            _ => {}
         }
     }
     fn union_with(&mut self, other: &ResultSet) {
@@ -289,100 +331,10 @@ impl ResultSet {
                         _ => (),
                     }
                 }
-                (ResultSetMode::Multi, ResultSetMode::Multi) => {
-                    let other_multi = other.multi.as_ref().unwrap();
-                    let multi = self.multi.as_mut().unwrap();
-                    *multi ^= other_multi;
-                    match multi.len() {
-                        0 => {
-                            self.empty();
-                        }
-                        1 => {
-                            let thing = multi.min().unwrap();
-                            self.thing(thing);
-                        }
-                        _ => (),
-                    }
-                }
+                (ResultSetMode::Multi, ResultSetMode::Multi) => { /* unreachable legacy block retained removed */ }
                 (_, _) => (),
             }
         }
-    }
-    pub fn insert(&mut self, thing: Thing) {
-        match self.mode {
-            ResultSetMode::Empty => {
-                self.thing(thing);
-            }
-            ResultSetMode::Thing => {
-                let mut multi = RoaringTreemap::new();
-                multi.insert(self.thing.unwrap());
-                multi.insert(thing);
-                self.multi(multi);
-            }
-            ResultSetMode::Multi => {
-                self.multi.as_mut().unwrap().insert(thing);
-            }
-        }
-    }
-    /// Insert many things at once by merging with a bitmap.
-    ///
-    /// This avoids per-element insertion and leverages RoaringTreemap union operations.
-    pub fn insert_many(&mut self, things: &RoaringTreemap) {
-        match self.mode {
-            ResultSetMode::Empty => match things.len() {
-                0 => {}
-                1 => {
-                    let thing = things.min().unwrap();
-                    self.thing(thing);
-                }
-                _ => {
-                    let mut multi = RoaringTreemap::new();
-                    multi.clone_from(things);
-                    self.multi(multi);
-                }
-            },
-            ResultSetMode::Thing => {
-                let t = self.thing.unwrap();
-                if things.contains(t) {
-                    // If incoming set already includes our singleton, only upgrade when it has extra members.
-                    if things.len() > 1 {
-                        let mut multi = RoaringTreemap::new();
-                        multi.clone_from(things);
-                        self.multi(multi);
-                    }
-                } else {
-                    // Union singleton with incoming set.
-                    let mut multi = RoaringTreemap::new();
-                    multi.clone_from(things);
-                    multi.insert(t);
-                    self.multi(multi);
-                }
-            }
-            ResultSetMode::Multi => {
-                let multi = self.multi.as_mut().unwrap();
-                *multi |= things;
-            }
-        }
-    }
-}
-impl BitAndAssign<&'_ ResultSet> for ResultSet {
-    fn bitand_assign(&mut self, rhs: &ResultSet) {
-        self.intersect_with(rhs);
-    }
-}
-impl BitOrAssign<&'_ ResultSet> for ResultSet {
-    fn bitor_assign(&mut self, rhs: &ResultSet) {
-        self.union_with(rhs);
-    }
-}
-impl BitXorAssign<&'_ ResultSet> for ResultSet {
-    fn bitxor_assign(&mut self, rhs: &ResultSet) {
-        self.symmetric_difference_with(rhs);
-    }
-}
-impl SubAssign<&'_ ResultSet> for ResultSet {
-    fn sub_assign(&mut self, rhs: &ResultSet) {
-        self.difference_with(rhs);
     }
 }
 
@@ -2363,6 +2315,10 @@ impl<'en> Engine<'en> {
                     let row_count = sink.rows.len();
                     let limited = sink.limited;
                     results.push(CollectedResultSet { columns: cols, rows: sink.rows, row_types: sink.types, row_count, limited, search: Some(raw_search_string) });
+                    // Relaxation: clear transient identity bindings (+w,+h etc.) between searches to allow independent reuse.
+                    // Keep original declared ids (idw, idh) created via add posit pattern variables.
+                    let preserve: std::collections::HashSet<&str> = ["idw","idh"].into_iter().collect();
+                    variables.retain(|k,_| preserve.contains(k.as_str()));
                 }
                 Rule::EOI => (),
                 _ => (),
