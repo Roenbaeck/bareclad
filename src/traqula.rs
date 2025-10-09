@@ -1317,6 +1317,85 @@ impl<'en> Engine<'en> {
                                                 any_clause_failed = true;
                                             }
                                         }
+                                        // Optional value filter for any role when a literal/constant value is provided
+                                        if _value_as_string.is_some() || _value_as_i64.is_some() || _value_as_decimal.is_some() || _value_as_certainty.is_some() || _value_as_time.is_some() || _value_as_json.is_some() {
+                                            let mut filtered = RoaringTreemap::new();
+                                            let pk = self.database.posit_keeper();
+                                            let tp = self.database.role_name_to_data_type_lookup();
+                                            let mut pk_guard = pk.lock().unwrap();
+                                            let tp_guard = tp.lock().unwrap();
+                                            let aset_lk = self.database.posit_thing_to_appearance_set_lookup();
+                                            let aset_guard = aset_lk.lock().unwrap();
+                                            for id in cands.iter() {
+                                                if let Some(aset) = aset_guard.get(&id) {
+                                                    let mut role_names: Vec<String> = aset.appearances().iter().map(|a| a.role().name().to_string()).collect();
+                                                    role_names.sort();
+                                                    let allowed = tp_guard.lookup(&role_names);
+                                                    let mut matches = false;
+                                                    if let Some(ref val) = _value_as_string {
+                                                        if allowed.contains("String") {
+                                                            if let Some(p) = pk_guard.posit::<String>(id) {
+                                                                if p.value() == val {
+                                                                    matches = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(val) = _value_as_i64 {
+                                                        if allowed.contains("i64") {
+                                                            if let Some(p) = pk_guard.posit::<i64>(id) {
+                                                                if p.value() == &val {
+                                                                    matches = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(ref val) = _value_as_decimal {
+                                                        if allowed.contains("Decimal") {
+                                                            if let Some(p) = pk_guard.posit::<Decimal>(id) {
+                                                                if p.value() == val {
+                                                                    matches = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(ref val) = _value_as_certainty {
+                                                        if allowed.contains("Certainty") {
+                                                            if let Some(p) = pk_guard.posit::<Certainty>(id) {
+                                                                if p.value() == val {
+                                                                    matches = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(ref val) = _value_as_time {
+                                                        if allowed.contains("Time") {
+                                                            if let Some(p) = pk_guard.posit::<Time>(id) {
+                                                                if p.value() == val {
+                                                                    matches = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(ref val) = _value_as_json {
+                                                        if allowed.contains("JSON") {
+                                                            if let Some(p) = pk_guard.posit::<JSON>(id) {
+                                                                if p.value() == val {
+                                                                    matches = true;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    if matches {
+                                                        filtered.insert(id);
+                                                    }
+                                                }
+                                            }
+                                            cands = filtered;
+                                            if cands.is_empty() {
+                                                any_clause_failed = true;
+                                            }
+                                        }
                                         // (as-of moved to after local identity constraints)
                                         // Apply local identity variable constraints to filter candidates (e.g., (w, name) restricts to bound wife)
                                         if !local_variables.is_empty() && !cands.is_empty() {
