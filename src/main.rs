@@ -93,9 +93,20 @@ async fn real_main() -> Result<()> {
             println!("Integrity ledger head: {} ({} posits)", head, count);
         }
     }
+    // Derive listen interface & port (optional in config)
+    let listen_interface = settings_lookup
+        .get("listen_interface")
+        .map(|s| s.as_str())
+        .unwrap_or("127.0.0.1");
+    let listen_port: u16 = settings_lookup
+        .get("listen_port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080);
+    let addr: std::net::SocketAddr = format!("{}:{}", listen_interface, listen_port)
+        .parse()
+        .map_err(|e| BarecladError::Config(format!("Invalid listen address {listen_interface}:{listen_port} – {e}")))?;
     // Start HTTP server (simple /v1/query endpoint)
     let app = bareclad::server::router(Arc::clone(&interface));
-    let addr = std::net::SocketAddr::from(([127,0,0,1], 8080));
     tracing::info!(?addr, "HTTP server listening");
     let listener = tokio::net::TcpListener::bind(addr)
         .await
