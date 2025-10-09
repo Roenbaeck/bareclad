@@ -934,6 +934,7 @@ impl<'en> Engine<'en> {
         for clause in command.into_inner() {
             match clause.as_rule() {
                 Rule::search_clause => {
+                    let mut pattern_index = 0usize; // diagnostic counter
                     for structure in clause.into_inner() {
                         let mut variable: Option<String> = None;
                         let mut _posits: Vec<Thing> = Vec::new();
@@ -954,6 +955,7 @@ impl<'en> Engine<'en> {
                         let mut roles = Vec::new();
                         match structure.as_rule() {
                             Rule::posit_search => {
+                                let diag_pattern_id = pattern_index; pattern_index +=1; // increment early for logging
                                 // Track optional per-clause 'as of' time
                                 let mut _as_of_time: Option<Time> = None;
                                 for component in structure.into_inner() {
@@ -1229,6 +1231,7 @@ impl<'en> Engine<'en> {
                                 }
                                 // Minimal evaluation: compute candidates by role intersection and bind variables
                                 if !roles.is_empty() {
+                                    info!(target:"bareclad::stream", event="pattern_start", pattern_index=diag_pattern_id, roles=?roles, local_vars=?local_variables, unions=?local_variable_unions.iter().map(|u| u.as_ref().map(|v| v.join("|"))).collect::<Vec<_>>(), as_of_literal=%_as_of_time.as_ref().map(|t|format!("{}",t)).unwrap_or_default());
                                     // Intersect role bitmaps
                                     let mut candidates: Option<RoaringTreemap> = None;
                                     for role_name in &roles {
@@ -1439,28 +1442,24 @@ impl<'en> Engine<'en> {
                                                         let satisfies = if let Some(names) =
                                                             union_names
                                                         {
-                                                            // If any union member is already bound and contains bound_id, accept; if none are bound, don't restrict
+                                                            // If any union member is already bound (non-empty) and contains bound_id, accept;
+                                                            // if none are effectively bound (all empty or absent), don't restrict.
                                                             let mut any_bound = false;
                                                             let mut any_match = false;
                                                             for name in names.iter() {
-                                                                if let Some(rs) =
-                                                                    variables.get(name)
-                                                                {
-                                                                    any_bound = true;
+                                                                if let Some(rs) = variables.get(name) {
                                                                     match rs.mode {
                                                                         ResultSetMode::Thing => {
-                                                                            any_match |=
-                                                                                rs.thing.unwrap()
-                                                                                    == bound_id;
+                                                                            any_bound = true;
+                                                                            any_match |= rs.thing.unwrap() == bound_id;
                                                                         }
                                                                         ResultSetMode::Multi => {
-                                                                            any_match |= rs
-                                                                                .multi
-                                                                                .as_ref()
-                                                                                .unwrap()
-                                                                                .contains(bound_id);
+                                                                            any_bound = true;
+                                                                            any_match |= rs.multi.as_ref().unwrap().contains(bound_id);
                                                                         }
-                                                                        ResultSetMode::Empty => {}
+                                                                        ResultSetMode::Empty => {
+                                                                            // Treat empty as unbound
+                                                                        }
                                                                     }
                                                                 }
                                                             }
@@ -1472,15 +1471,10 @@ impl<'en> Engine<'en> {
                                                             if let Some(rs) = variables.get(key) {
                                                                 match rs.mode {
                                                                     ResultSetMode::Thing => {
-                                                                        rs.thing.unwrap()
-                                                                            == bound_id
+                                                                        rs.thing.unwrap() == bound_id
                                                                     }
-                                                                    ResultSetMode::Multi => rs
-                                                                        .multi
-                                                                        .as_ref()
-                                                                        .unwrap()
-                                                                        .contains(bound_id),
-                                                                    ResultSetMode::Empty => true,
+                                                                    ResultSetMode::Multi => rs.multi.as_ref().unwrap().contains(bound_id),
+                                                                    ResultSetMode::Empty => true, // treat empty as unbound
                                                                 }
                                                             } else {
                                                                 // Unbound variable – don't restrict
@@ -1501,6 +1495,7 @@ impl<'en> Engine<'en> {
                                                 any_clause_failed = true;
                                             }
                                         }
+                                        info!(target:"bareclad::stream", event="pattern_end", pattern_index=diag_pattern_id, final_candidates=cands.len(), any_clause_failed=any_clause_failed, enumeration_started=enumeration_started);
                                         // Remember candidate posits for projection when returning values/times
                                         // (legacy single-role candidate capture removed)
                                         // If the appearing value used a variable (e.g., +n or n), capture its candidates
@@ -1686,6 +1681,7 @@ impl<'en> Engine<'en> {
                                                     for id_map in pending_maps.into_iter() {
                                                         candidate_info.push((pid, id_map));
                                                     }
+                                                    info!(target:"bareclad::stream", event="enumeration_candidate_info", entries=candidate_info.len(), enumeration_started=?enumeration_started);
                                                 }
                                             }
                                             // Names for value/time/posit variables (strip plus)
@@ -1722,6 +1718,7 @@ impl<'en> Engine<'en> {
                                                     bindings.push(b);
                                                 }
                                                 enumeration_started = true;
+                                                info!(target:"bareclad::stream", event="enumeration_seed", seeded_bindings=bindings.len());
                                             } else {
                                                 let mut new_bindings: Vec<Binding> = Vec::new();
                                                 for existing in bindings.iter() {
@@ -1804,6 +1801,7 @@ impl<'en> Engine<'en> {
                                                 if bindings.is_empty() {
                                                     any_clause_failed = true;
                                                 }
+                                                info!(target:"bareclad::stream", event="enumeration_merge", merged_bindings=bindings.len(), any_clause_failed=any_clause_failed);
                                             }
                                         }
                                     }
@@ -1902,6 +1900,7 @@ impl<'en> Engine<'en> {
                         return;
                     }
                     if enumeration_started {
+                        info!(target:"bareclad::stream", event="projection_start", bindings=bindings.len(), return_cols=?return_columns.as_ref().unwrap_or(&Vec::new()));
                         // (debug logging removed)
                         // Validate variable references in value predicates
                         if exec_error.is_none() {
@@ -2118,7 +2117,12 @@ impl<'en> Engine<'en> {
 
                         // Column-level inference removed; we now collect a per-row types vector.
                         // Emission handled after full clause scan; see post-clause block.
+                        if !enumeration_started {
+                            info!(target:"bareclad::stream", event="projection_skipped", reason="no_enumeration", any_clause_failed=any_clause_failed);
+                            return;
+                        }
                         for b in bindings.iter() {
+                            info!(target:"bareclad::stream", event="row_binding_iter", identities=b.identities.len(), value_slots=b.value_slots.len(), posit_vars=b.posit_vars.len());
                             let mut row: Vec<String> = Vec::with_capacity(returns.len());
                             let mut types_row: Vec<String> = Vec::with_capacity(returns.len());
                             let mut row_ok = true;
@@ -2189,9 +2193,10 @@ impl<'en> Engine<'en> {
                                 if let SinkFlow::Stop = sink.push(row, types_row) { break; }
                             }
                         }
+                        info!(target:"bareclad::stream", event="projection_complete");
                         return;
                     }
-                }
+                } // end Rule::return_clause branch
                 Rule::limit_clause => { /* ignored here */ }
                 _ => println!("Unknown clause: {:?}", clause),
             }
@@ -2324,8 +2329,8 @@ impl<'en> Engine<'en> {
                     let row_count = sink.rows.len();
                     let limited = sink.limited;
                     results.push(CollectedResultSet { columns: cols, rows: sink.rows, row_types: sink.types, row_count, limited, search: Some(raw_search_string) });
-                    // Relaxation: clear transient identity bindings (+w,+h etc.) between searches to allow independent reuse.
-                    // Keep original declared ids (idw, idh) created via add posit pattern variables.
+                    // Clear transient bindings between searches to allow independent reuse.
+                    // Preserve only stable ids created via add posit pattern variables (idw, idh).
                     let preserve: std::collections::HashSet<&str> = ["idw","idh"].into_iter().collect();
                     variables.retain(|k,_| preserve.contains(k.as_str()));
                 }
@@ -2390,6 +2395,7 @@ impl<'en> Engine<'en> {
                 // Mirror collect_multi semantics: clear transient identity/value/time bindings between searches
                 // to avoid unintended intersection constraints leaking across independent searches.
                 // Preserve only long-lived identity variables that originate from add posit patterns (idw, idh).
+                // Note: within a single search, Empty bindings are treated as effectively unbound for constraint checks.
                 {
                     use std::collections::HashSet;
                     let preserve: HashSet<&str> = ["idw","idh"].into_iter().collect();
