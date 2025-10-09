@@ -130,12 +130,12 @@ function updateHighlight() {
   const highlightedCode = Prism.highlight(code, Prism.languages.traqula, 'traqula');
   scriptHighlight.querySelector('code').innerHTML = highlightedCode;
   localStorage.setItem('bareclad-query', code);
+  syncScroll();
 }
 
 // Sync scroll between textarea and highlight
 function syncScroll() {
-  scriptHighlight.scrollTop = scriptTextarea.scrollTop;
-  scriptHighlight.scrollLeft = scriptTextarea.scrollLeft;
+  scriptHighlight.style.top = -scriptTextarea.scrollTop + 'px';
 }
 
 // Setup event listeners for the editor

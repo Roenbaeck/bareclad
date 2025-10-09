@@ -1317,6 +1317,61 @@ impl<'en> Engine<'en> {
                                                 any_clause_failed = true;
                                             }
                                         }
+                                        // Optional per-clause 'as of' reduction: keep latest time <= as_of for each appearance set
+                                        if let Some(ref as_of) = _as_of_time {
+                                            if !cands.is_empty() {
+                                                let time_lk = self.database.posit_time_lookup();
+                                                let time_guard = time_lk.lock().unwrap();
+                                                let aset_lk = self
+                                                    .database
+                                                    .posit_thing_to_appearance_set_lookup();
+                                                let aset_guard = aset_lk.lock().unwrap();
+                                                // Map: appearance set ptr address -> (best_time, Vec<Thing>) to keep all ties
+                                                use std::collections::HashMap as StdHashMap;
+                                                let mut best: StdHashMap<
+                                                    usize,
+                                                    (Time, Vec<Thing>),
+                                                > = StdHashMap::new();
+                                                for pid in cands.iter() {
+                                                    if let Some(pt) = time_guard.get(&pid) {
+                                                        if pt <= as_of {
+                                                            if let Some(aset) = aset_guard.get(&pid)
+                                                            {
+                                                                let key =
+                                                                    Arc::as_ptr(aset) as usize;
+                                                                match best.get_mut(&key) {
+                                                                    Some((bt, ids)) => {
+                                                                        if pt > bt {
+                                                                            *bt = pt.clone();
+                                                                            ids.clear();
+                                                                            ids.push(pid);
+                                                                        } else if pt == bt {
+                                                                            ids.push(pid);
+                                                                        }
+                                                                    }
+                                                                    None => {
+                                                                        best.insert(
+                                                                            key,
+                                                                            (pt.clone(), vec![pid]),
+                                                                        );
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                let mut reduced = RoaringTreemap::new();
+                                                for (_k, (_bt, ids)) in best.into_iter() {
+                                                    for id in ids {
+                                                        reduced.insert(id);
+                                                    }
+                                                }
+                                                cands = reduced;
+                                                if cands.is_empty() {
+                                                    any_clause_failed = true;
+                                                }
+                                            }
+                                        }
                                         // Optional value filter for any role when a literal/constant value is provided
                                         if _value_as_string.is_some() || _value_as_i64.is_some() || _value_as_decimal.is_some() || _value_as_certainty.is_some() || _value_as_time.is_some() || _value_as_json.is_some() {
                                             let mut filtered = RoaringTreemap::new();
@@ -1488,61 +1543,6 @@ impl<'en> Engine<'en> {
                                             cands = filtered;
                                             if cands.is_empty() {
                                                 any_clause_failed = true;
-                                            }
-                                        }
-                                        // Optional per-clause 'as of' reduction: keep latest time <= as_of for each appearance set
-                                        if let Some(ref as_of) = _as_of_time {
-                                            if !cands.is_empty() {
-                                                let time_lk = self.database.posit_time_lookup();
-                                                let time_guard = time_lk.lock().unwrap();
-                                                let aset_lk = self
-                                                    .database
-                                                    .posit_thing_to_appearance_set_lookup();
-                                                let aset_guard = aset_lk.lock().unwrap();
-                                                // Map: appearance set ptr address -> (best_time, Vec<Thing>) to keep all ties
-                                                use std::collections::HashMap as StdHashMap;
-                                                let mut best: StdHashMap<
-                                                    usize,
-                                                    (Time, Vec<Thing>),
-                                                > = StdHashMap::new();
-                                                for pid in cands.iter() {
-                                                    if let Some(pt) = time_guard.get(&pid) {
-                                                        if pt <= as_of {
-                                                            if let Some(aset) = aset_guard.get(&pid)
-                                                            {
-                                                                let key =
-                                                                    Arc::as_ptr(aset) as usize;
-                                                                match best.get_mut(&key) {
-                                                                    Some((bt, ids)) => {
-                                                                        if pt > bt {
-                                                                            *bt = pt.clone();
-                                                                            ids.clear();
-                                                                            ids.push(pid);
-                                                                        } else if pt == bt {
-                                                                            ids.push(pid);
-                                                                        }
-                                                                    }
-                                                                    None => {
-                                                                        best.insert(
-                                                                            key,
-                                                                            (pt.clone(), vec![pid]),
-                                                                        );
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                let mut reduced = RoaringTreemap::new();
-                                                for (_k, (_bt, ids)) in best.into_iter() {
-                                                    for id in ids {
-                                                        reduced.insert(id);
-                                                    }
-                                                }
-                                                cands = reduced;
-                                                if cands.is_empty() {
-                                                    any_clause_failed = true;
-                                                }
                                             }
                                         }
                                         // Remember candidate posits for projection when returning values/times
