@@ -12,7 +12,7 @@
     'info'               -> info and above for all modules
     'warn,bareclad=info' -> global warn, crate-specific info
     'trace,axum=info'    -> very verbose except axum trimmed
-.PARAMETER Profile
+.PARAMETER LogProfile
   Shortcut presets for common log configurations: quiet | normal | verbose | trace
 .EXAMPLE
   # Start with default (normal) logging
@@ -22,7 +22,7 @@
   Start-Bareclad -Log 'warn,bareclad=info'
 .EXAMPLE
   # Restart quickly with verbose logging
-  Restart-Bareclad -Profile verbose
+  Restart-Bareclad -LogProfile verbose
 #>
 
 [CmdletBinding()] param(
@@ -38,7 +38,7 @@ function Set-BarecladLogEnv {
         [ValidateSet('quiet','normal','verbose','trace')][string] $LogProfile = 'normal'
     )
     if (-not $Log) {
-        switch ($Profile) {
+        switch ($LogProfile) {
             'quiet'   { $Log = 'error' }
             'normal'  { $Log = 'info' }
             'verbose' { $Log = 'debug,bareclad=info' }
@@ -61,7 +61,7 @@ function Start-Bareclad {
         Write-Warning 'Bareclad already running. Use Restart-Bareclad or Stop-Bareclad first.'
         return
     }
-    Set-BarecladLogEnv -Log $Log -Profile $LogProfile
+    Set-BarecladLogEnv -Log $Log -LogProfile $LogProfile
     $cargoArgs = @('run','--quiet')
     if ($Release) { $cargoArgs = @('run','--release','--quiet') }
     if ($ForceRebuild) { Write-Host '[bareclad] Forcing clean build...' -ForegroundColor Yellow; cargo clean | Out-Null }
@@ -119,12 +119,12 @@ function Restart-Bareclad {
         [switch] $Release
     )
     Stop-Bareclad
-    Start-Bareclad -Log $Log -Profile $LogProfile -ForceRebuild:$ForceRebuild -Release:$Release
+    Start-Bareclad -Log $Log -LogProfile $LogProfile -ForceRebuild:$ForceRebuild -Release:$Release
 }
 
 Set-Alias bareclad-run Start-Bareclad
 
 if ($MyInvocation.InvocationName -ne '.') {
     # If script is executed directly, start with provided AutoStart profile
-    Start-Bareclad -Profile $AutoStart
+    Start-Bareclad -LogProfile $AutoStart
 }

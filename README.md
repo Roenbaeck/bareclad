@@ -269,10 +269,10 @@ You can run the server directly with the binary or use the convenience scripts p
 
 Windows (PowerShell):
 ```powershell
-. .\scripts\bareclad.ps1                 # dot-source to load functions
-Start-Bareclad -Profile normal -Tail    # run and stream logs live
-Stop-Bareclad                           # stop
-Restart-Bareclad -Profile verbose       # restart with different profile
+. .\scripts\bareclad.ps1                  # dot-source to load functions
+Start-Bareclad -LogProfile normal -Tail   # run and stream logs live
+Stop-Bareclad                             # stop
+Restart-Bareclad -LogProfile verbose      # restart with different profile
 ```
 
 macOS / Linux (bash):
@@ -287,7 +287,7 @@ chmod +x scripts/bareclad.sh            # first time
 
 Both scripts support a common set of logging profiles mapped to `RUST_LOG`:
 
-Profile | RUST_LOG
+LogProfile | RUST_LOG
 :--|:--
 quiet | `error`
 normal | `info`

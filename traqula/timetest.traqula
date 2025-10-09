@@ -1,3 +1,13 @@
+add role  wife, husband, name;
+
+add posit +p1 [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'],
+          +p1 [{(idw, wife), (idh, husband)}, "divorced", '2020-12-04'],
+          +p1 [{(idh, name)}, "Archie Bald", '1972-08-20'], 
+          +p1 [{(idh, name)}, "Archie Trix", '2004-09-21'], 
+          +p1 [{(idh, name)}, "Archie Bald", '2021-01-19'], 
+          +p1 [{(idw, name)}, "Bella Trix", '1972-12-13'];
+
+
 The intent of "as of" is always to be a snapshot reducer.  In the case of `[{(w, name)}, +n, +t] as of t1` it should reduce for each w's specific t1. It would result in every wives name closest preceding to or on the time of their mariiage.
 
 This is different from 
