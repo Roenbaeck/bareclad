@@ -375,6 +375,28 @@ function populateResultSetSelect(resultSets) {
     sel.appendChild(opt);
   });
 }
+// Stub previously referenced (removed highlighting feature); keep call safe.
+function computeSearchOffsetsForOptions() { /* no-op: highlighting removed */ }
+// Unified helper to (re)build multi-search dropdown on streaming path.
+function rebuildStreamingDropdown(multiSets, currentIdx) {
+  const sel = els.resultSetSelect;
+  if (!multiSets || multiSets.length <= 1) {
+    sel.style.display='none'; sel.innerHTML=''; return; }
+  sel.style.display='inline-block';
+  const prev = (sel.value !== '' ? sel.value : String(currentIdx));
+  sel.innerHTML='';
+  multiSets.forEach((s,i)=>{
+    const opt=document.createElement('option');
+    const rc = s.row_count || s.rows.length || 0;
+    const limitedTxt = s.limited ? ' (limited)' : '';
+    opt.value=i; opt.textContent=`Search ${i+1} (${rc} rows${limitedTxt})`;
+    if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); opt.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; opt.dataset.snippet = s.search; }
+    sel.appendChild(opt);
+  });
+  sel.value = prev;
+  sel.onchange = () => { const idx = parseInt(sel.value,10); const s = multiSets[idx]; buildTable(s.columns, s.rows, s.row_types); };
+  computeSearchOffsetsForOptions();
+}
 async function runQuery() {
   console.log('runQuery called');
   const endpoint = els.endpoint.value.trim();
@@ -473,18 +495,8 @@ async function runStream(endpoint, payload, started, controller) {
               currentSetIndex = 0;
               buildTable(evt.columns, [], []);
             }
-            // Show dropdown once we have >1 set
-            if (multiSets.length > 1) {
-              const sel = els.resultSetSelect;
-              sel.style.display='inline-block';
-              // Rebuild options
-              sel.innerHTML='';
-              multiSets.forEach((s,i)=>{ const opt=document.createElement('option'); const rc = s.row_count || s.rows.length || 0; const limited = s.limited ? ' (limited)' : ''; opt.value=i; opt.textContent=`Search ${i+1} (${rc} rows${limited})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); opt.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; opt.dataset.snippet = s.search; } });
-              // Preserve previously selected if still valid
-              sel.value = String(currentSetIndex);
-              sel.onchange = () => { currentSetIndex = parseInt(sel.value,10); const s = multiSets[currentSetIndex]; buildTable(s.columns, s.rows, s.row_types); };
-              computeSearchOffsetsForOptions();
-            }
+            // Rebuild dropdown if we now have >1 set
+            rebuildStreamingDropdown(multiSets, currentSetIndex);
             setStatus(`Result set ${idx+1} start`);
         } else if (evt.event==='row') {
             if (streamingMulti && typeof evt.index === 'number' && multiSets[evt.index]) {
@@ -495,12 +507,7 @@ async function runStream(endpoint, payload, started, controller) {
               }
               // Refresh dropdown option text to reflect new row counts
               if (multiSets.length > 1) {
-                const sel = els.resultSetSelect;
-                const prevSelection = sel.value;
-                Array.from(sel.options).forEach((optEl, i)=>{
-                  const s = multiSets[i]; const rc = s.row_count || s.rows.length || 0; const limitedTxt = s.limited ? ' (limited)' : ''; optEl.textContent = `Search ${i+1} (${rc} rows${limitedTxt})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); optEl.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; }
-                });
-                sel.value = prevSelection;
+                rebuildStreamingDropdown(multiSets, currentSetIndex);
               }
               els.perf.textContent = `stream sets ${multiSets.length} | rows set${evt.index+1}=${set.rows.length}`;
             } else { // single-search path
@@ -515,9 +522,7 @@ async function runStream(endpoint, payload, started, controller) {
               setStatus(`Result set ${evt.index+1} end (${evt.row_count} rows${evt.limited?' limited':''})`);
               // Final refresh for this result set to include limited flag
               if (multiSets.length > 1) {
-                const sel = els.resultSetSelect; const prevSelection = sel.value;
-                Array.from(sel.options).forEach((optEl, i)=>{ const s=multiSets[i]; const rc=s.row_count||s.rows.length||0; const limitedTxt = s.limited ? ' (limited)' : ''; optEl.textContent=`Search ${i+1} (${rc} rows${limitedTxt})`; if (s.search) { const snippet = s.search.replace(/\s+/g,' ').slice(0,120); optEl.title=`Search ${i+1}: ${snippet}${s.search.length>120?'…':''}`; } });
-                sel.value = prevSelection;
+                rebuildStreamingDropdown(multiSets, currentSetIndex);
               }
             }
     } else if (evt.event==='multi_end') {
@@ -526,6 +531,8 @@ async function runStream(endpoint, payload, started, controller) {
               const total = evt.total_rows ?? multiSets.reduce((a,s)=>a+(s.row_count||s.rows.length),0);
               els.perf.textContent = `client ${(ms)} ms | sets ${multiSets.length} | total rows ${total}`;
               setStatus('OK');
+              // Ensure dropdown exists even if earlier start events had an exception
+              rebuildStreamingDropdown(multiSets, currentSetIndex);
               els.jsonOut.textContent = JSON.stringify({ status:'ok', result_sets: multiSets.map((s,i)=>({ index:i, columns:s.columns, rows:s.rows, row_types:s.row_types, row_count: s.row_count||s.rows.length, limited: !!s.limited, search: s.search })) }, null, 2);
             } else {
               els.perf.textContent = `client ${(ms)} ms | total rows ${evt.total_rows ?? rowCount}`;

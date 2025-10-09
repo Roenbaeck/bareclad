@@ -1251,6 +1251,7 @@ impl<'en> Engine<'en> {
                                         });
                                     }
                                     if let Some(cands_initial) = candidates {
+                                        info!(target:"bareclad::stream", event="candidates_initial", count=cands_initial.len(), roles=?roles, time_literal=%_time.as_ref().map(|t|format!("{}",t)).unwrap_or_default(), as_of_literal=%_as_of_time.as_ref().map(|t|format!("{}",t)).unwrap_or_default());
                                         // Optional time filter for any role when a literal/constant time is provided
                                         let mut cands = cands_initial;
                                         if let Some(ref t) = _time {
@@ -1265,6 +1266,7 @@ impl<'en> Engine<'en> {
                                                 }
                                             }
                                             cands = filtered;
+                                            info!(target:"bareclad::stream", event="time_filter", remaining=cands.len());
                                             if cands.is_empty() {
                                                 any_clause_failed = true;
                                             }
@@ -1319,6 +1321,7 @@ impl<'en> Engine<'en> {
                                                     }
                                                 }
                                                 cands = reduced;
+                                                info!(target:"bareclad::stream", event="snapshot_reduced", remaining=cands.len(), as_of=%format!("{}", as_of));
                                                 if cands.is_empty() {
                                                     any_clause_failed = true;
                                                 }
@@ -1399,6 +1402,7 @@ impl<'en> Engine<'en> {
                                                 }
                                             }
                                             cands = filtered;
+                                            info!(target:"bareclad::stream", event="value_filter", remaining=cands.len());
                                             if cands.is_empty() {
                                                 any_clause_failed = true;
                                             }
@@ -2128,6 +2132,7 @@ impl<'en> Engine<'en> {
                                             row.push(format!("{}", pid));
                                             types_row.push("Thing".into());
                                         } else {
+                                            info!(target:"bareclad::stream", event="row_skip", reason="missing_identity", var=%rv);
                                             row_ok = false;
                                             break;
                                         }
@@ -2158,19 +2163,23 @@ impl<'en> Engine<'en> {
                                                     row.push(cell);
                                                     if types_row.len() < row.len() { types_row.push("Unknown".into()); }
                                                 } else {
+                                                    info!(target:"bareclad::stream", event="row_skip", reason="no_capture", var=%rv);
                                                     row_ok = false;
                                                     break;
                                                 }
                                             } else { // aset_guard.get(pid) None
+                                                info!(target:"bareclad::stream", event="row_skip", reason="missing_aset", pid=*pid, var=%rv);
                                                 row_ok = false;
                                                 break;
                                             }
                                         } else { // b.value_slots.get(rv) None
+                                            info!(target:"bareclad::stream", event="row_skip", reason="missing_value_slot", var=%rv);
                                             row_ok = false;
                                             break;
                                         }
                                     } // Value | Time
                                     _ => {
+                                        info!(target:"bareclad::stream", event="row_skip", reason="unknown_kind", var=%rv);
                                         row_ok = false;
                                         break;
                                     }
@@ -2357,7 +2366,7 @@ impl<'en> Engine<'en> {
                 // Per-set sink bridging to callbacks
                 struct SetSink<'a, C: MultiStreamCallbacks> { cb: &'a mut C, idx: usize, started: bool, search_text: &'a str }
                 impl<'a, C: MultiStreamCallbacks> RowSink for SetSink<'a, C> {
-                    fn on_meta(&mut self, columns: &[String]) -> SinkFlow { self.started=true; self.cb.on_result_set_start(self.idx, columns, self.search_text); SinkFlow::Continue }
+                    fn on_meta(&mut self, columns: &[String]) -> SinkFlow { self.started=true; info!(target:"bareclad::stream", event="set_meta", set_index=self.idx, cols=?columns, search=?self.search_text); self.cb.on_result_set_start(self.idx, columns, self.search_text); SinkFlow::Continue }
                     fn push(&mut self, row: Vec<String>, types: Vec<String>) -> SinkFlow { if self.cb.on_row(self.idx, row, types) { SinkFlow::Continue } else { SinkFlow::Stop } }
                 }
                 struct CountingSetSink<'a, C: MultiStreamCallbacks> { inner: SetSink<'a, C>, limit: Option<usize>, count: usize, limited: bool }
@@ -2378,6 +2387,14 @@ impl<'en> Engine<'en> {
                 if let Some(e)=err { return Err(e); }
                 let finished_count = sink.count; let limited_flag = sink.limited; // drop sink here
                 callbacks.on_result_set_end(set_index, finished_count, limited_flag);
+                // Mirror collect_multi semantics: clear transient identity/value/time bindings between searches
+                // to avoid unintended intersection constraints leaking across independent searches.
+                // Preserve only long-lived identity variables that originate from add posit patterns (idw, idh).
+                {
+                    use std::collections::HashSet;
+                    let preserve: HashSet<&str> = ["idw","idh"].into_iter().collect();
+                    variables.retain(|k,_| preserve.contains(k.as_str()));
+                }
                 set_index +=1;
             }
             Rule::EOI => (),
