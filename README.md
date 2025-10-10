@@ -171,6 +171,18 @@ Planned/next:
 * Optimization: caching value extraction during predicate evaluation
 * Optional JSON/CSV export helpers
 
+## Long-term Goals
+
+These are aspirational features that align with the full vision of Transitional Modeling, extending Bareclad beyond its current experimental state:
+
+* **Advanced Query Capabilities**: Implement all theoretical query types from Transitional Modeling, including probabilistic searches (e.g., "find facts with at least 75% certainty"), audit trails (e.g., "show all corrections between dates"), and log-like queries (e.g., "all model changes by a specific identity").
+* **Constraint and Schema Management**: Add support for subjective, evolving constraints and classifications that can be applied late, enabling "eventual conformance" for data integrity without rigid upfront schemas.
+* **Multi-tenant and Collaborative Features**: Enhance multi-tenant support for disagreements and consensus tracking, allowing collaborative modeling where different observers can maintain concurrent, conflicting models.
+* **Uncertainty Theory Integration**: Extend certainty handling to full uncertainty theory, supporting complex logical consistency checks across collections of opinions.
+* **Performance and Scalability**: Optimize for large-scale deployments with distributed persistence, advanced indexing, and parallel query execution.
+* **Ecosystem Expansion**: Develop integrations with other databases, visualization tools, and APIs; add more data types (e.g., geospatial, multimedia); and build a plugin system for custom extensions.
+* **Production Readiness**: Implement enterprise features like backup/restore, replication, monitoring, and compliance tooling to transition from experimental to production-grade.
+
 ## License
 
 This work is dual-licensed under Apache 2.0 and MIT. You can choose between one of them if you use this work.
