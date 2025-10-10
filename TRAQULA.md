@@ -1,5 +1,3 @@
-# Traqula Language Study Guide
-
 <img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/Traqula.svg" alt="Traqula Language Reference" width="200">
 <p/>
 
