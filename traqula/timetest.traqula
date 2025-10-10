@@ -27,6 +27,18 @@ search    [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW,
 return
     n, t, mt;
 
+/* give me the name of each wife and husband at the time they got married */
+search    [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW, 
+          [{(w|h, name)}, +n, +t] as of mt
+return
+    n, t, mt;
+
+/* give me the name history of each wife and husband up to and including the time of their marriage */
+search    [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW, 
+          [{(w|h, name)}, +n, +t] 
+where t <= mt
+return
+    n, t, mt;
 
 /*
 The intent of "as of" is always to be a snapshot reducer.  In the case of `[{(w, name)}, +n, +t] as of t1` it should reduce for each w's specific t1. It would result in every wives name closest preceding to or on the time of their mariiage.
