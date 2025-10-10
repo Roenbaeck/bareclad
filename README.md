@@ -4,6 +4,7 @@ Bareclad is an experimental database engine based on Transitional Modeling, desi
 
 - [Paper: Modeling Conflicting, Unreliable, and Varying Information (Transitional Modeling)](https://www.researchgate.net/publication/329352497_Modeling_Conflicting_Unreliable_and_Varying_Information)
 - [Background posts](https://www.anchormodeling.com/tag/transitional/)
+- [The Philosophical Foundations of Bareclad](THEORY.md)
 
 ## Why Bareclad?
 
@@ -70,7 +71,7 @@ let db2 = Database::new(mode);
 
 When running the provided binary, the `enable_persistence` flag in `bareclad.json` selects between these modes internally.
 
-## Integrity Ledger (file-backed persistence)
+## Integrity Ledger
 
 When running in file‑backed persistence mode, Bareclad records a compact integrity signal alongside persisted posits: a rolling hash over each persisted row. This ledger is always maintained for file‑backed databases and is intended as a lightweight way to spot accidental edits or simple corruption during local inspection.
 
