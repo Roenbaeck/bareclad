@@ -109,6 +109,38 @@ Filter results with comparisons:
 
 Supports variable vs literal and variable vs variable.
 
+#### Temporal joins with `as of`
+
+Use `as of` on a pattern to perform snapshot reduction: for each appearance set matched by that pattern, keep only the latest posit whose time is less than or equal to the specified time.
+
+Two forms are supported:
+
+- Literal/constant time: `@NOW`, `@BOT`, `@EOT`, or time literals (e.g., `'2024-03-17'`, `'2024-03-17 12:34:56.123'`, `YYYY`, `YYYY-MM`, `YYYY-MM-DD`).
+- Time variable: a previously bound time variable (e.g., `mt`).
+
+Semantics:
+
+- Inclusive comparison (`<=`).
+- One posit per appearance set survives (ties preserved if multiple posits share the same latest time).
+- For literal/constant times, reduction happens before enumeration; for time variables, reduction occurs per-binding during enumeration (using the variable’s bound time).
+
+Examples:
+
+```
+/* name at marriage time (snapshot) */
+search [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW,
+       [{(w|h, name)}, +n, +t] as of mt
+return n, t, mt;
+
+/* name history up to marriage (range) */
+search [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW,
+       [{(w|h, name)}, +n, +t]
+where t <= mt
+return n, t, mt;
+```
+
+Note: `as of mt` is a snapshot reducer (one per appearance set), whereas `where t <= mt` preserves full history up to `mt`.
+
 #### RETURN Projection
 
 Specifies what to output. Variables are projected based on their type (Identity, Value, Time).
