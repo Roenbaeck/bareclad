@@ -70,51 +70,11 @@ let db2 = Database::new(mode);
 
 When running the provided binary, the `enable_persistence` flag in `bareclad.json` selects between these modes internally.
 
-## Integrity Ledger (Tamper-Evident Chain)
+## Integrity Ledger (file-backed persistence)
 
-When running in file‑backed mode (`PersistenceMode::File`), every new posit is appended to an integrity ledger that forms a hash chain. This provides a lightweight, tamper‑evident signal that the sequence (and contents) of stored posits has not been rewritten silently.
+When running in file‑backed persistence mode, Bareclad records a compact integrity signal alongside persisted posits: a rolling hash over each persisted row. This ledger is always maintained for file‑backed databases and is intended as a lightweight way to spot accidental edits or simple corruption during local inspection.
 
-### How it works
-
-For each newly persisted posit the engine computes a BLAKE3 hash over a canonical serialization:
-
-```
-<Posit_Identity>|<AppearanceSet>|<ValueType_Identifier>|<AppearingValue>|<AppearanceTime>|prev=<PreviousHash>
-```
-
-Where:
-- `AppearanceSet` is the pipe‑separated `thing_id,role_id` pairs in natural order (the same string stored in the `Posit` table).
-- `ValueType_Identifier` is the numeric stable identifier of the value's data type.
-- `AppearingValue` and `AppearanceTime` are serialized as (lossless) text representations.
-- `PreviousHash` is the hash of the prior posit in ascending `Posit_Identity` order (or 64 zeros for the genesis entry).
-
-An entry is then inserted into the `PositHash` table: `(Posit_Identity, PrevHash, Hash)` and the rolling head (hash + count) is maintained in the single‑row `LedgerHead` table (`Name='PositLedger'`).
-
-### Accessing the head
-
-Library callers can obtain the current head hash + count (file‑backed mode only):
-
-```rust
-if let Some((hash, count)) = db.persistor.lock().unwrap().current_superhash() {
-	println!("ledger head: {hash} ({count} posits)");
-}
-```
-
-### Purpose
-
-The ledger helps detect accidental corruption or naive row‑level tampering (e.g. manually editing a value in SQLite) because any modification changes downstream hashes.
-
-### Limitations & Threat Model
-
-This is NOT a full audit or cryptographic anchoring system:
-- Anyone with write access to both `Posit` and `PositHash` tables can rewrite history and recompute the chain from genesis (64 zero hash) without detection.
-- There is no external timestamping or cross‑system anchoring by default.
-- Reordering of inserts (while preserving identities) is detectable only if identities are strictly increasing and you compare prior head externally.
-
-
-### Rationale
-
-This design deliberately favors simplicity and zero runtime cryptographic ceremony (one fast hash per posit). It offers a pragmatic middle ground: low overhead integrity signals without dictating a heavy auditing infrastructure.
+Note: this is not a full audit or tamper‑proof trail. It provides a quick, low‑overhead check but does not protect against an attacker with write access who can recompute the chain or against external threats without anchoring. See the `persist` module for implementation details if you need stronger guarantees.
 
 ## Client / Server Architecture
 

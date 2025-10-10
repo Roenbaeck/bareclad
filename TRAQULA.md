@@ -1,6 +1,6 @@
-# Traqula Language Reference
-
 <img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/Traqula.svg" width="175">
+
+# Language Reference
 
 Traqula is Bareclad's domain-specific language (DSL) for interacting with the database. It provides a simple, declarative way to define roles, posit facts, and query data using pattern matching.
 
