@@ -19,18 +19,23 @@ All constructs follow a keeper pattern for canonical storage and deduplication u
 - `traqula.rs`: Pest-based parser and execution engine for the Traqula DSL.
 - `traqula.pest`: Grammar definition for the query language.
 - `interface.rs`: Minimal thread-per-query interface with cooperative cancellation and optional streaming of results.
+- `error.rs`: Domain-specific error types (`BarecladError`) and conversions.
+- `server.rs`: HTTP server implementation using Axum for REST API and web console.
 - `benches/benchmark.rs`: Criterion-based performance benchmarks.
 - `traqula-vscode/`: Syntax highlighting extension for Traqula (keep grammar in sync with `traqula.pest`).
+- `bareclad.html` & `bareclad.css`: Web-based query console for interactive Traqula execution.
 
 ## Development Workflow
 - Build: use `cargo build` (Rust edition 2024).
-- Run: prefer `cargo run` (binary reads `bareclad.json`).
+- Run: prefer `cargo run` (binary reads `bareclad.json` and starts an HTTP server on the configured interface and port, serving the web console and REST API).
 - Config (`bareclad.json`):
 	- `database_file_and_path`: SQLite file path (or create if missing).
 	- `enable_persistence`: `true|false` to enable/disable file-based persistence at runtime. When false, no writes occur.
 	- `recreate_database_on_startup`: `true|false` to remove the DB file at startup.
 	- `traqula_file_to_run_on_startup`: path to a Traqula script executed on boot.
-- Debug: in debug builds the binary prints construct counts and role→datatype partitions after running the startup script.
+	- `listen_interface`: IP address to bind the HTTP server (default: "127.0.0.1").
+	- `listen_port`: Port number for the HTTP server (default: 8080).
+- Debug: the binary prints the integrity ledger head (superhash and posit count) after running the startup script. In debug builds, additional logging is available via tracing.
 
 ## Coding Patterns
 - Keeper pattern: do not construct roles/appearances/posits directly. Always call `Database::{create_role, create_apperance, create_appearance_set, create_posit}` or the corresponding `keep_*` variants when rehydrating.
@@ -75,17 +80,14 @@ When adding a new `DataType` implementation:
 - Avoid premature allocation by relying on `ResultSetMode` and in-place roaring operations.
 
 ## Concurrency and Interface
-- `interface.rs` provides a minimal query interface with cooperative cancellation and optional streaming via channels.
-- Recommended deployment: a single worker thread that owns the `Database` and serializes query execution. REST or other frontends enqueue scripts to this worker and optionally receive streamed results.
+`interface.rs` provides a minimal query interface with cooperative cancellation and optional streaming via channels. `server.rs` implements an HTTP server using Axum for REST API endpoints and serving the web console. Recommended deployment: a single worker thread that owns the `Database` and serializes query execution. REST or other frontends enqueue scripts to this worker and optionally receive streamed results.
 	- Rationale: writes are serialized anyway and reads are in-memory, so a single owner avoids `Send/Sync` requirements on the SQLite connection while preserving correctness.
-- For file-backed DBs, the `Persistor` can open a fresh SQLite connection per call (WAL enabled) when needed, but with a single worker most writes still occur sequentially.
-- For in-memory DBs, use the primary connection owned by the worker.
-- Engine cancellation is coarse (between commands); long-running commands may not be interruptible yet.
+	- For file-backed DBs, the `Persistor` can open a fresh SQLite connection per call (WAL enabled) when needed, but with a single worker most writes still occur sequentially.
+	- For in-memory DBs, use the primary connection owned by the worker.
+	- Engine cancellation is coarse (between commands); long-running commands may not be interruptible yet.
 
 ## Error Handling
-- Current implementation panics on unexpected SQLite errors (future: domain error types).
-- Use `anyhow` for custom error handling in new code.
-- Config loading uses the `config` crate with `HashMap` conversion; handle missing keys gracefully if extending.
+Domain-specific error types (`BarecladError`) are defined in `error.rs` with variants for config, persistence, data corruption, parse, execution, invariant, and lock errors. Conversions from `rusqlite::Error` and others are provided. Use `anyhow` for custom error handling in new code where appropriate.
 
 ## Testing and Benchmarks
 - Doctests exist in several modules (run with `cargo test`).
