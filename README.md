@@ -1,10 +1,10 @@
 <img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/bareclad.svg" width="250">
+<p/>
 
 Bareclad is an experimental database engine based on Transitional Modeling, designed to capture conflicting, unreliable, and varying information over time. It blends ideas from relational, graph, columnar, and key–value stores.
 
-- [Paper: Modeling Conflicting, Unreliable, and Varying Information (Transitional Modeling)](https://www.researchgate.net/publication/329352497_Modeling_Conflicting_Unreliable_and_Varying_Information)
-- [Background posts](https://www.anchormodeling.com/tag/transitional/)
 - [The Philosophical Foundations of Bareclad](THEORY.md)
+- [Paper: Modeling Conflicting, Unreliable, and Varying Information](https://www.researchgate.net/publication/329352497_Modeling_Conflicting_Unreliable_and_Varying_Information)
 
 ## Why Bareclad?
 
