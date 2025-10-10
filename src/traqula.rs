@@ -980,6 +980,7 @@ impl<'en> Engine<'en> {
                                 let diag_pattern_id = pattern_index; pattern_index +=1; // increment early for logging
                                 // Track optional per-clause 'as of' time
                                 let mut _as_of_time: Option<Time> = None;
+                                let mut _as_of_var: Option<String> = None;
                                 for component in structure.into_inner() {
                                     match component.as_rule() {
                                         Rule::insert => {
@@ -1230,18 +1231,11 @@ impl<'en> Engine<'en> {
                                                         _as_of_time = parse_time(part.as_str());
                                                     }
                                                     Rule::recall => {
-                                                        // Variable as_of: treat as where condition on this pattern's time var <= var
+                                                        // Variable as_of: record the variable name for per-binding snapshot reduction.
+                                                        _as_of_var = Some(part.as_str().to_string());
+                                                        // Preserve the legacy predicate as a safety net when a time var exists in this pattern.
                                                         if let Some(time_var) = _time_as_variable {
-                                                            where_time_var.push((
-                                                                time_var.to_string(),
-                                                                "<=".to_string(),
-                                                                part.as_str().to_string(),
-                                                            ));
-                                                        } else {
-                                                            // TODO: handle case where no time var, perhaps error
-                                                            println!(
-                                                                "Warning: as of variable requires time variable in pattern"
-                                                            );
+                                                            where_time_var.push((time_var.to_string(), "<=".to_string(), part.as_str().to_string()));
                                                         }
                                                     }
                                                     _ => {}
@@ -1743,7 +1737,38 @@ impl<'en> Engine<'en> {
                                                 info!(target:"bareclad::stream", event="enumeration_seed", seeded_bindings=bindings.len());
                                             } else {
                                                 let mut new_bindings: Vec<Binding> = Vec::new();
+                                                // Guards and caches for per-binding snapshot reduction when using variable as-of
+                                                // Acquire time lookup guard; re-use existing aset_guard from candidate enumeration to avoid re-lock deadlock
+                                                let time_lk = self.database.posit_time_lookup();
+                                                let time_guard = time_lk.lock().unwrap();
                                                 for existing in bindings.iter() {
+                                                    // Optional: resolve as-of time for this binding
+                                                    let binding_as_of_time: Option<Time> = if let Some(ref asv) = _as_of_var {
+                                                        if let Some((pid_t, VarKind::Time)) = existing.value_slots.get(asv) {
+                                                            time_guard.get(pid_t).cloned()
+                                                        } else { None }
+                                                    } else { None };
+                                                    // Precompute best-per-appearance-set once per binding when variable as-of is in effect
+                                                    let best_cache: Option<std::collections::HashMap<usize, Thing>> = if let Some(ref as_of_time) = binding_as_of_time {
+                                                        let mut cache = std::collections::HashMap::new();
+                                                        for cid in cands.iter() {
+                                                            if let Some(aset_c) = aset_guard.get(&cid) {
+                                                                if let Some(ct) = time_guard.get(&cid) {
+                                                                    if ct <= as_of_time {
+                                                                        let key = Arc::as_ptr(aset_c) as usize;
+                                                                        let replace = if let Some(prev_pid) = cache.get(&key) {
+                                                                            if let (Some(prev_t), Some(cur_t)) = (time_guard.get(prev_pid), time_guard.get(&cid)) {
+                                                                                cur_t > prev_t
+                                                                            } else { false }
+                                                                        } else { true };
+                                                                        if replace { cache.insert(key, cid); }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        info!(target:"bareclad::stream", event="snapshot_reduced_per_binding", aset_count=cache.len());
+                                                        Some(cache)
+                                                    } else { None };
                                                     for (pid, id_map) in candidate_info.iter() {
                                                         // Identity compatibility
                                                         let mut ok = true;
@@ -1759,6 +1784,17 @@ impl<'en> Engine<'en> {
                                                         }
                                                         if !ok {
                                                             continue;
+                                                        }
+                                                        // If variable as-of is in effect and bound for this row, enforce snapshot: pid must be the latest <= as_of among cands for its appearance set
+                                                        if let (Some(_), Some(cache)) = (&binding_as_of_time, &best_cache) {
+                                                            if let Some(aset_of_pid) = aset_guard.get(pid) {
+                                                                let key = Arc::as_ptr(aset_of_pid) as usize;
+                                                                if let Some(best_pid) = cache.get(&key) {
+                                                                    if pid != best_pid { continue; }
+                                                                } else {
+                                                                    continue;
+                                                                }
+                                                            }
                                                         }
                                                         // Posit variable compatibility
                                                         if let Some(ref pn) = posit_var_name {
