@@ -1,206 +1,289 @@
+# Traqula Language Study Guide
+
 <img src="https://raw.githubusercontent.com/Roenbaeck/bareclad/master/Traqula.svg" alt="Traqula Language Reference" width="200">
 <p/>
 
-Traqula is Bareclad's domain-specific language (DSL) for interacting with the database. It provides a simple, declarative way to define roles, posit facts, and query data using pattern matching.
+Welcome to the Traqula Study Guide! This guide is designed to be self-contained—no external files required. It will help you learn Traqula, Bareclad's domain-specific language for managing and querying transitional data. We'll start with the basics and build up to advanced concepts, using plenty of working examples. By the end, you'll be able to write your own Traqula scripts.
 
-## Overview
+---
 
-Traqula has a minimal syntax focused on three main operations:
+## Cheat Sheet
 
+- `add role <role1>, <role2>, ...;` — Declare roles
+- `add posit [{(identity, role)}, value, time][, ...];` — Insert facts
+- `search <pattern> [where <condition>] [return <projection>] [limit <N>];` — Query data
+- `+var` — New identity (or insert matches into existing)
+- `var` — Recall identity (no insert)
+- `*` — Wildcard (match anything without keeping track of it)
+- `as of <time>` — Snapshot reduction
+- `where <condition>` — Filter results
+- `return <vars>` — Output variables
+- `limit <N>` — Cap results
+
+---
+
+## Glossary
+
+- **Thing**: An opaque identity (person, posit, etc.)
+- **Role**: A label (name, wife, age)
+- **Appearance**: (Thing, Role) pair
+- **AppearanceSet**: Set of appearances (the "viewport" for a posit)
+- **Posit**: A proposition: (AppearanceSet, Value, Time)
+- **Certainty**: Confidence in a posit (e.g., `75%`)
+- **Time**: When a posit is asserted
+
+---
+
+## Lesson 1: Core Concepts – What is a Posit?
+
+A **posit** is a statement like: "Alice's name was 'Alice Smith' starting on January 1, 2023."
+
+- **AppearanceSet**: A set of (identity, role) pairs that define the "shape" or "viewport" of the posit. Think of it as a template with slots for specific roles, like holes in a piece of paper that you place over data to see what fits through.
+  - For example, `{(Alice, name)}` is a viewport with one hole: the "name" role aimed at Alice. When you look through this viewport at the database, you might see the value "Alice Smith" at time '2023-01-01'.
+  - For a couple: `{(Bob, husband), (Carol, wife)}` has two holes – one for the "husband" role (Bob) and one for the "wife" role (Carol). Aiming this at the data might reveal the value "married" at a certain time.
+  - This "aiming" happens during searches or when adding posits, binding identities to roles to extract or assert facts.
+- **Value**: The fact being asserted, like `"Alice Smith"`.
+- **Time**: When this fact became true, like `'2023-01-01'`.
+
+Posits don't replace old data; they add layers. If Alice changes her name, you add a new posit with a later time.
+
+---
+
+## Lesson 2: Getting Started – Running Traqula Scripts
+
+To follow along, start the Bareclad server (see README.md). Use the web console at `http://localhost:8080` or send scripts via API.
+
+Scripts are sequences of commands separated by semicolons. Variables persist across commands.
+
+Example script structure:
 ```
-add role <role>[, <role>...]
-add posit [{((+var|var|*), <role>)}, <value>, <time>][, ...]
-search <pattern> [where <condition>] [return <projection>] [limit <N>]
+add role name, age;
+add posit [{(+person, name)}, "Bob", '2020-01-01'];
+search [{(*, name)}, +n, *] return n;
 ```
 
-- **add role**: Declares new roles in the schema.
-- **add posit**: Inserts propositions (posits) into the database.
-- **search**: Queries the database using pattern matching, with optional filtering and projection.
+Run this in the console to see "Bob" returned.
 
-Scripts are semicolon-separated sequences of these commands. The engine processes them sequentially, with variables persisting across commands.
+---
 
-## Core Concepts
-
-### Posits: The Fundamental Unit
-
-At the heart of Bareclad is the **posit** – a proposition that asserts a fact about identities at a specific point in time. Posits capture the essence of Transitional Modeling: information can be conflicting, uncertain, or change over time.
-
-A posit has three components:
-- **AppearanceSet**: A set of (identity, role) pairs describing what the posit is about
-- **Value**: The asserted fact (typed data like strings, numbers, etc.)
-- **Time**: When this assertion holds
-
-Posits are themselves identities (Things), allowing meta-operations like "this posit ascertains another."
-
-#### How Posits Work
-
-- **Assertions vs. Reality**: Posits don't overwrite; they accumulate. Multiple posits can exist for the same appearance set with different values or times, representing conflicting or evolving information.
-- **Certainty and Negation**: Values can include certainty levels (e.g., "75%"), and posits can be negated to represent retractions.
-- **Temporal Nature**: Every posit has a time, enabling queries like "what was true on this date?"
-
-For deeper background on posits and atomic data:
-- [Anchor Modeling: Atomic Data](https://www.anchormodeling.com/atomic-data/)
-- [Anchor Modeling: Colorful Transitional](https://www.anchormodeling.com/transitional/colorfulTransitional.html)
-
-### Identities and Roles
-
-- **Thing**: An opaque identity (internally a u64). Everything in Bareclad is a Thing: people, roles, posits themselves.
-- **Role**: A named semantic placeholder (e.g., "wife", "name", "age").
-- **Appearance**: A (Thing, Role) pair.
-- **AppearanceSet**: A sorted set of appearances (at most one per role), forming the subject of a posit.
-
-### Variables and Binding
-
-Variables allow referencing identities across commands:
-
-- `+var` (e.g., `+person`): Declares a new variable and binds it to a fresh identity.
-- `var` (e.g., `person`): Recalls a previously bound variable.
-- `*`: Wildcard that matches any identity without binding.
-
-Variables persist across the entire script, enabling multi-step operations like creating an identity in one posit and referencing it in searches or additional posits.
-
-## Language Essentials
+## Lesson 3: Adding Data – Roles and Posits
 
 ### Adding Roles
 
+Roles define what you can talk about. Declare them first.
+
+Syntax: `add role <role1>, <role2>, ...;`
+
+Example:
 ```
-add role wife, husband, name, age;
+add role name, age, city;
 ```
 
-Declares roles. Roles must be added before they can be used in posits.
+This creates roles for names, ages, and cities.
 
 ### Adding Posits
 
-```
-add posit [{(+person, name)}, "Alice", '2023-01-01'];
-```
+Insert facts into the database.
 
-Inserts one or more posits. Each posit is an array: `[AppearanceSet, Value, Time]`.
+Syntax: `add posit [AppearanceSet, Value, Time][, ...];`
 
 - AppearanceSet: `{(identity, role), ...}`
-- Value: Typed literal (see Data Types)
-- Time: Time literal or constant
+- Use `+var` to create new identities (e.g., `+person`).
+- Use `var` to reference existing ones.
 
-Variables can be bound here and reused later.
-
-### Searching
-
+Example: Create a person with a name.
 ```
-search [{(*, name)}, +n, *]
-where t <= '1999-12-31'
-return n
-limit 10;
+add role name;
+add posit [{(+alice, name)}, "Alice", '2023-01-01'];
 ```
 
-Pattern matches against existing posits. The pattern mirrors posit structure but uses variables and wildcards.
+This creates a new identity for Alice and posits her name.
 
-#### Pattern Matching
+Multiple posits in one command:
+```
+add posit [{(alice, name)}, "Alice Smith", '2023-06-01'],
+          [{(alice, age)}, 30, '2023-01-01'];
+```
 
-- `{(var, role)}`: Matches posits where the identity in that role matches the variable.
-- `{(w|h, role)}`: Union – matches either role.
-- `*` in any position: Wildcard.
+Now Alice has a full name and age.
 
-#### WHERE Clauses
+**Try it:** Add a role for "city" and posit Alice's city as "New York" starting '2023-01-01'.
 
-Filter results with comparisons:
+---
 
-- **Time comparisons**: `t < '2020-01-01'`, `t1 == t2`
-- **Value comparisons**: `v == "Alice"`, `age > 30`, `certainty >= 80%`
+## Lesson 4: Basic Searches – Finding Data
 
-Supports variable vs literal and variable vs variable.
+Search for posits using patterns.
 
-#### Temporal joins with `as of`
+Syntax: `search <pattern> [where <condition>] [return <projection>] [limit <N>];`
 
-Use `as of` on a pattern to perform snapshot reduction: for each appearance set matched by that pattern, keep only the latest posit whose time is less than or equal to the specified time.
+### Simple Pattern Matching
 
-Two forms are supported:
+Pattern mirrors posit structure: `[{AppearanceSet}, Value, Time]`
 
-- Literal/constant time: `@NOW`, `@BOT`, `@EOT`, or time literals (e.g., `'2024-03-17'`, `'2024-03-17 12:34:56.123'`, `YYYY`, `YYYY-MM`, `YYYY-MM-DD`).
-- Time variable: a previously bound time variable (e.g., `mt`).
+Use `*` for wildcards, `+var` to bind variables.
 
-Semantics:
+Example: Find all names.
+```
+search [{(*, name)}, +n, *] return n;
+```
 
-- Inclusive comparison (`<=`).
-- One posit per appearance set survives (ties preserved if multiple posits share the same latest time).
-- For literal/constant times, reduction happens before enumeration; for time variables, reduction occurs per-binding during enumeration (using the variable’s bound time).
+This matches any posit with role "name", binds the value to `n`, and returns it.
 
-Examples:
+Output: `n: "Alice"`
+
+### Matching Specific Values
 
 ```
-/* name at marriage time (snapshot) */
+search [{(*, name)}, +n, "Alice", *] return n;
+```
+
+Finds posits where value is exactly "Alice", binding the value to `n` and returning it.
+
+### Binding Identities
+
+```
+search [{(+person, name)}, +name_val, *] return person, name_val;
+```
+
+Binds the identity to `person` and value to `name_val`.
+
+**Try it:** Search for Alice's age and return the value.
+
+---
+
+## Lesson 5: Variables and Binding – Reusing Identities
+
+Variables make scripts powerful.
+
+- `+var`: New identity.
+- `var`: Existing identity.
+- `*`: Wildcard (no binding).
+
+Example: Create and reference.
+```
+add role wife, husband;
+add posit [{(+alice, wife), (+bob, husband)}, "married", '2020-01-01'];
+search [{(alice, wife), (bob, husband)}, +status, *] return status;
+```
+
+`alice` and `bob` persist, so you can use them in later commands.
+
+### Unions in Patterns
+
+Use `|` for "either role".
+
+Example: Names of wives or husbands.
+```
+search [{(alice|bob, name)}, +n, *] return n;
+```
+
+Matches if Alice or Bob has a name.
+
+---
+
+## Lesson 6: Filtering with WHERE – Narrowing Results
+
+Add conditions after `search`.
+
+Supported: Time (`t`, `t1 == t2`), Value (`v == "text"`, `age > 25`), Certainty (`c >= 80%`).
+
+Example: Names valid before 2000.
+```
+search [{(*, name)}, +n, +t] where t <= '1999-12-31' return n, t;
+```
+
+**Try it:** Find ages greater than 25.
+
+---
+
+## Lesson 7: Temporal Queries with 'as of' – Snapshots vs. History
+
+`as of` reduces to the latest posit per appearance set at or before a time.
+
+- Literal: `as of '2020-01-01'`
+- Variable: `as of mt` (per binding)
+
+Example: Current names (snapshot).
+```
+search [{(*, name)}, +n, *] as of @NOW return n;
+```
+
+Vs. history up to now:
+```
+search [{(*, name)}, +n, +t] where t <= @NOW return n, t;
+```
+
+The first returns one name per person (latest); the second returns all historical names.
+
+Example: Names at marriage time.
+```
+add role wife, husband, name;
+add posit [{(+w, wife), (+h, husband)}, "married", '2004-06-19'],
+          [{(w, name)}, "Bella Trix", '1972-12-13'],
+          [{(w, name)}, "Bella Bald", '2024-05-29'];
 search [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW,
        [{(w|h, name)}, +n, +t] as of mt
 return n, t, mt;
-
-/* name history up to marriage (range) */
-search [{(+w, wife), (+h, husband)}, "married", +mt] as of @NOW,
-       [{(w|h, name)}, +n, +t]
-where t <= mt
-return n, t, mt;
 ```
 
-Note: `as of mt` is a snapshot reducer (one per appearance set), whereas `where t <= mt` preserves full history up to `mt`.
+This finds current marriages, then names as of marriage time.
 
-#### RETURN Projection
+**Try it:** Modify to find names at divorce time.
 
-Specifies what to output. Variables are projected based on their type (Identity, Value, Time).
+---
 
-#### LIMIT Clause
+## Lesson 8: Projections and Limits – Controlling Output
 
-```
-search ... return ... limit 5;
-```
+### RETURN
 
-Caps the number of rows returned. Includes a `limited` flag in results if more matches exist.
+Specify what to output. 
+
+Example: `return name, age;`
+
+### LIMIT
+
+Cap results: `limit 5;`
+
+Includes a flag if more exist.
+
+---
 
 ## Data Types and Literals
 
-Traqula uses "look-alike" typing – the literal's appearance determines its type.
+- Strings: `"text"`
+- Numbers: `42` (int), `3.14` (decimal)
+- JSON: `{"key": "value"}`
+- Certainty: `75%`
+- Time: `'2023-01-01'`, `@NOW`, `@BOT`, `@EOT`
 
-- **String**: `"Alice"` (double quotes; escape with `""`)
-- **JSON**: `{ "key": "value" }` or `[1, 2, 3]`
-- **Decimal**: `3.14159` (arbitrary precision)
-- **Integer**: `42` (i64)
-- **Certainty**: `75%` (must end with `%`)
-- **Time**:
-  - `'1972'`, `'1972-02'`, `'1972-02-13'`, `'1972-02-13 12:34:56'`
-  - Constants: `@NOW`, `@BOT`, `@EOT`
+---
 
-## Examples
-
-See the `traqula/` folder for complete scripts. Highlights:
+## Full Example: Family and History
 
 ```
-add role wife, husband, name, age, address, epithet;
+add role wife, husband, name, age;
 
-# Create identities and posit relationships
-add posit +p1 [{(+idw, wife), (+idh, husband)}, "married", '2004-06-19'],
-         +p1 [{(idh, name)}, "Lars Samuelsson", '1972-08-20'],
-         [{(idw, name)}, "Anneli", '1972-02-13'];
+add posit [{(+p1, wife), (+p2, husband)}, "married", '2004-06-19'],
+          [{(p1, name)}, "Bella", '1972-02-13'],
+          [{(p2, name)}, "Archie", '1972-08-20'];
 
-# Find names valid on a specific date
-search [{(*, name)}, +n, '1972-02-13']
+search [{(+w, wife), (+h, husband)}, "married", *],
+       [{(w|h, name)}, +n, *]
 return n;
 
-# Find names valid on or before a date
-search [{(*, name)}, +n, +t]
-where t <= '1999-12-31'
-return n;
+search [{(w, name)}, +n, +t] where t <= '2020-01-01' return n, t;
 
-# Complex query: married couples with ascertainment
-search +p [{(+w, wife), (+h, husband)}, "married", *],
-       [{(p, posit), (*, ascertains)}, *, *],
-       [{(w|h, name)}, +n, '2004-07-01']
-return n;
+search [{(w, name)}, +n, *] as of '2020-01-01' return n;
 ```
 
-## Engine Evaluation
+---
 
-The engine uses roaring bitmap indexes for efficiency:
+## Troubleshooting
 
-- Intersects role bitmaps to find candidate posits
-- Tracks candidate sets per variable (value and time)
-- Applies WHERE filters to candidate bitmaps
-- Projects results using type-aware inference
+- **No results?** Check roles are added, times match, variables bound.
+- **Too many results?** Add WHERE filters or LIMIT.
+- **Syntax errors?** Patterns must match posit structure exactly.
+- **Temporal confusion?** Remember: `as of` is snapshot (one per set), `where t <=` is history.
 
-This keeps queries fast without expensive joins.
+Experiment in the web console. Happy querying!
