@@ -20,9 +20,11 @@ The solution is to use a structure where the first position contains a set of `(
 
 Even if you understand what a posit is saying, it doesn’t mean you believe it. Many different opinions can be held about a single statement. To talk about posits themselves, we must give them identities. Let’s say `P1` is the identity for `[{(J42, girlfriend), (B43, boyfriend)}, "official", '2019']` and `P2` is for `[{(J42, nickname)}, "Jen", '1988']`. These identities allow us to create meta-posits.
 
-To avoid confusion, we reserve specific roles for this purpose, such as `posit` and `determines confidence`. An **assertion** is a meta-posit, exemplified by `[{(P1, posit), (J42, determines confidence)}, 80%, '2019-04-05']`. This means Jennifer (J42) expresses an 80% confidence that her relationship with B43 was official since 2019. In contrast, `[{(P1, posit), (B43, determines confidence)}, -100%, '2019-04-05']` reveals a conflict.
+To avoid confusion, we reserve specific roles for this purpose, such as `posit` and `ascertains`. An **assertion** is a meta-posit, exemplified by `[{(P1, posit), (J42, ascertains)}, 80%, '2019-04-05']`. This means Jennifer (J42) expresses an 80% confidence that her relationship with B43 was official since 2019. In contrast, `[{(P1, posit), (B43, ascertains)}, -100%, '2019-04-05']` reveals a conflict.
 
-Confidence values fall within the `[-100%, 100%]` interval. A positive value indicates belief in the stated fact, while a negative value indicates belief in its opposite. A confidence of `-100%` means complete certainty in the contrary. For example, the boyfriend is completely certain of the posit `[{(J42, girlfriend), (B43, boyfriend)}, "anything but official", '2019']`. A confidence of `0%` signifies complete uncertainty.
+Certainty values fall within the `[-100%, 100%]` interval. A positive value indicates belief in the stated fact, while a negative value indicates belief in its opposite. A certainty of `-100%` means complete certainty in the contrary. For example, the boyfriend is completely certain of the posit `[{(J42, girlfriend), (B43, boyfriend)}, "anything but official", '2019']`. A certainty of `0%` signifies complete uncertainty.
+
+This introduces a powerful asymmetry. While you can be 100% certain of only a single posit for a given appearance set at a specific time, you can be -100% certain of an infinite number of posits without contradicting yourself. Being -100% certain that the value is "official" is not a contradiction to being -100% certain that the value is "a secret", as both simply affirm that the value is *something else*. For certainties between the extremes, it becomes computationally possible to determine whether a collection of opinions is logically consistent or contradictory.
 
 ## What Will Change and What Will Remain
 
@@ -32,9 +34,9 @@ Jennifer broke up with her boyfriend. The original posit, `P1`, was `[{(J42, gir
 
 Change can be defined precisely: when two posits share the same set of `(identity, role)` pairs—the **appearance set**—but have different values and one time point follows the other, they describe a change. Thus, `P3` is a change from `P1`. The appearance set remains indefinitely, while its associated values may change entirely.
 
-This applies to assertions as well. Jennifer’s confidence in `P1` might change after learning of her boyfriend’s opinion. A new assertion, `[{(P1, posit), (J42, determines confidence)}, 0%, '2019-09-21']`, would capture her revised confidence level.
+This applies to assertions as well. Jennifer’s certainty in `P1` might change after learning of her boyfriend’s opinion. A new assertion, `[{(P1, posit), (J42, ascertains)}, 0%, '2019-09-21']`, would capture her revised certainty level.
 
-This mechanism is similar to a ‘logical delete’ in a bitemporal database, where confidence is limited to `1` (recorded) or `0` (deleted), and only the database itself can have an opinion. Transitional Modeling extends this concept, approaching probabilistic databases when confidences are in the `[0, 100%]` range and uncertainty theory when they are in the `[-100%, 100%]` range. The ability for anyone to have an opinion is similar to multi-tenant databases.
+This mechanism is similar to a ‘logical delete’ in a bitemporal database, where certainty is limited to `1` (recorded) or `0` (deleted), and only the database itself can have an opinion. Transitional Modeling extends this concept, approaching probabilistic databases when certainties are in the `[0, 100%]` range and uncertainty theory when they are in the `[-100%, 100%]` range. The ability for anyone to have an opinion is similar to multi-tenant databases.
 
 Now, what if we find another posit, `P4`, as `[{(S44, nickname)}, "Jen", '1988']`? Were there two Jens all along?
 
