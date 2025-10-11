@@ -186,10 +186,14 @@ Prism.languages.traqula = {
 
 // Get DOM elements  
 const scriptEditor = document.getElementById('script');
+// Track whether the last key pressed inserted a newline so we can bump the caret by one char
+let justInsertedNewline = false;
 
 // Function to update syntax highlighting
 function updateHighlight() {
-  const code = scriptEditor.textContent;
+  // Using textContent messes up whitespace
+  // const code = scriptEditor.textContent;
+  const code = scriptEditor.innerText;
   const highlightedCode = Prism.highlight(code, Prism.languages.traqula, 'traqula');
   // Save selection
   const selection = window.getSelection();
@@ -200,6 +204,12 @@ function updateHighlight() {
     preCaretRange.selectNodeContents(scriptEditor);
     preCaretRange.setEnd(range.startContainer, range.startOffset);
     startOffset = preCaretRange.toString().length;
+  }
+  // If the last action was pressing Enter, the DOM has gained a newline at the caret.
+  // Advance by one so the caret lands after the inserted newline when restored.
+  if (justInsertedNewline) {
+    startOffset += 1;
+    justInsertedNewline = false;
   }
   scriptEditor.innerHTML = highlightedCode;
   // Restore selection
@@ -212,7 +222,8 @@ function updateHighlight() {
       if (node.nodeType === Node.TEXT_NODE) {
         const nextCharCount = charCount + node.length;
         if (startOffset <= nextCharCount) {
-          newRange.setStart(node, startOffset - charCount);
+          const pos = Math.max(0, Math.min(node.length, startOffset - charCount));
+          newRange.setStart(node, pos);
           found = true;
         }
         charCount = nextCharCount;
@@ -237,6 +248,10 @@ scriptEditor.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     runQuery();
   }
+  // Mark that a plain Enter was pressed so selection restore can advance caret by one
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+    justInsertedNewline = true;
+  }
   
   // Handle tab key for indentation
   if (e.key === 'Tab') {
@@ -258,7 +273,7 @@ setTimeout(() => {
 
 // Save query on page unload
 window.addEventListener('beforeunload', () => {
-  localStorage.setItem('bareclad-query', scriptEditor.textContent);
+  localStorage.setItem('bareclad-query', scriptEditor.innerText);
 });
 
 // No Monaco initialization needed - using Prism.js instead
