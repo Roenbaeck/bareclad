@@ -449,8 +449,17 @@ pub fn parse_time(value: &str) -> Option<Time> {
 
     // 3. Attempt high‑precision datetime parse directly (chrono supports fractional seconds up to 9 digits)
     if stripped.contains(':') && stripped.contains('-') && stripped.contains(' ') {
-        if let Ok(dt) = stripped.parse::<NaiveDateTime>() {
-            return Some(Time::from_naive_datetime(dt));
+        // Try parsing with space separator (e.g., "2025-06-18 21:05:00")
+        // NaiveDateTime::from_str expects ISO 8601 with T, so we need to use parse_from_str
+        let formats = [
+            "%Y-%m-%d %H:%M:%S%.f",  // With optional fractional seconds
+            "%Y-%m-%d %H:%M:%S",     // Without fractional seconds
+            "%Y-%m-%d %H:%M",        // Just hour and minute
+        ];
+        for fmt in &formats {
+            if let Ok(dt) = NaiveDateTime::parse_from_str(&stripped, fmt) {
+                return Some(Time::from_naive_datetime(dt));
+            }
         }
     }
 
@@ -729,10 +738,16 @@ impl<'en> Engine<'en> {
                                     match time_type.as_rule() {
                                         Rule::constant => {
                                             time = parse_time_constant(time_type.as_str());
+                                            if time.is_none() {
+                                                eprintln!("Failed to parse time constant: {}", time_type.as_str());
+                                            }
                                         }
                                         Rule::time => {
                                             //println!("Time: {}", value_type.as_str());
                                             time = parse_time(time_type.as_str());
+                                            if time.is_none() {
+                                                eprintln!("Failed to parse time: {}", time_type.as_str());
+                                            }
                                         }
                                         _ => println!("Unknown time type: {:?}", time_type),
                                     }
@@ -798,11 +813,17 @@ impl<'en> Engine<'en> {
 
                     for appearance_set in appearance_sets {
                         // create the posit of the found type
+                        if time.is_none() {
+                            eprintln!("Error: No valid time specified for posit. Skipping.");
+                            continue;
+                        }
+                        let time_value = time.clone().unwrap();
+                        
                         if value_as_json.is_some() {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
                                 value_as_json.clone().unwrap(),
-                                time.clone().unwrap(),
+                                time_value.clone(),
                             );
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed for clean startup output
@@ -810,7 +831,7 @@ impl<'en> Engine<'en> {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
                                 value_as_string.clone().unwrap(),
-                                time.clone().unwrap(),
+                                time_value.clone(),
                             );
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed
@@ -818,7 +839,7 @@ impl<'en> Engine<'en> {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
                                 value_as_time.clone().unwrap(),
-                                time.clone().unwrap(),
+                                time_value.clone(),
                             );
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed
@@ -826,7 +847,7 @@ impl<'en> Engine<'en> {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
                                 value_as_certainty.clone().unwrap(),
-                                time.clone().unwrap(),
+                                time_value.clone(),
                             );
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed
@@ -834,7 +855,7 @@ impl<'en> Engine<'en> {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
                                 value_as_decimal.clone().unwrap(),
-                                time.clone().unwrap(),
+                                time_value.clone(),
                             );
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed
@@ -842,7 +863,7 @@ impl<'en> Engine<'en> {
                             let kept_posit = self.database.create_posit(
                                 appearance_set,
                                 value_as_i64.clone().unwrap(),
-                                time.clone().unwrap(),
+                                time_value.clone(),
                             );
                             posits.push(kept_posit.posit());
                             // debug posit creation suppressed
