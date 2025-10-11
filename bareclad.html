@@ -191,6 +191,9 @@ let justInsertedNewline = false;
 
 // Function to update syntax highlighting
 function updateHighlight() {
+  // Disconnect observer to avoid triggering on our own changes
+  observer.disconnect();
+  
   // Using textContent messes up whitespace
   // const code = scriptEditor.textContent;
   const code = scriptEditor.innerText;
@@ -239,17 +242,54 @@ function updateHighlight() {
       selection.addRange(newRange);
     }
   }
+  
+  // Reconnect observer after updating
+  observer.observe(scriptEditor, { childList: true, subtree: true, characterData: true });
+  
   localStorage.setItem('bareclad-query', code);
 }
 
 // Setup event listeners for the editor
-scriptEditor.addEventListener('input', updateHighlight);
+// Use MutationObserver to detect and fix structural changes (like div/br) and trigger highlighting
+const observer = new MutationObserver((mutationList) => {
+  let needsHighlight = false;
+  let structuralChange = false;
+  
+  for (const mutation of mutationList) {
+    if (mutation.type === 'childList') {
+      structuralChange = true;
+      // Check for <div><br></div> elements that cause double newlines
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'DIV') {
+          const children = Array.from(node.childNodes);
+          const hasOnlyBr = children.length === 1 && children[0].tagName === 'BR';
+          if (hasOnlyBr) {
+            // Replace <div><br></div> with just <br>
+            const br = document.createElement('br');
+            node.parentNode.replaceChild(br, node);
+          }
+        }
+      }
+      needsHighlight = true;
+    } else if (mutation.type === 'characterData') {
+      needsHighlight = true;
+    }
+  }
+  
+  if (needsHighlight) {
+    updateHighlight();
+  }
+});
+observer.observe(scriptEditor, { childList: true, subtree: true, characterData: true });
+
 scriptEditor.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     runQuery();
   }
-  // Mark that a plain Enter was pressed so selection restore can advance caret by one
+  // Handle plain Enter to prevent div/br insertion
   if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    document.execCommand('insertLineBreak');
     justInsertedNewline = true;
   }
   
@@ -257,8 +297,15 @@ scriptEditor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {
     e.preventDefault();
     document.execCommand('insertText', false, '    ');
-    updateHighlight();
   }
+});
+
+// Handle paste to insert plain text and prevent HTML formatting issues
+scriptEditor.addEventListener('paste', function(e) {
+  e.preventDefault();
+  const text = e.clipboardData.getData('text/plain');
+  // Insert text directly without any HTML formatting
+  document.execCommand('insertText', false, text);
 });
 
 // Initialize highlighting
@@ -415,7 +462,7 @@ function rebuildStreamingDropdown(multiSets, currentIdx) {
 async function runQuery() {
   console.log('runQuery called');
   const endpoint = els.endpoint.value.trim();
-  const script = scriptEditor.textContent;
+  const script = scriptEditor.innerText;
   console.log('script:', script);
   const doStream = els.streamMode.checked;
   const payload = { script: script, stream: doStream };
